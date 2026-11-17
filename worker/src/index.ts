@@ -1,18 +1,11 @@
 import { claimSeat, lookup, refreshIdentity, resolveEntry } from './people';
+import { HTTPError, json, body } from './http';
+import { deviceRoute, deviceIdentity, manageDevices } from './cli/devices';
+import { cliRoute } from './cli/routes';
 import { createRemoteJWKSet, jwtVerify } from 'jose';
 import { currencies, InputError, validID, validateEntry } from './ledger';
 const jwks = createRemoteJWKSet(new URL('https://clerk.yoinklabs.dev/.well-known/jwks.json'));
-class HTTPError extends Error { constructor(public status: number, message: string) { super(message); } }
 interface Member {id:string; groupID:string; userID:string|null; name:string; email?:string; phone?:string}
-const json=(body:unknown,status=200)=>Response.json(body,{status,headers:{'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}});
-async function body(request:Request):Promise<Record<string,unknown>> {
-  if (!request.headers.get('content-type')?.includes('application/json')) throw new HTTPError(415,'Send JSON.');
-  const reader=request.body?.getReader(); if(!reader) throw new InputError('Missing body.');
-  let size=0; const chunks:Uint8Array[]=[];
-  while(true){ const {done,value}=await reader.read(); if(done)break; size+=value.length; if(size>32_768){await reader.cancel();throw new HTTPError(413,'Request too large.');} chunks.push(value); }
-  const bytes=new Uint8Array(size);let offset=0;for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.length;}
-  try { const value=JSON.parse(new TextDecoder().decode(bytes));if(!value||typeof value!=='object'||Array.isArray(value))throw 0;return value; } catch {throw new InputError('Invalid JSON.');}
-}
 function contactInfo(emailInput:unknown,phoneInput:unknown) {
     const email=typeof emailInput==='string' ? emailInput.trim().toLowerCase() : '';
     const phone=typeof phoneInput==='string' ? phoneInput.trim() : '';
@@ -178,9 +171,19 @@ export default {
    if(url.pathname==='/.well-known/apple-app-site-association') return json({applinks:{details:[{appIDs:['64PUT29XZ8.com.yoinklabs.split'],components:[{'/':'/join/*'}]}]}});
    const invite=url.pathname.match(/^\/join\/((?:[a-f0-9-]{72}|[A-HJ-NP-Z2-9]{12}))$/);
    if(invite && request.method==='GET') return new Response(`<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><title>Join your group · Split</title><style>body{font:20px system-ui;background:#f4f3ee;color:#172e27;max-width:480px;margin:5vh auto;padding:28px}a{display:block;background:#183f34;color:white;padding:18px;border-radius:18px;text-align:center;text-decoration:none}p{line-height:1.6}@media(prefers-color-scheme:dark){body{background:#101b17;color:#edf3ea}}</style><svg role="img" aria-label="Split logo" width="72" height="72" viewBox="0 0 1024 1024"><rect width="1024" height="1024" rx="240" fill="#d1f091"/><g fill="#12382b"><rect x="222" y="340" width="580" height="142" rx="71"/><rect x="222" y="542" width="580" height="142" rx="71"/></g><path d="M518 744H622L506 280H402Z" fill="#d1f091"/></svg><h1>Good company.<br>Clear balances.</h1><p>You have an invitation to Split. Open it on your iPhone after installing the free TestFlight beta.</p><a href="com.yoinklabs.split://join/${invite[1]}">Open Split</a><p><a href="https://testflight.apple.com/join/YX8W6bCx">Get the free beta</a></p><p>If the app is not installed yet, keep this invitation and open it again after installing. Beta access becomes available after Apple approves the build.</p>`,{headers:{'Content-Type':'text/html; charset=utf-8','Referrer-Policy':'no-referrer','Content-Security-Policy':"default-src 'none'; style-src 'unsafe-inline'"}});
+   const publicDevice = await deviceRoute(request, env);
+   if (publicDevice) return publicDevice;
    const token=request.headers.get('Authorization')?.match(/^Bearer (.+)$/)?.[1];if(!token)throw new HTTPError(401,'Sign in to sync your expenses.');
    let userID:string;
-   try{const {payload}=await jwtVerify(token,jwks,{issuer:env.CLERK_ISSUER,algorithms:['RS256'],requiredClaims:['exp','sub','iat']});if(!payload.sub || (payload.azp && !['com.yoinklabs.split','https://yoinklabs.dev','https://www.yoinklabs.dev'].includes(String(payload.azp))))throw 0;userID=payload.sub;}catch{throw new HTTPError(401,'Your session expired. Sign in again.');}
+   const device = token.startsWith('spl_') ? await deviceIdentity(env, token) : null;
+   if (device) userID = device.user_id;
+   else try{const {payload}=await jwtVerify(token,jwks,{issuer:env.CLERK_ISSUER,algorithms:['RS256'],requiredClaims:['exp','sub','iat']});if(!payload.sub || (payload.azp && !['com.yoinklabs.split','https://yoinklabs.dev','https://www.yoinklabs.dev'].includes(String(payload.azp))))throw 0;userID=payload.sub;}catch{throw new HTTPError(401,'Your session expired. Sign in again.');}
+   if (url.pathname.startsWith('/v1/device/')) return await manageDevices(request, env, userID, device?.id);
+   if (url.pathname === '/mcp' || url.pathname === '/v1/cli') {
+     if (!device) throw new HTTPError(403, 'Sign in with a Split device token.');
+     return await cliRoute(request, env, userID, handle);
+   }
+   if (device) throw new HTTPError(403, 'Use the CLI or MCP endpoint with a device token.');
    if (url.pathname==='/v1/snapshot' || url.pathname==='/v1/join') {
      await refreshIdentity(env as Env & {CLERK_SECRET_KEY:string},userID);
    }

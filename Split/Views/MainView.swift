@@ -91,6 +91,9 @@ struct AccountView: View {
     var body: some View { NavigationStack { Form {
         Section { HStack(spacing:16) { Avatar(name:session.displayName,size:56); VStack(alignment:.leading) { Text(session.displayName).font(.title2.bold()); Text(session.isDemo ? "Sample preview" : "Your Yoink account").foregroundStyle(.secondary) } } }
         Section("Made for everyone") { Label("Free. Every feature.",systemImage:"heart"); Text("Split is a Yoink Labs app. No subscription, no Pro tier. Just a simpler way to share.").foregroundStyle(.secondary); Link("Visit Yoink Labs",destination:URL(string:"https://yoinklabs.dev")!) }
+        if !session.isDemo {
+            NavigationLink("Connected computers") { DeviceAccessView() }
+        }
         Section("Sync") { Text(session.isDemo ? "Sample data stays on this device." : store.pending == 0 ? "No pending changes" : "\(store.pending) changes saved on this device"); if !session.isDemo { Button("Sync now") { Task { await store.sync() } } }; if let error=store.error { ErrorText(text:error) } }
         Section { Button(session.isDemo ? "Leave preview & sign in" : "Sign out",role:.destructive) { confirmSignOut=true }; if let error=session.error { ErrorText(text:error) }; Text("Split 0.1.0 (2)").font(.caption).foregroundStyle(.secondary) }
     }.navigationTitle("You").confirmationDialog("Sign out?",isPresented:$confirmSignOut,titleVisibility:.visible) { Button("Sign out",role:.destructive) { Task { await session.signOut() } } } message: { Text(store.pending > 0 ? "\(store.pending) unsynced changes will stay on this device for this account. Sign back in to upload them." : "Your shared expenses will be here when you return.") } } }

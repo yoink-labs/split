@@ -1,0 +1,51 @@
+name: Split
+options:
+  bundleIdPrefix: com.yoinklabs
+  deploymentTarget:
+    iOS: '18.0'
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: '5.0'
+packages:
+  Clerk:
+    url: https://github.com/clerk/clerk-ios
+    exactVersion: '1.7.1'
+targets:
+  Split:
+    type: application
+    platform: iOS
+    sources: [Split]
+    dependencies:
+      - package: Clerk
+        product: ClerkKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.yoinklabs.split
+        MARKETING_VERSION: '0.1.0'
+        CURRENT_PROJECT_VERSION: '1'
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_FILE: Split/Resources/Info.plist
+        INFOPLIST_KEY_CFBundleDisplayName: Split
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: UIInterfaceOrientationPortrait
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: 'UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight'
+        TARGETED_DEVICE_FAMILY: '1,2'
+        SUPPORTS_MACCATALYST: NO
+        DEVELOPMENT_TEAM: 64PUT29XZ8
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_ENTITLEMENTS: Split/Resources/Split.entitlements
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+    scheme:
+      testTargets: [SplitTests]
+  SplitTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources: [SplitTests]
+    dependencies:
+      - target: Split
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: com.yoinklabs.split.tests

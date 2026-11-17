@@ -1,0 +1,11 @@
+{
+  "name": "split-api",
+  "account_id": "2bc9c3c136a62ea9dcbddaa6f59edca4",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-11-16",
+  "workers_dev": true,
+  "observability": { "enabled": true, "head_sampling_rate": 0.1, "traces": { "enabled": true, "head_sampling_rate": 0.1 } },
+  "vars": { "CLERK_ISSUER": "https://clerk.yoinklabs.dev", "APP_URL": "https://split-api.yoinklabs.dev" },
+  "d1_databases": [{ "binding": "DB", "database_name": "split", "database_id": "1bd76a4e-1855-4699-922d-c3f7f5486800", "migrations_dir": "migrations" }],
+  "routes": [{ "pattern": "split-api.yoinklabs.dev", "custom_domain": true }]
+}

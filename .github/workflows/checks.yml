@@ -21,3 +21,4 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
+      - run: node --test ../cli/test/*.test.mjs

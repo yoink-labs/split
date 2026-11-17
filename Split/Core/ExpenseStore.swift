@@ -67,7 +67,7 @@ import ClerkKit
         if !demo { next.outbox.append(OutboxItem(id: entry.id, path: "/v1/entries", body: try JSONEncoder().encode(entry))) }
         try persist(next); Task { await sync() }
     }
-    private func request(path: String, body: Data? = nil) async throws -> Data {
+    func request(path: String, body: Data? = nil) async throws -> Data {
         guard let token = try await Clerk.shared.auth.getToken() else { throw LedgerError.invalid("Sign in again to sync. Your pending changes are saved on this device.") }
         var req = URLRequest(url: baseURL.appendingPathComponent(path)); req.timeoutInterval = 20
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")

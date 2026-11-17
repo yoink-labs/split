@@ -1,0 +1,57 @@
+name: Release Split CLI
+on:
+  push:
+    tags: ['split-v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing CLI version tag
+        required: true
+permissions:
+  contents: write
+concurrency:
+  group: publish-split-cli
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+      TAP: yoink-labs/homebrew-tap
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify release commit and build CLI package
+        run: |
+          [[ "$TAG" =~ ^split-v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          test "$(git rev-parse HEAD)" = "$(git rev-list -n 1 "refs/tags/$TAG")"
+          git merge-base --is-ancestor HEAD origin/main
+          node --test cli/test/*.test.mjs
+          cli/release/package.sh "$TAG" dist
+      - name: Publish the source repository release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: cli/release/publish-asset.sh "$GITHUB_REPOSITORY" "$TAG" dist/*.tar.gz
+      - uses: actions/checkout@v4
+        with:
+          repository: yoink-labs/homebrew-tap
+          path: tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+      - name: Publish public asset and update tap
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          cli/release/publish-asset.sh "$TAP" "$TAG" dist/*.tar.gz
+          mkdir -p tap/Formula
+          cp dist/split.rb tap/Formula/split.rb
+          git -C tap add Formula/split.rb
+          if ! git -C tap diff --cached --quiet; then
+            git -C tap -c user.name=github-actions -c user.email=41898282+github-actions[bot]@users.noreply.github.com commit -m "Publish $TAG"
+            git -C tap push origin HEAD:main
+          fi

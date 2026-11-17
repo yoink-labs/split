@@ -70,9 +70,13 @@ export async function refreshIdentity(env: Env & {CLERK_SECRET_KEY:string}, user
   if (recent) return;
   // Always verify current ownership before claiming an email-addressed seat.
   const response = await fetch('https://api.clerk.com/v1/users/' + encodeURIComponent(userID), {
-    headers:{Authorization:'Bearer '+env.CLERK_SECRET_KEY}, redirect:'error'
+    headers:{Authorization:'Bearer '+env.CLERK_SECRET_KEY,Accept:'application/json','User-Agent':'Split-API/0.2'}, redirect:'error'
   });
-  if (!response.ok) throw new Error('Identity service unavailable');
+  if (!response.ok) {
+    // Identity enrichment can be retried. Never claim evidence from a stale profile.
+    console.warn(JSON.stringify({event:'identity_lookup_unavailable',status:response.status}));
+    return;
+  }
   const user: ClerkUser = await response.json();
   if (user.id !== userID) throw new Error('Identity mismatch');
   await saveProfile(env.DB, verifiedProfile(user));

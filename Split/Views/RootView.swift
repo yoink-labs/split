@@ -26,17 +26,9 @@ struct WelcomeView: View {
             VStack(alignment:.leading,spacing:28) {
                 HStack(spacing:9) { Image("SplitLogo").resizable().frame(width:42,height:42).clipShape(RoundedRectangle(cornerRadius:11)).accessibilityLabel("Split logo"); Text("split").font(.system(size:32,weight:.bold,design:.rounded)); Spacer(); Text("BY YOINK LABS").font(.system(size:10,weight:.semibold)).tracking(2) }.foregroundStyle(Palette.green).padding(.top,28)
                 VStack(alignment:.leading,spacing:14) {
-                    Text("Good company.\nClear balances.").font(.system(size:45,weight:.semibold,design:.rounded)).tracking(-2).minimumScaleFactor(0.7)
-                    Text("Share the trip, the table, the everyday.\nWe’ll keep the numbers simple.").font(.body).foregroundStyle(.secondary).lineSpacing(4)
-                }.padding(.top,12)
-                ZStack {
-                    RoundedRectangle(cornerRadius:32).fill(Palette.lime.opacity(0.55))
-                    VStack(alignment:.leading,spacing:18) {
-                        HStack { Image(systemName:"sun.max.fill").foregroundStyle(Palette.ink); Text("THE WEEKEND, SORTED").font(.caption2.weight(.semibold)).tracking(1.4); Spacer() }
-                        HStack(alignment:.bottom) { VStack(alignment:.leading,spacing:3) { Text("All square.").font(.system(size:32,weight:.semibold,design:.rounded)); Text("More memories. Less math.").font(.subheadline) }; Spacer(); Image(systemName:"checkmark").font(.title2.weight(.bold)).frame(width:52,height:52).background(.white.opacity(0.7)).clipShape(Circle()) }
-                        HStack(spacing:-8) { ForEach(["A","M","J"],id:\.self) { n in Avatar(name:n,size:34).background(.white).clipShape(Circle()).overlay(Circle().stroke(.white,lineWidth:3)) }; Spacer(); Text("Always free").font(.caption.weight(.semibold)).padding(.horizontal,12).padding(.vertical,7).background(.white.opacity(0.6)).clipShape(Capsule()) }
-                    }.foregroundStyle(Palette.ink).padding(24)
-                }.frame(minHeight:208)
+                    Text("Share expenses").font(.largeTitle.bold())
+                    Text("Keep track of who paid and what everyone owes.").foregroundStyle(.secondary)
+                }.padding(.vertical,16)
                 VStack(spacing:12) {
                     if let error = session.error { ErrorText(text:error) }
                     if store.pendingInvite != nil { Text("Your invitation is ready. Sign in to join.").font(.subheadline).foregroundStyle(Palette.green) }
@@ -48,7 +40,7 @@ struct WelcomeView: View {
                 VStack(spacing:12) {
                     Text("One Yoink account. Here, Wanderer, and beyond.").font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
                     Button("Take a look around") { session.demo() }.font(.subheadline.weight(.medium))
-                    Text("No subscription. No limits behind a paywall.").font(.caption2).foregroundStyle(.secondary)
+
                 }.frame(maxWidth:.infinity)
             }.padding(24).frame(maxWidth:560)
         }.frame(maxWidth:.infinity).background(Palette.background).sheet(isPresented:$emailSheet) { EmailView() }
@@ -68,8 +60,8 @@ struct EmailView: View {
                 if session.awaitingCode {
                     Section { TextField("Six-digit code",text:$code).keyboardType(.numberPad).textContentType(.oneTimeCode).accessibilityIdentifier("email-code"); Button("Verify code") { Task { await session.verify(code) } }.disabled(code.count != 6); Button("Send a new code") { Task { await session.resend() } } }
                 } else {
-                    Section { Toggle("Create a new account",isOn:$create); TextField("Email address",text:$email).textContentType(.emailAddress).keyboardType(.emailAddress).textInputAutocapitalization(.never).autocorrectionDisabled()
-                        if create { SecureField("Password · 15+ characters",text:$password).textContentType(.newPassword); Text("Your Yoink account needs a password at signup. Next time, just use an email code.").font(.caption).foregroundStyle(.secondary) }
+                    Section { Picker("Account",selection:$create) { Text("Sign in").tag(false); Text("Sign up").tag(true) }.pickerStyle(.segmented); TextField("Email address",text:$email).accessibilityIdentifier("signup-email").textContentType(.emailAddress).keyboardType(.emailAddress).textInputAutocapitalization(.never).autocorrectionDisabled()
+                        if create { SecureField("Password · 15+ characters",text:$password).accessibilityIdentifier("signup-password").textContentType(.newPassword); Text("Your Yoink account needs a password at signup. Next time, just use an email code.").font(.caption).foregroundStyle(.secondary) }
                         Button("Email me a code") { Task { await session.sendCode(email:email,password:password,create:create) } }.disabled(!email.contains("@") || (create && password.count < 15))
                     }
                 }

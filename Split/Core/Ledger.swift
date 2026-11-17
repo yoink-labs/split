@@ -5,6 +5,8 @@ struct Person: Codable, Identifiable, Equatable {
     var groupID: String
     var userID: String?
     var name: String
+    var email: String?
+    var phone: String?
 }
 struct ExpenseGroup: Codable, Identifiable, Equatable {
     var id: String = UUID().uuidString
@@ -29,6 +31,7 @@ struct LedgerEntry: Codable, Identifiable, Equatable {
     var paidBy: String
     var splits: [Portion]
     var kind: String = "expense"
+    var editable: Bool?
     var splitMode: SplitMode = .equal
     var createdAt: String = ISO8601DateFormatter().string(from: Date())
 }

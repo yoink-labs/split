@@ -17,6 +17,8 @@ struct GroupsView: View {
     @EnvironmentObject var session: SessionStore
     @EnvironmentObject var store: ExpenseStore
     @State private var showCreate = false
+    @State private var joining = false
+    @State private var path: [String] = []
     private var groups: [ExpenseGroup] { store.groups.filter { friends ? $0.kind == "friend" : $0.kind != "friend" } }
     private var totals: [(String,Int64)] {
         Money.currencies.compactMap { currency in
@@ -28,29 +30,33 @@ struct GroupsView: View {
         }
     }
     var body: some View {
-        NavigationStack {
+        NavigationStack(path:$path) {
             ScrollView {
                 VStack(alignment:.leading,spacing:24) {
-                    HStack { VStack(alignment:.leading,spacing:5) { Text(session.isDemo ? "A LITTLE PREVIEW" : "LESS MATH, MORE LIVING").font(.system(size:10,weight:.semibold)).tracking(1.8).foregroundStyle(.secondary); Text(friends ? "Better together." : "Your shared life.").font(.system(size:32,weight:.semibold,design:.rounded)).tracking(-1) }; Spacer(); Image("SplitLogo").resizable().frame(width:46,height:46).clipShape(RoundedRectangle(cornerRadius:13)).accessibilityLabel("Split logo") }.padding(.top,12)
-                    if !friends { summary }
+                    HStack { Text(friends ? "Friends" : "Groups").font(.largeTitle.bold()).accessibilityAddTraits(.isHeader); Spacer()
+                        Image("SplitLogo").resizable().frame(width:40,height:40).clipShape(RoundedRectangle(cornerRadius:11)).accessibilityHidden(true)
+                    }
+                    if !friends && !groups.isEmpty { summary }
+                    HStack {
+                        Button { showCreate=true } label: { Label(friends ? "Add friend" : "New group",systemImage:"plus") }.buttonStyle(.borderedProminent)
+                        if !friends { Button { joining=true } label: { Label("Join group",systemImage:"link") }.buttonStyle(.bordered) }
+                    }.controlSize(.large)
                     if store.isDemo { Label("Sample groups · changes stay in this preview",systemImage:"sparkles").font(.caption).foregroundStyle(.secondary) }
                     if store.pending > 0 || !store.online { Label(store.online ? "\(store.pending) changes waiting to sync" : "Offline · new expenses are saved here",systemImage:store.online ? "arrow.triangle.2.circlepath" : "wifi.slash").font(.caption).foregroundStyle(Palette.green) }
                     if let error = store.error { VStack(alignment:.leading,spacing:8) { ErrorText(text:error); Button("Retry sync") { Task { await store.sync() } }.font(.caption.bold()) } }
-                    HStack { Text(friends ? "Friends" : "Groups").font(.title3.bold()); Spacer(); Text("\(groups.count)").font(.subheadline).foregroundStyle(.secondary); Button { showCreate=true } label: { Image(systemName:"plus").font(.headline).frame(width:34,height:34).background(Palette.green.opacity(0.08)).clipShape(Circle()) }.accessibilityLabel(friends ? "Add friend" : "Create group") }
                     if groups.isEmpty {
-                        Card { VStack(alignment:.leading,spacing:16) { Image(systemName:friends ? "person.2" : "sparkles").font(.largeTitle).foregroundStyle(Palette.green); Text(friends ? "Start with a friend." : "Every good plan starts here.").font(.title2.weight(.semibold)); Text(friends ? "Keep a running tab with someone. Add their name, then invite them with a link." : "Make a group for a trip, your home, or whatever brings you together.").foregroundStyle(.secondary); Button(friends ? "Add a friend" : "Make your first group") { showCreate=true }.buttonStyle(SolidButton()) } }
+                        ContentUnavailableView(friends ? "No friends yet" : "No groups yet",systemImage:friends ? "person.2" : "person.3",description:Text(friends ? "Add a friend to start a shared tab." : "Create a group or join one with an invite code."))
                     }
-                    ForEach(groups) { group in NavigationLink { GroupDetail(groupID:group.id) } label: { GroupCard(group:group) }.buttonStyle(.plain) }
-                    Text("Good friends don’t need a subscription.").font(.caption).foregroundStyle(.secondary).frame(maxWidth:.infinity).padding(.top,12)
+                    ForEach(groups) { group in NavigationLink(value:group.id) { GroupCard(group:group) }.buttonStyle(.plain) }
                 }.padding(24).frame(maxWidth:680)
-            }.frame(maxWidth:.infinity).background(Palette.background).toolbar(.hidden,for:.navigationBar).refreshable { await store.sync() }.sheet(isPresented:$showCreate) { CreateGroupView(friend:friends) }
+            }.frame(maxWidth:.infinity).background(Palette.background).toolbar(.hidden,for:.navigationBar).refreshable { await store.sync() }.navigationDestination(for:String.self) { GroupDetail(groupID:$0) }.sheet(isPresented:$joining) { JoinGroupView { id in path.append(id) } }.sheet(isPresented:$showCreate) { CreateGroupView(friend:friends) }
         }
     }
     private var summary: some View {
         VStack(alignment:.leading,spacing:16) {
-            HStack { Text("AT A GLANCE").font(.system(size:10,weight:.semibold)).tracking(1.8); Spacer(); Image(systemName:"arrow.up.right") }.opacity(0.75)
-            if totals.isEmpty { Text("A fresh start.").font(.system(size:33,weight:.medium,design:.rounded)); Text("Your balances will feel right at home here.").font(.subheadline).opacity(0.75) }
-            else { ForEach(totals,id:\.0) { currency,value in HStack(alignment:.firstTextBaseline) { Text(Money.text(abs(value),currency)).font(.system(size:28,weight:.medium,design:.rounded)).minimumScaleFactor(0.6); Spacer(); Text(value > 0 ? "you’re owed" : "you owe").font(.caption).opacity(0.8) } }; Text("Each currency stays in its own lane.").font(.caption).opacity(0.7) }
+            HStack { Text("Your balance").font(.subheadline.weight(.semibold)); Spacer() }.opacity(0.75)
+            if totals.isEmpty { Text("All settled").font(.largeTitle.weight(.semibold)) }
+            else { ForEach(totals,id:\.0) { currency,value in HStack(alignment:.firstTextBaseline) { Text(Money.text(abs(value),currency)).font(.title.weight(.semibold)).minimumScaleFactor(0.6); Spacer(); Text(value > 0 ? "you’re owed" : "you owe").font(.caption).opacity(0.8) } } }
         }.padding(24).foregroundStyle(Palette.lime).frame(maxWidth:.infinity,alignment:.leading).background(Palette.ink).clipShape(RoundedRectangle(cornerRadius:28))
     }
 }
@@ -66,7 +72,7 @@ struct GroupCard: View {
                 Spacer(); Image(systemName:"chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.secondary).padding(.top,8)
             }
             Divider().padding(.vertical,12)
-            HStack { HStack(spacing:-8) { ForEach(Array(group.members.prefix(4))) { p in Avatar(name:p.name,size:28).overlay(Circle().stroke(Palette.card,lineWidth:2)) } }; Spacer(); Text(store.entries(in:group).isEmpty ? "Ready for your first expense" : "\(store.entries(in:group).count) shared moments").font(.caption).foregroundStyle(.secondary) }
+            HStack { HStack(spacing:-8) { ForEach(Array(group.members.prefix(4))) { p in Avatar(name:p.name,size:28).overlay(Circle().stroke(Palette.card,lineWidth:2)) } }; Spacer(); Text(store.entries(in:group).isEmpty ? "Ready for your first expense" : "\(store.entries(in:group).count) entries").font(.caption).foregroundStyle(.secondary) }
         }
     }
 }
@@ -88,10 +94,16 @@ struct AccountView: View {
     @EnvironmentObject var session: SessionStore
     @EnvironmentObject var store: ExpenseStore
     @State private var confirmSignOut = false
+    private var version: String {
+        let info = Bundle.main.infoDictionary
+        let version = info?["CFBundleShortVersionString"] as? String ?? ""
+        let build = info?["CFBundleVersion"] as? String ?? ""
+        return "Split \(version) (\(build))"
+    }
     var body: some View { NavigationStack { Form {
         Section { HStack(spacing:16) { Avatar(name:session.displayName,size:56); VStack(alignment:.leading) { Text(session.displayName).font(.title2.bold()); Text(session.isDemo ? "Sample preview" : "Your Yoink account").foregroundStyle(.secondary) } } }
         Section("Made for everyone") { Label("Free. Every feature.",systemImage:"heart"); Text("Split is a Yoink Labs app. No subscription, no Pro tier. Just a simpler way to share.").foregroundStyle(.secondary); Link("Visit Yoink Labs",destination:URL(string:"https://yoinklabs.dev")!) }
         Section("Sync") { Text(session.isDemo ? "Sample data stays on this device." : store.pending == 0 ? "No pending changes" : "\(store.pending) changes saved on this device"); if !session.isDemo { Button("Sync now") { Task { await store.sync() } } }; if let error=store.error { ErrorText(text:error) } }
-        Section { Button(session.isDemo ? "Leave preview & sign in" : "Sign out",role:.destructive) { confirmSignOut=true }; if let error=session.error { ErrorText(text:error) }; Text("Split 0.1.0 (2)").font(.caption).foregroundStyle(.secondary) }
+        Section { Button(session.isDemo ? "Leave preview & sign in" : "Sign out",role:.destructive) { confirmSignOut=true }; if let error=session.error { ErrorText(text:error) }; Text(version).font(.caption).foregroundStyle(.secondary) }
     }.navigationTitle("You").confirmationDialog("Sign out?",isPresented:$confirmSignOut,titleVisibility:.visible) { Button("Sign out",role:.destructive) { Task { await session.signOut() } } } message: { Text(store.pending > 0 ? "\(store.pending) unsynced changes will stay on this device for this account. Sign back in to upload them." : "Your shared expenses will be here when you return.") } } }
 }

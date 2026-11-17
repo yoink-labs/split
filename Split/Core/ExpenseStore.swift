@@ -52,10 +52,10 @@ import ClerkKit
     }
     func entries(in group: ExpenseGroup) -> [LedgerEntry] { entries.filter { $0.groupID == group.id } }
     func group(_ id: String) -> ExpenseGroup? { groups.first { $0.id == id } }
-    func create(name: String, kind: String, currency: String, names: [String], userID: String, displayName: String) throws {
+    func create(name: String, kind: String, currency: String, people: [MemberDraft], userID: String, displayName: String) throws {
         guard scope != nil else { throw LedgerError.invalid("Sign in again before adding a group.") }
         let id = UUID().uuidString
-        let members = [Person(groupID: id, userID: userID, name: displayName)] + names.map { Person(groupID: id, name: $0) }
+        let members = [Person(groupID: id, userID: userID, name: displayName)] + people.map { Person(id:$0.id, groupID:id, userID:$0.userID, name:$0.name, email:$0.email, phone:$0.phone) }
         let group = ExpenseGroup(id: id, name: name, kind: kind, currency: currency, members: members)
         var next = state; next.snapshot.groups.insert(group, at: 0)
         if !demo { next.outbox.append(OutboxItem(id: id, path: "/v1/groups", body: try JSONEncoder().encode(group))) }
@@ -102,21 +102,95 @@ import ClerkKit
         } catch { if current == generation { self.error = error.localizedDescription } }
     }
     private func syncAfterCurrent() async { await Task.yield(); await sync() }
-    func invite(group: ExpenseGroup, memberID: String) async throws -> URL {
-        guard !demo else { throw LedgerError.invalid("Sign in to create a real invitation. This is a sample group.") }
+    private func waitForSync() async throws {
+        let current = generation
+        while syncing && current == generation { try await Task.sleep(for: .milliseconds(80)) }
+        guard scope != nil, current == generation else { throw LedgerError.invalid("Sign in again to continue.") }
+    }
+
+    private func post(_ path: String, _ data: Data) async throws -> Data {
+        guard online else { throw LedgerError.invalid("Connect to the internet to continue.") }
+        let current = generation
+        try await waitForSync()
+        if pending > 0 { await sync() }
+        guard current == generation, pending == 0 else { throw LedgerError.invalid(error ?? "Wait for your changes to finish syncing.") }
+        let result = try await request(path: path, body: data)
+        guard current == generation else { throw LedgerError.invalid("Your account changed. Try again.") }
+        return result
+    }
+
+    func search(_ query: String) async throws -> [SplitUser] {
+        if demo { return [] }
+        let result = try await post("/v1/people/search", JSONEncoder().encode(["query":query]))
+        return try JSONDecoder().decode([SplitUser].self, from:result)
+    }
+
+    func addMember(groupID: String, draft: MemberDraft) async throws -> String {
+        guard let index = groups.firstIndex(where: { $0.id == groupID }) else { throw LedgerError.invalid("Group unavailable.") }
+        if demo {
+            var next = state
+            next.snapshot.groups[index].members.append(Person(id:draft.id,groupID:groupID,userID:draft.userID,name:draft.name))
+            try persist(next)
+            return draft.id
+        }
+        let data = try await post("/v1/groups/\(groupID)/members", JSONEncoder().encode(draft))
+        let result = try JSONDecoder().decode(MemberResult.self,from:data)
+        try await waitForSync()
         await sync()
-        guard !state.outbox.contains(where: { $0.id == group.id }) else { throw LedgerError.invalid("Connect to the internet and sync this group before inviting someone.") }
-        let data = try await request(path: "/v1/groups/\(group.id)/invites", body: JSONEncoder().encode(["memberID": memberID]))
-        return try JSONDecoder().decode(InviteResponse.self, from: data).url
+        return result.id
     }
+
+    func change(_ original: LedgerEntry, to replacement: LedgerEntry?) async throws {
+        guard demo || original.editable == true else { throw LedgerError.invalid("Only the person who recorded this entry can change it.") }
+        if demo {
+            var next = state
+            next.snapshot.entries.removeAll { $0.id == original.id }
+            if let replacement { next.snapshot.entries.append(replacement) }
+            try persist(next)
+        } else {
+            let action = replacement == nil ? "delete" : "edit"
+            _ = try await post("/v1/entries/\(original.id)/\(action)", JSONEncoder().encode(["original":original,"entry":replacement]))
+            try await waitForSync()
+            await sync()
+        }
+    }
+
+    func invite(group: ExpenseGroup, memberID: String? = nil) async throws -> URL {
+        guard !demo else { throw LedgerError.invalid("Sign in to share a group invitation.") }
+        let data = try await post("/v1/groups/\(group.id)/invites", JSONEncoder().encode(["memberID":memberID]))
+        return try JSONDecoder().decode(InviteResponse.self, from:data).url
+    }
+
+    static func inviteToken(_ input: String) -> String? {
+        var raw = input.trimmingCharacters(in:.whitespacesAndNewlines)
+        if let url = URL(string:raw), url.scheme != nil {
+            let web = url.scheme == "https" && url.host == "split-api.yoinklabs.dev" && url.pathComponents.count == 3 && url.pathComponents[1] == "join"
+            let app = url.scheme == "com.yoinklabs.split" && url.host == "join" && url.pathComponents.count == 2
+            guard web || app else { return nil }
+            raw = url.lastPathComponent
+        }
+        if raw.range(of:#"^[a-f0-9-]{72}$"#,options:.regularExpression) != nil { return raw }
+        let code = raw.uppercased().filter { !$0.isWhitespace && $0 != "-" }
+        return code.range(of:#"^[A-HJ-NP-Z2-9]{12}$"#,options:.regularExpression) == nil ? nil : code
+    }
+
     func receive(_ url: URL) {
-        if url.host == "split-api.yoinklabs.dev", url.path.hasPrefix("/join/") { pendingInvite = url.lastPathComponent }
-        else if url.scheme == "com.yoinklabs.split", url.host == "join" { pendingInvite = url.lastPathComponent }
+        if let token = Self.inviteToken(url.absoluteString) { pendingInvite = token }
     }
+
+    func accept(_ token: String) async throws -> String? {
+        guard !demo else { throw LedgerError.invalid("Sign in to join a group.") }
+        let result = try await post("/v1/join", JSONEncoder().encode(["token":token]))
+        let groupID = try JSONDecoder().decode(JoinResult.self,from:result).groupID
+        pendingInvite = nil
+        try await waitForSync()
+        await sync()
+        return groupID
+    }
+
     func join() async {
-        guard let token = pendingInvite, scope != nil else { return }
-        guard !demo else { error = "Leave the sample and sign in to accept your invitation."; return }
-        do { _ = try await request(path: "/v1/join", body: JSONEncoder().encode(["token":token])); pendingInvite = nil; await sync() }
+        guard let token = pendingInvite else { return }
+        do { _ = try await accept(token) }
         catch { self.error = error.localizedDescription }
     }
 }
@@ -133,3 +207,19 @@ enum Fixtures {
         return Snapshot(groups:[group,house],entries:e)
     }
 }
+
+struct SplitUser: Decodable, Identifiable {
+    var userID: String
+    var name: String
+    var username: String?
+    var id: String { userID }
+}
+struct MemberDraft: Codable {
+    var id = UUID().uuidString
+    var name: String
+    var email: String?
+    var phone: String?
+    var userID: String?
+}
+private struct MemberResult: Decodable { var id: String }
+private struct JoinResult: Decodable { var groupID: String? }

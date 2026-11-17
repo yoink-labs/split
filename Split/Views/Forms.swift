@@ -5,29 +5,50 @@ struct CreateGroupView: View {
     @EnvironmentObject var store: ExpenseStore
     @Environment(\.dismiss) var dismiss
     @State private var name = ""
-    @State private var people = ""
+    @State private var people: [MemberDraft] = []
+    @State private var choosing = false
     @State private var kind = "trip"
-    @State private var currency = "ARS"
+    @State private var currency = Money.currencies.contains(Locale.current.currency?.identifier ?? "") ? Locale.current.currency!.identifier : "USD"
     @State private var error: String?
     var body: some View { NavigationStack { Form {
-        Section { Text(friend ? "A little tab for two." : "Make room for everyone.").font(.title2.weight(.semibold)); Text(friend ? "Add your friend’s name. You can send them an invitation once the tab is created." : "Name the plan and add the people. Invite them after you create the group.").foregroundStyle(.secondary) }
-        Section(friend ? "Friend" : "The group") {
+        Section(friend ? "Friend" : "Group") {
             TextField(friend ? "Friend’s name" : "Group name",text:$name).accessibilityIdentifier("group-name")
-            if !friend { Picker("For",selection:$kind) { Text("A trip").tag("trip"); Text("Our home").tag("home") }; TextField("Names, separated by commas",text:$people).accessibilityIdentifier("group-members"); Text("You’re already included.").font(.caption).foregroundStyle(.secondary) }
-            Picker("Default currency",selection:$currency) { ForEach(Money.currencies,id:\.self) { Text($0).tag($0) } }
+            if !friend { Picker("Type",selection:$kind) { Text("Trip").tag("trip"); Text("Home").tag("home") } }
+            Picker("Currency",selection:$currency) { ForEach(Money.currencies,id:\.self) { Text($0).tag($0) } }
         }
+        Section {
+            ForEach(people,id:\.id) { person in
+                HStack { Text(person.name); Spacer(); Button(role:.destructive) { people.removeAll { $0.id==person.id } }
+                    label: { Image(systemName:"minus.circle") }.accessibilityLabel("Remove "+person.name) }
+            }
+            if !friend || people.isEmpty { Button { choosing=true } label: { Label(friend ? "Choose friend" : "Add person",systemImage:"person.badge.plus") } }
+        } footer: { Text(friend ? "Choose a Split user, or enter a name to invite your friend later." : "You’re included. People can also join later by link or code.") }
         if let error { ErrorText(text:error) }
-        Section { Button(friend ? "Add friend" : "Create group") { save() }.disabled(name.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty) }
-    }.navigationTitle(friend ? "New friend" : "New group").navigationBarTitleDisplayMode(.inline).toolbar { ToolbarItem(placement:.cancellationAction) { Button("Cancel") { dismiss() } } } } }
+
+    }.navigationTitle(friend ? "New friend" : "New group").navigationBarTitleDisplayMode(.inline).toolbar {
+        ToolbarItem(placement:.cancellationAction) { Button("Cancel") { dismiss() } }
+        ToolbarItem(placement:.confirmationAction) { Button("Create") { save() }.disabled(name.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty) }
+    }.sheet(isPresented:$choosing) {
+        MemberEditor { draft in
+            if let id=draft.userID, people.contains(where:{$0.userID==id}) { throw LedgerError.invalid("This person is already included.") }
+            people.append(draft); if friend { name=draft.name }
+        }
+    } } }
     private func save() {
         let clean=name.trimmingCharacters(in:.whitespacesAndNewlines)
-        let names=friend ? [clean] : people.split(separator:",").map { $0.trimmingCharacters(in:.whitespacesAndNewlines) }.filter { !$0.isEmpty }
-        guard !clean.isEmpty, clean.count<=80, names.count<=49, names.allSatisfy({$0.count<=60}),let id=session.userID else { error="Use a shorter name and up to 49 other people."; return }
-        do { try store.create(name:clean,kind:friend ? "friend" : kind,currency:currency,names:names,userID:id,displayName:session.displayName); dismiss() } catch { self.error=error.localizedDescription }
+        let participants = friend && people.isEmpty ? [MemberDraft(name:clean)] : people
+        guard !clean.isEmpty, clean.count<=80, participants.count<=49, participants.allSatisfy({$0.name.count<=60}), let id=session.userID else { error="Use a shorter name and up to 49 other people."; return }
+        do { try store.create(name:clean,kind:friend ? "friend" : kind,currency:currency,people:participants,userID:id,displayName:session.displayName); dismiss() } catch { self.error=error.localizedDescription }
     }
 }
 struct AddExpenseView: View {
     var group: ExpenseGroup
+    var original: LedgerEntry? = nil
+    @State private var choosing = false
+    @State private var initialized = false
+    @State private var saving = false
+    @FocusState private var amountFocused: Bool
+    private var current: ExpenseGroup { store.group(group.id) ?? group }
     @EnvironmentObject var store: ExpenseStore
     @EnvironmentObject var session: SessionStore
     @Environment(\.dismiss) var dismiss
@@ -39,17 +60,23 @@ struct AddExpenseView: View {
     @State private var selected = Set<String>()
     @State private var values: [String:String] = [:]
     @State private var error: String?
-    private var people: [String] { group.members.filter { selected.contains($0.id) }.map(\.id) }
+    private var people: [String] { current.members.filter { selected.contains($0.id) }.map(\.id) }
     private var portions: [Portion]? { guard let total=Money.parse(amount) else{return nil};return try? Ledger.split(total:total,people:people,mode:mode,values:values) }
     var body: some View { NavigationStack { Form {
         Section {
-            TextField("What was it for?",text:$title).font(.title3.weight(.medium)).accessibilityIdentifier("expense-title")
-            HStack { TextField("0.00",text:$amount).font(.system(size:36,weight:.medium,design:.rounded)).keyboardType(.decimalPad).accessibilityIdentifier("expense-amount"); Picker("Currency",selection:$currency) { ForEach(Money.currencies,id:\.self) { Text($0).tag($0) } }.labelsHidden().accessibilityLabel("Currency") }
+            HStack {
+                TextField("0.00",text:$amount).font(.largeTitle.weight(.semibold)).keyboardType(.decimalPad)
+                    .focused($amountFocused).accessibilityLabel("Amount").accessibilityIdentifier("expense-amount")
+                Picker("Currency",selection:$currency) { ForEach(Money.currencies,id:\.self) { Text($0).tag($0) } }
+                    .labelsHidden().accessibilityLabel("Currency")
+            }
+            TextField("Description (optional)",text:$title).accessibilityIdentifier("expense-title")
+
         }
-        Section { Picker("Paid by",selection:$payer) { ForEach(group.members) { Text($0.userID == session.userID ? "You" : $0.name).tag($0.id) } } }
+        Section { Picker("Paid by",selection:$payer) { ForEach(current.members) { Text($0.userID == session.userID ? "You" : $0.name).tag($0.id) } } }
         Section {
-            Picker("Split",selection:$mode) { ForEach(SplitMode.allCases,id:\.self) { Text($0.title).tag($0) } }.pickerStyle(.segmented)
-            ForEach(group.members) { person in
+            Picker("Split",selection:$mode) { ForEach(SplitMode.allCases,id:\.self) { Text($0.title).tag($0) } }.pickerStyle(.menu)
+            ForEach(current.members) { person in
                 HStack(spacing:12) {
                     Button { if selected.contains(person.id) { selected.remove(person.id) } else { selected.insert(person.id) } } label: { Image(systemName:selected.contains(person.id) ? "checkmark.circle.fill" : "circle").foregroundStyle(selected.contains(person.id) ? Palette.green : .secondary) }.buttonStyle(.borderless).accessibilityLabel("Include \(person.name)").accessibilityValue(selected.contains(person.id) ? "Yes" : "No")
                     Text(person.userID == session.userID ? "You" : person.name).font(.subheadline)
@@ -60,17 +87,51 @@ struct AddExpenseView: View {
                     }
                 }.padding(.vertical,4)
             }
+            Button { choosing=true } label: { Label("Add person",systemImage:"person.badge.plus") }
         } header: { Text("How to split it") } footer: { Text(mode == .equal ? "Any extra cents go to the first people in the list." : mode == .exact ? "Amounts must match the total exactly." : mode == .percent ? "Percentages must add up to 100%." : "Use relative shares, like 2 for a couple and 1 for one person.") }
-        if mode != .equal, let portions { Section("Preview") { ForEach(portions,id:\.memberID) { p in HStack { Text(group.members.first{$0.id==p.memberID}?.name ?? ""); Spacer(); Text(Money.text(p.amount,currency)) } } } }
+        if mode != .equal, let portions { Section("Preview") { ForEach(portions,id:\.memberID) { p in HStack { Text(current.members.first{$0.id==p.memberID}?.name ?? ""); Spacer(); Text(Money.text(p.amount,currency)) } } } }
         if let error { Section { ErrorText(text:error) } }
-        Section { Button { save() } label: { Text(store.online ? "Save expense" : "Save offline").frame(maxWidth:.infinity).font(.headline) }.accessibilityIdentifier("save-expense") }
-    }.navigationTitle("Add an expense").navigationBarTitleDisplayMode(.inline).toolbar { ToolbarItem(placement:.cancellationAction) { Button("Cancel") { dismiss() } } }.onAppear { currency=group.currency; payer=group.members.first{$0.userID==session.userID}?.id ?? group.members[0].id; selected=Set(group.members.map(\.id)) }.onChange(of:mode) { _,_ in values=[:];error=nil } } }
-    private func save() {
+    }.navigationTitle(original == nil ? "New expense" : "Edit expense").navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement:.cancellationAction) { Button("Cancel") { dismiss() } }
+            ToolbarItem(placement:.confirmationAction) {
+                Button("Save") { Task { await save() } }.disabled(saving || amount.isEmpty).accessibilityIdentifier("save-expense")
+            }
+        }
+        .sheet(isPresented:$choosing) {
+            MemberEditor { draft in
+                let id=try await store.addMember(groupID:group.id,draft:draft)
+                selected.insert(id)
+            }
+        }
+        .onAppear {
+            guard !initialized else { return }
+            initialized=true
+            currency=original?.currency ?? group.currency
+            payer=original?.paidBy ?? current.members.first{$0.userID==session.userID}?.id ?? current.members.first?.id ?? ""
+            selected=Set(original?.splits.map(\.memberID) ?? current.members.map(\.id))
+            if let original {
+                title=original.title; amount=Money.input(original.amount)
+                mode=original.splitMode == .equal ? .equal : .exact
+                values=Dictionary(uniqueKeysWithValues:original.splits.map { ($0.memberID,Money.input($0.amount)) })
+            } else { amountFocused=true }
+        }
+    } }
+    private func save() async {
+        guard !saving else { return }
+        saving=true; defer { saving=false }
         do {
-            guard !title.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty,title.count<=120 else { throw LedgerError.invalid("Give this expense a short description.") }
+            guard title.count<=120 else { throw LedgerError.invalid("Give this expense a short description.") }
             guard let total=Money.parse(amount),total>0 else { throw LedgerError.invalid("Enter an amount greater than zero, with up to two decimal places.") }
             let splits=try Ledger.split(total:total,people:people,mode:mode,values:values)
-            try store.add(LedgerEntry(groupID:group.id,title:title.trimmingCharacters(in:.whitespacesAndNewlines),amount:total,currency:currency,paidBy:payer,splits:splits,splitMode:mode)); dismiss()
+            let description=title.trimmingCharacters(in:.whitespacesAndNewlines)
+            var entry=LedgerEntry(groupID:group.id,title:description.isEmpty ? "Shared expense" : description,amount:total,currency:currency,paidBy:payer,splits:splits,splitMode:mode)
+            if let original {
+                entry.id=original.id; entry.createdAt=original.createdAt; entry.editable=original.editable
+                if entry.splits==original.splits { entry.splitMode=original.splitMode }
+                try await store.change(original,to:entry)
+            } else { try store.add(entry) }
+            dismiss()
         } catch { self.error=error.localizedDescription }
     }
 }

@@ -34,8 +34,12 @@ export const tools = [
     placeholders: list('Names of unclaimed members.', text('Name.',60))
   }, ['name','self']),
   op('members_list','List claimed and placeholder member IDs.', { group }, ['group'], true),
-  op('members_add','Add a placeholder to an existing group.', { group, name: text('Placeholder name.',60) }, ['group','name']),
-  op('invite','Generate an invitation for a placeholder. Returns a link and its redeemable code.', { group, member }, ['group','member']),
+  op('members_lookup','Find a Split user by exact email, username, or a shared group member’s name.', { query: text('Search term.',254) }, ['query'], true),
+  op('members_add','Add a placeholder or an existing Split user to a group.', {
+    group, name: text('Member display name.',60), user: text('Existing user ID returned by members lookup.',128),
+    email: text('Optional placeholder email for verified matching.',254), phone: text('Optional placeholder contact number.',32)
+  }, ['group','name']),
+  op('invite','Create a group invitation, or target a placeholder member. Returns a link and code.', { group, member }, ['group']),
   op('join','Claim an invited member slot with a Split invite link or code.', { invite: text('Invite link or code.',512) }, ['invite']),
   op('expenses_list','List expenses in a group. Amounts in results are integer minor units.', { group }, ['group'], true),
   op('expenses_add','Record an expense with an equal, exact or percentage allocation.', { group, ...allocation }, ['group','title','amount','payer']),

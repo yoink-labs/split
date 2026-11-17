@@ -56,3 +56,31 @@ The local cache/outbox uses file protection, atomic writes, per-account filename
 - `npm audit --omit=dev` reports no production vulnerabilities. The local test toolchain has upstream advisories (picomatch/Vite); no Vite dev server is deployed.
 
 See [release status](docs/TESTFLIGHT.md) for TestFlight distribution and [fresh screenshots](screenshots/README.md).
+
+## CLI and MCP
+
+Install the CLI and connect it to your Split account.
+
+```sh
+brew install yoink-labs/tap/split
+split login
+split groups list --json
+```
+
+Approve the code in **You → Connected computers** in the signed-in iPhone app. The same screen lists devices and revokes access. Scripts can provide `SPLIT_TOKEN` and `SPLIT_API_URL`. The CLI runs ledger commands on Split’s Worker.
+
+For Claude Desktop or Cursor, add this entry to your MCP configuration. Use the path reported by `command -v split`.
+
+```json
+{"mcpServers":{"split":{"command":"/opt/homebrew/bin/split","args":["mcp"]}}}
+```
+
+For Codex, add this to `~/.codex/config.toml`.
+
+```toml
+[mcp_servers.split]
+command = "/opt/homebrew/bin/split"
+args = ["mcp"]
+```
+
+Remote MCP clients can use Streamable HTTP at `https://split-api.yoinklabs.dev/mcp` with a device bearer token. See the [CLI and MCP guide](cli/README.md) for expense splits, placeholder invitations, lookup, confirmation previews and remote client configuration.

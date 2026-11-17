@@ -1,4 +1,6 @@
 import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
+import http from 'node:http';
+import https from 'node:https';
 import { randomUUID } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
@@ -24,19 +26,28 @@ export async function client(env = process.env) {
 
   async function request(path, data, authenticated = true, extraHeaders = {}) {
     if (authenticated && !token) throw new Error('Sign in with split login or set SPLIT_TOKEN.');
-    const response = await fetch(origin + path, {
-      method: data === undefined ? 'GET' : 'POST', redirect: 'error', signal: AbortSignal.timeout(30000),
-      headers: { ...(data === undefined ? {} : { 'Content-Type': 'application/json' }),
-        ...(authenticated ? { Authorization: 'Bearer ' + token } : {}), ...extraHeaders },
-      body: data === undefined ? undefined : JSON.stringify(data)
+    // Node fetch can replay a POST after a 421. Send ledger writes exactly once.
+    const target = new URL(path, origin);
+    const transport = target.protocol === 'https:' ? https : http;
+    const response = await new Promise((resolve, reject) => {
+      const req = transport.request(target, {
+        method: data === undefined ? 'GET' : 'POST', agent: false, signal: AbortSignal.timeout(30000),
+        headers: { ...(data === undefined ? {} : { 'Content-Type': 'application/json' }),
+          ...(authenticated ? { Authorization: 'Bearer ' + token } : {}), ...extraHeaders }
+      }, resolve);
+      req.on('error', reject);
+      req.end(data === undefined ? undefined : JSON.stringify(data));
     });
-    const value = await response.text();
+    const chunks = [];
+    for await (const chunk of response) chunks.push(chunk);
+    const value = Buffer.concat(chunks).toString('utf8');
+    const status = response.statusCode;
     let result;
     try { result = value ? JSON.parse(value) : undefined; }
-    catch { throw new Error('Split returned an unexpected response (HTTP ' + response.status + ').'); }
-    if (!response.ok) {
-      const error = new Error(typeof result?.error === 'string' ? result.error : 'Split request failed (HTTP ' + response.status + ').');
-      error.status = response.status;
+    catch { throw new Error('Split returned an unexpected response (HTTP ' + status + ').'); }
+    if (status < 200 || status >= 300) {
+      const error = new Error(typeof result?.error === 'string' ? result.error : 'Split request failed (HTTP ' + status + ').');
+      error.status = status;
       throw error;
     }
     return result;

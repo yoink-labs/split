@@ -31,7 +31,7 @@ struct GroupsView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment:.leading,spacing:24) {
-                    HStack { VStack(alignment:.leading,spacing:5) { Text(session.isDemo ? "A LITTLE PREVIEW" : "LESS MATH, MORE LIVING").font(.system(size:10,weight:.semibold)).tracking(1.8).foregroundStyle(.secondary); Text(friends ? "Better together." : "Your shared life.").font(.system(size:32,weight:.semibold,design:.rounded)).tracking(-1) }; Spacer(); Avatar(name:session.displayName,size:46) }.padding(.top,12)
+                    HStack { VStack(alignment:.leading,spacing:5) { Text(session.isDemo ? "A LITTLE PREVIEW" : "LESS MATH, MORE LIVING").font(.system(size:10,weight:.semibold)).tracking(1.8).foregroundStyle(.secondary); Text(friends ? "Better together." : "Your shared life.").font(.system(size:32,weight:.semibold,design:.rounded)).tracking(-1) }; Spacer(); Image("SplitLogo").resizable().frame(width:46,height:46).clipShape(RoundedRectangle(cornerRadius:13)).accessibilityLabel("Split logo") }.padding(.top,12)
                     if !friends { summary }
                     if store.isDemo { Label("Sample groups · changes stay in this preview",systemImage:"sparkles").font(.caption).foregroundStyle(.secondary) }
                     if store.pending > 0 || !store.online { Label(store.online ? "\(store.pending) changes waiting to sync" : "Offline · new expenses are saved here",systemImage:store.online ? "arrow.triangle.2.circlepath" : "wifi.slash").font(.caption).foregroundStyle(Palette.green) }
@@ -92,6 +92,6 @@ struct AccountView: View {
         Section { HStack(spacing:16) { Avatar(name:session.displayName,size:56); VStack(alignment:.leading) { Text(session.displayName).font(.title2.bold()); Text(session.isDemo ? "Sample preview" : "Your Yoink account").foregroundStyle(.secondary) } } }
         Section("Made for everyone") { Label("Free. Every feature.",systemImage:"heart"); Text("Split is a Yoink Labs app. No subscription, no Pro tier. Just a simpler way to share.").foregroundStyle(.secondary); Link("Visit Yoink Labs",destination:URL(string:"https://yoinklabs.dev")!) }
         Section("Sync") { Text(session.isDemo ? "Sample data stays on this device." : store.pending == 0 ? "No pending changes" : "\(store.pending) changes saved on this device"); if !session.isDemo { Button("Sync now") { Task { await store.sync() } } }; if let error=store.error { ErrorText(text:error) } }
-        Section { Button(session.isDemo ? "Leave preview & sign in" : "Sign out",role:.destructive) { confirmSignOut=true }; if let error=session.error { ErrorText(text:error) }; Text("Split 0.1.0 (1)").font(.caption).foregroundStyle(.secondary) }
+        Section { Button(session.isDemo ? "Leave preview & sign in" : "Sign out",role:.destructive) { confirmSignOut=true }; if let error=session.error { ErrorText(text:error) }; Text("Split 0.1.0 (2)").font(.caption).foregroundStyle(.secondary) }
     }.navigationTitle("You").confirmationDialog("Sign out?",isPresented:$confirmSignOut,titleVisibility:.visible) { Button("Sign out",role:.destructive) { Task { await session.signOut() } } } message: { Text(store.pending > 0 ? "\(store.pending) unsynced changes will stay on this device for this account. Sign back in to upload them." : "Your shared expenses will be here when you return.") } } }
 }

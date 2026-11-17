@@ -50,8 +50,9 @@ The local cache/outbox uses file protection, atomic writes, per-account filename
 
 - No currency conversion, expense editing/deletion, receipt upload, recurring expenses, or actual money transfer in this first build.
 - Server guardrails: 50 people/group, 100 groups/account, 5,000 entries/account. These are beta capacity safeguards, never paid upgrades.
-- **Confirmed Clerk blocker:** Google sign-in rejects `com.yoinklabs.split://callback` because it is not an authorized redirect URI. Harris must authorize that callback in the existing Yoink Labs production instance. No Clerk dashboard settings were changed. Real Apple/email login and two signed-in devices remain unverified; Apple may also need the bundle ID in its native provider configuration.
-- Account deletion/export and public privacy/support pages are required before public release. This build is for internal testing only.
+- Google now reaches the Google account sign-in page after Harris registered the native callback. Full Google/Apple/email-code completion still needs real-provider testing.
+- Two tagged QA accounts verified production group creation, expense sync, invite generation, universal links, web fallback/custom links, and joining with preexisting balances preserved. QA uses real Clerk sign-in tickets in Debug only; Release contains no ticket-file hook.
+- Account deletion/export, expense editing and broader device coverage remain follow-up work for the beta.
 - `npm audit --omit=dev` reports no production vulnerabilities. The local test toolchain has upstream advisories (picomatch/Vite); no Vite dev server is deployed.
 
-See [release handoff](docs/TESTFLIGHT.md) for Apple's app-record step and internal-only distribution.
+See [release status](docs/TESTFLIGHT.md) for TestFlight distribution and [fresh screenshots](screenshots/README.md).

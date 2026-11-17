@@ -62,11 +62,12 @@ struct InviteView: View {
     @EnvironmentObject var store: ExpenseStore
     @Environment(\.dismiss) var dismiss
     @State private var links: [String:URL] = [:]
+    @State private var copied: String?
     @State private var busy: String?
     @State private var error: String?
     var body: some View { NavigationStack { List {
         Section { Text("Invite each person to their place in the group. Their past expenses will come with them. Links expire after seven days; creating a new one replaces the old link.").font(.subheadline).foregroundStyle(.secondary) }
-        ForEach(group.members) { member in HStack { Avatar(name:member.name); VStack(alignment:.leading) { Text(member.name); if member.userID != nil { Text("Joined").font(.caption).foregroundStyle(.secondary) } }; Spacer(); if member.userID == nil { if let link=links[member.id] { ShareLink(item:link) { Text("Share link") } } else { Button("Create link") { Task { busy=member.id; defer { busy=nil }; do { links[member.id] = try await store.invite(group:group,memberID:member.id) } catch { self.error=error.localizedDescription } } }.disabled(busy != nil) } }; if busy==member.id { ProgressView() } } }
+        ForEach(group.members) { member in HStack { Avatar(name:member.name); VStack(alignment:.leading) { Text(member.name); if member.userID != nil { Text("Joined").font(.caption).foregroundStyle(.secondary) } }; Spacer(); if member.userID == nil { if let link=links[member.id] { Menu { ShareLink(item:link.absoluteString) { Label("Share link",systemImage:"square.and.arrow.up") }; Button { UIPasteboard.general.string=link.absoluteString; copied=member.id } label: { Label("Copy link",systemImage:"doc.on.doc") } } label: { Text(copied == member.id ? "Copied" : "Share link") } } else { Button("Create link") { Task { busy=member.id; defer { busy=nil }; do { links[member.id] = try await store.invite(group:group,memberID:member.id) } catch { self.error=error.localizedDescription } } }.disabled(busy != nil) } }; if busy==member.id { ProgressView() } } }
         if let error { ErrorText(text:error) }
     }.navigationTitle("Bring everyone in").navigationBarTitleDisplayMode(.inline).toolbar { ToolbarItem(placement:.confirmationAction) { Button("Done") { dismiss() } } } } }
 }

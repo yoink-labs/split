@@ -14,6 +14,21 @@ import AuthenticationServices
     private var email = ""
     func restore() async {
         for _ in 0..<60 { if Clerk.shared.isLoaded { break }; try? await Task.sleep(for: .milliseconds(100)) }
+        #if DEBUG
+        // A genuine Clerk sign-in token for an isolated QA user. No API auth bypass.
+        // File lives in the lane, never in source or in the released app bundle.
+        let args = ProcessInfo.processInfo.arguments
+        if let index = args.firstIndex(of: "-splitQATicketFile"), args.indices.contains(index + 1) {
+            do {
+                let url = URL(fileURLWithPath: args[index + 1])
+                let ticket = try String(contentsOf: url, encoding: .utf8)
+                if Clerk.shared.session != nil { try await Clerk.shared.auth.signOut() }
+                let flow = try await Clerk.shared.auth.signInWithTicket(ticket)
+                guard let id = flow.createdSessionId else { throw LedgerError.invalid("QA sign-in requires another step.") }
+                try await Clerk.shared.auth.setActive(sessionId: id)
+            } catch { self.error = "QA sign-in failed: " + error.localizedDescription }
+        }
+        #endif
         applyUser(); loading = false
     }
     private func applyUser() {

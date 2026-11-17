@@ -24,7 +24,7 @@ struct WelcomeView: View {
     var body: some View {
         ScrollView {
             VStack(alignment:.leading,spacing:28) {
-                HStack(spacing:9) { Image(systemName:"circle.lefthalf.filled").rotationEffect(.degrees(-35)); Text("split").font(.system(size:32,weight:.bold,design:.rounded)); Spacer(); Text("BY YOINK LABS").font(.system(size:10,weight:.semibold)).tracking(2) }.foregroundStyle(Palette.green).padding(.top,28)
+                HStack(spacing:9) { Image("SplitLogo").resizable().frame(width:42,height:42).clipShape(RoundedRectangle(cornerRadius:11)).accessibilityLabel("Split logo"); Text("split").font(.system(size:32,weight:.bold,design:.rounded)); Spacer(); Text("BY YOINK LABS").font(.system(size:10,weight:.semibold)).tracking(2) }.foregroundStyle(Palette.green).padding(.top,28)
                 VStack(alignment:.leading,spacing:14) {
                     Text("Good company.\nClear balances.").font(.system(size:45,weight:.semibold,design:.rounded)).tracking(-2).minimumScaleFactor(0.7)
                     Text("Share the trip, the table, the everyday.\nWe’ll keep the numbers simple.").font(.body).foregroundStyle(.secondary).lineSpacing(4)

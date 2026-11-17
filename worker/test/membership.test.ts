@@ -1,7 +1,7 @@
 import { env } from 'cloudflare:test';
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import { handle } from '../src/index';
-import { saveProfile, verifiedProfile } from '../src/people';
+import { refreshIdentity, saveProfile, verifiedProfile } from '../src/people';
 import { balances, type Entry } from '../src/ledger';
 
 const owner='user-owner', guest='user-guest', groupID='group-audit';
@@ -75,4 +75,21 @@ it('allows the author to correct or delete an entry and prevents resurrection',a
   expect((await snapshot(owner)).entries[0].title).toBe('Lunch');
   await call(owner,remove,{original:update.entry}); await call(owner,remove,{});
   expect((await snapshot(owner)).entries).toEqual([]);
+});
+
+it('fetches verified profile data in workerd and retries after Clerk outages',async()=>{
+  const transport=vi.spyOn(globalThis,'fetch');
+  const bindings={...env,DB:env.DB,CLERK_SECRET_KEY:'test-fixture'} as Env & {CLERK_SECRET_KEY:string};
+  try {
+    transport.mockResolvedValueOnce(new Response(null,{status:503}));
+    await refreshIdentity(bindings,guest);
+    expect(await env.DB.prepare('SELECT user_id FROM split_profiles WHERE user_id=?').bind(guest).first()).toBeNull();
+    transport.mockResolvedValueOnce(Response.json({id:guest,first_name:'Maya',last_name:null,username:'maya',
+      primary_email_address_id:'email-1',email_addresses:[{id:'email-1',email_address:'Maya@example.test',verification:{status:'verified'}}]}));
+    await refreshIdentity(bindings,guest);
+    expect((transport.mock.calls[0][0] as Request).redirect).toBe('manual');
+    expect(await env.DB.prepare('SELECT email FROM split_profiles WHERE user_id=?').bind(guest).first('email')).toBe('maya@example.test');
+    await refreshIdentity(bindings,guest);
+    expect(transport).toHaveBeenCalledTimes(2);
+  } finally { transport.mockRestore(); }
 });

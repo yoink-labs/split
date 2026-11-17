@@ -8,9 +8,11 @@
 
 ## Distribution
 
+Build 2 (`275fcbca-0bd5-45b6-bdd0-f156d67c6c85`) was submitted at 2026-11-17 22:56 UTC. Apple reports `WAITING_FOR_BETA_REVIEW` externally and `READY_FOR_BETA_TESTING` internally; automatic notifications are enabled. Both groups are confirmed attached.
+
 Harris approved external beta review on 2026-11-17. Public Beta (`29476472-8917-4cd6-b916-d0d695dcc90e`) has its public link enabled, limit 1,000, and harris@undrift.dev added. Beta description, feedback email, privacy/marketing URLs and review contacts are configured. Public installation requires Apple's beta review approval.
 
-Yoink Internal (`6949ab6e-b7d2-4245-9a72-8a095832113f`) was created with automatic access to all builds. Build 1 processed successfully and is available internally. Apple rejected harris@undrift.dev as an internal tester because it is not an App Store Connect team user. Harris's existing account-holder email differs; no team roles or email addresses were changed. The requested address is added to Public Beta instead.
+Yoink Internal (`6949ab6e-b7d2-4245-9a72-8a095832113f`) was created with automatic access to all builds. Builds 1 and 2 processed successfully and are available internally. Apple rejected harris@undrift.dev as an internal tester because it is not an App Store Connect team user. Harris's existing account-holder email differs; no team roles or email addresses were changed. The requested address is added to Public Beta instead.
 
 ## Verification
 

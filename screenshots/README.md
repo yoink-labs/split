@@ -10,3 +10,5 @@ Captured fresh on 2026-11-17 with ADE's lane-owned iPhone simulator, from the bu
 | Invite confirmation | [light/invite.png](light/invite.png) | [dark/invite.png](dark/invite.png) |
 
 The add-expense screenshots show a filled form before saving. The invitation screenshots show a repeat opening of the already accepted QA invitation; initial joining and preservation of the ARS 12,000 balance were verified separately.
+
+The deployed branded invitation web fallback is shown in [web-fallback.png](web-fallback.png).

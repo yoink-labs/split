@@ -1,15 +1,33 @@
 .ade/
 .DS_Store
+
+# Secrets and local environment
 .env*
+!.env.example
 .dev.vars*
-node_modules/
-.wrangler/
-.build/
-*.xcodeproj/
-!*.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
-build/
-*.ipa
-*.xcarchive
+!.dev.vars.example
+*.p8
 *.p12
+*.pem
+*.key
 *.mobileprovision
 Config/*.local.xcconfig
+
+# Dependencies and tool state
+node_modules/
+.wrangler/
+
+# Build output
+.build/
+build/
+dist/
+out/
+coverage/
+DerivedData/
+xcuserdata/
+*.xcodeproj/
+!*.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
+*.ipa
+*.xcarchive
+*.dSYM.zip
+*.tar.gz

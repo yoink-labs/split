@@ -134,3 +134,7 @@ npm ci --prefix worker
 npm test --prefix worker
 npm run typecheck --prefix worker
 ```
+
+## Source and contributing
+
+The CLI is part of the open-source [Split repository](https://github.com/yoink-labs/split) (MIT). Run it from a checkout with `cli/bin/split`, and run its tests with `node --test cli/test/*.test.mjs`. See [CONTRIBUTING.md](../CONTRIBUTING.md).

@@ -1,6 +1,6 @@
 # Third-party notices
 
-Split adapts the following permissively licensed work. The linked license files retain the upstream notices. Changes in Split include Swift implementations, integer-cent accounting, authenticated D1 writes, deterministic import IDs and integration with Split group identities.
+Split is licensed under the [MIT License](LICENSE). Split adapts the following permissively licensed work. The linked license files retain the upstream notices. Changes in Split include Swift implementations, integer-cent accounting, authenticated D1 writes, deterministic import IDs and integration with Split group identities.
 
 | Project and revision | Use in Split | License and copyright |
 | --- | --- | --- |

@@ -1,8 +1,10 @@
 # Split by Yoink Labs
 
-Split is a free iPhone and iPad app for tracking shared expenses. Start a trip, household, or two-person tab, record who paid, and see who owes whom. Groups can settle in one currency using historical or manual rates.
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-[Join the TestFlight beta](https://testflight.apple.com/join/YX8W6bCx) · [Release and signing](docs/TESTFLIGHT.md) · [Simulator audit](docs/USABILITY.md) · [Screenshot gallery](screenshots/README.md)
+Split is a free iPhone and iPad app for tracking shared expenses. Start a trip, household, or two-person tab, record who paid, and see who owes whom. Groups can settle in one currency using historical or manual rates. Open source under MIT.
+
+[Join the TestFlight beta](https://testflight.apple.com/join/YX8W6bCx) · [Contribute](#contributing) · [Roadmap](ROADMAP.md) · [Changelog](CHANGELOG.md) · [Release and signing](docs/TESTFLIGHT.md) · [Simulator audit](docs/USABILITY.md) · [Screenshot gallery](screenshots/README.md)
 
 <p>
   <img src="screenshots/light/groups.png" width="225" alt="Split groups in light appearance">
@@ -55,7 +57,7 @@ npm run db:local --prefix worker
 ade secrets exec --env CLERK_SECRET_KEY -- /opt/homebrew/bin/node worker/node_modules/wrangler/bin/wrangler.js dev --local --config worker/wrangler.jsonc --port 8787
 ```
 
-Use the absolute path to your Node executable if it differs. Add `-splitLocalAPI` to the **Debug simulator** launch arguments to use loopback port 8787. Local ledger storage has its own cache and outbox. The local Worker verifies real Clerk sessions. The automated Worker tests use isolated D1 test data and a stubbed identity response.
+Without ADE, copy `worker/.env.example` to `worker/.dev.vars`, fill in your own Clerk secret key and run `npm run dev --prefix worker -- --local --port 8787`. Use the absolute path to your Node executable if it differs. Add `-splitLocalAPI` to the **Debug simulator** launch arguments to use loopback port 8787. Local ledger storage has its own cache and outbox. The local Worker verifies real Clerk sessions. The automated Worker tests use isolated D1 test data and a stubbed identity response.
 
 On macOS file-provider volumes, Xcode may reject Finder metadata when signing a simulator bundle. Run `xcodebuild` with the same project, scheme and destination and the build setting `OTHER_CODE_SIGN_FLAGS=--strip-disallowed-xattrs`. This preserves normal signing and applies to dependency bundles as well.
 
@@ -79,7 +81,7 @@ ade secrets exec --env CLOUDFLARE_API_TOKEN --env CLOUDFLARE_ACCOUNT_ID -- /opt/
 
 ## License
 
-This repository has no published open-source license. Contact Yoink Labs for reuse permission. Third-party dependencies retain their own licenses.
+Open source under MIT. See [LICENSE](LICENSE). Adapted third-party code and its retained license texts are listed in [third-party notices](THIRD_PARTY_NOTICES.md); dependencies keep their own licenses. Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request and report vulnerabilities as described in [SECURITY.md](SECURITY.md).
 
 ## CLI and MCP
 
@@ -121,12 +123,39 @@ Remote MCP clients can use Streamable HTTP at `https://split-api.yoinklabs.dev/m
 
 The Worker and its scheduled jobs use the existing free-tier Split D1 database. Frankfurter needs no API key. Source attributions and retained license texts are in [third-party notices](THIRD_PARTY_NOTICES.md).
 
+## Contributing
+
+Split is open source and built in the open. Contributions of every size are welcome: start with a [good first issue](https://github.com/yoink-labs/split/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22good%20first%20issue%22), browse [help wanted](https://github.com/yoink-labs/split/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22help%20wanted%22), check the [roadmap](ROADMAP.md), or ask in [Discussions](https://github.com/yoink-labs/split/discussions). Read [CONTRIBUTING.md](CONTRIBUTING.md) and the [Code of Conduct](CODE_OF_CONDUCT.md) before your first PR.
+
+### Local setup without our keys
+
+You need a Mac with Xcode, [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`) and Node 22. No Yoink Labs account, Cloudflare account or API key is required.
+
+1. **Install and generate the project.**
+   ```sh
+   git clone https://github.com/yoink-labs/split.git && cd split
+   npm ci --prefix worker
+   xcodegen generate
+   ```
+2. **Run the app with sample data.** Open `Split.xcodeproj`, run the **Split** scheme on a simulator and tap **Take a look around**. The sample preview runs entirely on the device with fictional data, so most UI work needs no backend.
+3. **Run the Worker locally.** `wrangler dev` runs the API on your machine against a local D1 database (SQLite under `worker/.wrangler/`, gitignored). Nothing touches production.
+   ```sh
+   cp worker/.env.example worker/.dev.vars   # leave CLERK_SECRET_KEY empty
+   npm run db:local --prefix worker
+   npm run dev --prefix worker -- --local --port 8787
+   ```
+   Add `-splitLocalAPI` to the **Debug simulator** launch arguments to point the app at `localhost:8787`. Without `CLERK_SECRET_KEY` the Worker still verifies sign-ins with Clerk's public keys; only claiming placeholders by verified email is skipped.
+4. **Point the CLI at your Worker.** `SPLIT_API_URL=http://localhost:8787 cli/bin/split --help` (see `cli/.env.example`).
+5. **Run the checks.** These are the same checks CI runs on every pull request, including PRs from forks, without any secrets.
+   ```sh
+   npm run typecheck --prefix worker
+   npm test --prefix worker      # isolated D1 and a stubbed identity service
+   node --test cli/test/*.test.mjs
+   ```
+
+Never commit `.dev.vars`, `.env` files or keys. Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
+
 ## Roadmap
 
-- A richer activity feed, push reminders and monthly statements.
-- A web/PWA companion for joining, claiming and settling without an iPhone.
-- Extend the existing offline queue to edits, claims and other shared changes.
-- A balance dashboard across groups.
-- Search, negative expenses for refunds, and archiving settled groups.
-- Spanish localization.
-- Bank import.
+See [ROADMAP.md](ROADMAP.md) for what is shipped, in progress and planned, and [CHANGELOG.md](CHANGELOG.md) for each release.
+

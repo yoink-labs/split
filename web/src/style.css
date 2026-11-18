@@ -742,3 +742,209 @@ details > form {
     margin: 0;
   }
 }
+
+/* Free currency conversion and Splitwise import. Same tokens as the rest of the system. */
+.show-in {
+  display: inline-grid;
+  gap: var(--space-1);
+  font-size: 0.83rem;
+  font-weight: 600;
+  color: inherit;
+}
+.show-in select {
+  min-height: 40px;
+  padding: 6px 10px;
+}
+.summary-head,
+.hero-approx,
+.titlebar.compact {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+.titlebar.compact h2 {
+  margin: 0;
+}
+.summary .show-in,
+.hero .show-in {
+  color: var(--lime);
+}
+.summary .show-in select,
+.hero .show-in select {
+  background: color-mix(in srgb, var(--lime) 14%, transparent);
+  color: #f4f1e8;
+  border-color: color-mix(in srgb, var(--lime) 35%, transparent);
+}
+.summary .show-in option,
+.hero .show-in option {
+  color: var(--ink);
+  background: var(--card);
+}
+.home-total h2 {
+  margin: var(--space-1) 0;
+}
+.approx {
+  margin: var(--space-2) 0 0;
+}
+.approx b {
+  font-size: 1.05rem;
+}
+.approx small {
+  opacity: 0.85;
+}
+.summary .approx small,
+.hero .approx small {
+  color: color-mix(in srgb, var(--lime) 75%, transparent);
+}
+.row-approx {
+  margin: 0;
+  text-align: right;
+}
+.row-approx small {
+  font-size: 0.72rem;
+}
+.rate {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: var(--space-3) var(--space-4);
+  display: grid;
+  gap: var(--space-2);
+  background: color-mix(in srgb, var(--lime) 12%, var(--card));
+}
+.rate-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+.rate-actions {
+  display: flex;
+  gap: var(--space-2);
+}
+.rate-line {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+.rate-line b {
+  font-size: 1.15rem;
+}
+.rate-line small {
+  display: inline;
+}
+button.link {
+  background: none;
+  border: 0;
+  padding: 4px 2px;
+  min-height: 36px;
+  color: var(--accent);
+  font-weight: 650;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+dialog.sheet {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-hero);
+  background: var(--bg);
+  color: var(--ink);
+  width: min(480px, calc(100vw - 32px));
+  padding: var(--space-5);
+}
+dialog.sheet::backdrop {
+  background: rgb(0 0 0 / 0.45);
+}
+dialog.sheet .titlebar {
+  margin-bottom: var(--space-3);
+}
+dialog.sheet .titlebar h2 {
+  margin: 0;
+}
+.converter {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+}
+.converter .summary {
+  margin: 0;
+}
+.swap {
+  justify-self: start;
+}
+.steps ol {
+  padding-left: 1.2em;
+  display: grid;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-3);
+}
+.steps h2 {
+  margin-top: var(--space-4);
+}
+.file-pick {
+  display: block;
+  margin: var(--space-4) 0;
+}
+.file-pick input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+}
+.file-pick:focus-within .primary {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+.file-pick .primary {
+  display: inline-flex;
+  min-height: 48px;
+  border-radius: 999px;
+  align-items: center;
+  cursor: pointer;
+}
+.import-card {
+  margin: var(--space-4) 0;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--card);
+  padding-bottom: var(--space-3);
+}
+.import-card fieldset {
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+.row.map select {
+  max-width: 55%;
+}
+.notice {
+  border-radius: 12px;
+  padding: var(--space-3);
+  margin: var(--space-2) 0;
+  display: grid;
+  gap: var(--space-1);
+}
+.notice.ok {
+  background: color-mix(in srgb, var(--pos) 12%, transparent);
+  color: var(--pos);
+  font-weight: 600;
+}
+.notice.warn {
+  background: color-mix(in srgb, var(--neg) 12%, transparent);
+  color: var(--neg);
+}
+.notice.warn small {
+  color: inherit;
+}
+.import-bar {
+  position: sticky;
+  bottom: 0;
+  background: var(--bg);
+  padding: var(--space-3) 0;
+  display: grid;
+  gap: var(--space-2);
+  justify-items: start;
+}
+.center {
+  text-align: center;
+}

@@ -11,6 +11,8 @@ struct DashboardView: View {
     @State private var showSearch = false
     @State private var showCreateGroup = false
     @State private var showJoin = false
+    @State private var showImport = false
+    @State private var showConverter = false
 
     private var dashboard: DashboardModel { store.dashboard }
     private var visibleGroups: [GroupSummary] { Array(dashboard.groups.prefix(4)) }
@@ -20,7 +22,8 @@ struct DashboardView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: Spacing.section) {
-                    BalanceHero(net: dashboard.net, owed: dashboard.owed, owe: dashboard.owe, subtitle: "Your balance across \(dashboard.groups.count) \(dashboard.groups.count == 1 ? "group" : "groups")")
+                    BalanceHero(net: dashboard.net, owed: dashboard.owed, owe: dashboard.owe, subtitle: "Your balance across \(dashboard.groups.count) \(dashboard.groups.count == 1 ? "group" : "groups")",
+                                approx: Dictionary(dashboard.net.map { ($0.currency, $0.amount) }, uniquingKeysWith: +))
                     quickActions
                     if balanceReminders, !dashboard.people.isEmpty { reminderCard }
                     if store.isDemo {
@@ -61,6 +64,9 @@ struct DashboardView: View {
                         Divider()
                         Button { showCreateGroup = true } label: { Label("New group", systemImage: "person.3") }
                         Button { showJoin = true } label: { Label("Join with code or link", systemImage: "link") }
+                        Button { showImport = true } label: { Label("Import from Splitwise", systemImage: "arrow.down.doc") }
+                        Divider()
+                        Button { showConverter = true } label: { Label("Currency converter", systemImage: "dollarsign.arrow.circlepath") }
                     } label: {
                         Label("Add", systemImage: "plus")
                     }
@@ -74,6 +80,8 @@ struct DashboardView: View {
             .sheet(isPresented: $showSearch) { NavigationStack { SearchView() } }
             .sheet(isPresented: $showCreateGroup) { CreateGroupView(friend: false) }
             .sheet(isPresented: $showJoin) { JoinGroupView { store.joinedGroupID = $0 } }
+            .sheet(isPresented: $showImport) { SplitwiseImportView() }
+            .sheet(isPresented: $showConverter) { ConverterView() }
             .onChange(of: store.joinedGroupID) { _, id in if id != nil { showNewExpense = false } }
         }
     }
@@ -184,7 +192,12 @@ struct DashboardView: View {
             SectionHeader(title: "Groups", subtitle: "Trips, homes and shared tabs", actionTitle: visibleGroups.isEmpty ? nil : "See all", action: nil)
             if visibleGroups.isEmpty {
                 Card {
-                    EmptyPanel(title: "Start a group", message: "A trip, a home, or a running tab with a friend.", symbol: "person.3", actionTitle: "New group") { showCreateGroup = true }
+                    VStack(alignment: .leading, spacing: Spacing.s) {
+                        EmptyPanel(title: "Start a group", message: "A trip, a home, or a running tab with a friend. Coming from Splitwise? Bring your groups with you.", symbol: "person.3", actionTitle: "New group") { showCreateGroup = true }
+                        Button { showImport = true } label: { Label("Import from Splitwise", systemImage: "arrow.down.doc") }
+                            .buttonStyle(.splitSecondary)
+                            .frame(maxWidth: .infinity)
+                    }
                 }
             } else {
                 ForEach(visibleGroups) { summary in

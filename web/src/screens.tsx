@@ -7,6 +7,8 @@ import {
 } from "react-router-dom";
 import { Form, useLedger, value } from "./context";
 import { AddMenu, Avatar, Badge, Balance, EmptyState, Hero, Row } from "./ui";
+import { Approx, CurrencySelect, RateField, useShowIn } from "./fxui";
+import { convert, fx, useHomeCurrency, type Exchange } from "./fx";
 import {
   balances,
   breakdown,
@@ -38,16 +40,27 @@ export function Groups() {
           items={[
             { label: "New group", to: "/new" },
             { label: "Join with code or link", to: "/join" },
+            { label: "Import from Splitwise", to: "/import/splitwise" },
+            { label: "Currency converter", to: "/convert" },
           ]}
         />
       </div>
       {data.groups.length === 0 ? (
-        <EmptyState
-          title="No groups yet"
-          message="Start a trip or a home, or join a group with an invite code from the + menu."
-          action={{ label: "New group", to: "/new" }}
-        />
+        <>
+          <EmptyState
+            title="No groups yet"
+            message="Start a trip or a home, join with an invite code, or bring your groups over from Splitwise for free."
+            action={{ label: "New group", to: "/new" }}
+          />
+          <p className="center">
+            <Link className="secondary" to="/import/splitwise">
+              Import from Splitwise
+            </Link>
+          </p>
+        </>
       ) : (
+        <>
+        <HomeTotals />
         <div className="panel">
           {data.groups.map((g) => {
             const entries = data.entries.filter((e) => e.groupID === g.id);
@@ -83,8 +96,42 @@ export function Groups() {
             );
           })}
         </div>
+        </>
       )}
     </>
+  );
+}
+/** Your net across every group, per currency, plus one approximate total in the "Show in" currency. */
+function HomeTotals() {
+  const { data, user } = useLedger(),
+    [target, setTarget] = useShowIn();
+  const net: Record<string, number> = {};
+  for (const g of data.groups) {
+    const me = g.members.find((p) => p.userID === user);
+    if (!me) continue;
+    const entries = data.entries.filter((e) => e.groupID === g.id);
+    for (const c of new Set([g.currency, ...entries.map((e) => settlementEntry(e).currency)]))
+      net[c] = (net[c] ?? 0) + (balances(entries, c)[me.id] ?? 0);
+  }
+  const open = Object.keys(net).sort().filter((c) => net[c]);
+  return (
+    <section className="summary home-total">
+      <div className="summary-head">
+        <small>Your balance across {data.groups.length} {data.groups.length === 1 ? "group" : "groups"}</small>
+        <CurrencySelect label="Show in" value={target} onChange={setTarget} />
+      </div>
+      {open.length ? (
+        open.map((c) => (
+          <h2 key={c}>
+            {net[c] > 0 ? "+" : "−"}
+            {money(Math.abs(net[c]), c)}
+          </h2>
+        ))
+      ) : (
+        <h2>All settled</h2>
+      )}
+      {open.length > 0 && <Approx amounts={net} target={target} signed prefix="≈ Total" />}
+    </section>
   );
 }
 export function NewGroup() {
@@ -173,7 +220,8 @@ export function Join() {
 }
 export function Account() {
   const { data, user } = useLedger(),
-    [theme, setTheme] = useState(document.documentElement.dataset.theme);
+    [theme, setTheme] = useState(document.documentElement.dataset.theme),
+    [home, setHome] = useHomeCurrency();
   const first = data.groups.find((g) =>
     g.members.some((p) => p.userID === user),
   );
@@ -210,6 +258,20 @@ export function Account() {
             <option value="dark">Dark</option>
           </select>
         </label>
+        <CurrencySelect label="Home currency" value={home} onChange={setHome} />
+        <small>
+          Free currency conversion: totals can be shown in your home currency at
+          today’s rate (ECB via Frankfurter, BCRA official for ARS), and every
+          expense can be entered in any currency. No Pro tier.
+        </small>
+        <Link className="row" to="/convert">
+          <strong>Currency converter</strong>
+          <span>Rates and your own ARS rate ›</span>
+        </Link>
+        <Link className="row" to="/import/splitwise">
+          <strong>Import from Splitwise</strong>
+          <span>Bring every group over, free ›</span>
+        </Link>
         <button onClick={() => void window.Clerk.signOut()}>Sign out</button>
       </section>
     </>
@@ -361,8 +423,33 @@ function Balances({ g, entries }: { g: Group; entries: Expense[] }) {
   const { save } = useLedger(),
     converted = entries.map(settlementEntry);
   const codes = [...new Set([g.currency, ...converted.map((e) => e.currency)])];
+  const [target, setTarget] = useShowIn();
+  const nets = Object.fromEntries(
+    g.members.map((p) => [
+      p.id,
+      Object.fromEntries(codes.map((c) => [c, balances(entries, c)[p.id] ?? 0])),
+    ]),
+  ) as Record<string, Record<string, number>>;
+  const mixed = codes.length > 1 || codes[0] !== target;
   return (
     <>
+      <div className="titlebar compact">
+        <h2>Balances</h2>
+        <CurrencySelect label="Show in" value={target} onChange={setTarget} />
+      </div>
+      {mixed && entries.length > 0 && (
+        <section>
+          <div className="panel">
+            {g.members.map((p) => (
+              <Link className="row" key={p.id} to={memberPath(g, p.id)}>
+                <strong>{p.name}</strong>
+                <Approx amounts={nets[p.id]} target={target} signed className="approx row-approx" />
+              </Link>
+            ))}
+          </div>
+          <small>Each person’s balance in every currency, shown in {target} at today’s rate. Settle up in any currency below.</small>
+        </section>
+      )}
       {codes.map((currency) => {
         const stats = breakdown(converted, g.members, currency);
         return (
@@ -401,39 +488,7 @@ function Balances({ g, entries }: { g: Group; entries: Expense[] }) {
                   {memberName(g, t.from)} → {memberName(g, t.to)} ·{" "}
                   {money(t.amount, currency)}
                 </summary>
-                <Form
-                  label="Record payment"
-                  submit={async (f) => {
-                    const amount = minor(value(f, "amount"));
-                    if (amount <= 0 || amount > t.amount)
-                      throw new Error(
-                        "Enter an amount up to the outstanding balance.",
-                      );
-                    await save("/v1/entries", {
-                      id: crypto.randomUUID(),
-                      groupID: g.id,
-                      title: "Settle-up payment",
-                      amount,
-                      currency,
-                      paidBy: t.from,
-                      splits: [{ memberID: t.to, amount }],
-                      kind: "settlement",
-                      splitMode: "exact",
-                      createdAt: stamp(),
-                    });
-                  }}
-                >
-                  <label>
-                    Amount paid
-                    <input
-                      name="amount"
-                      inputMode="decimal"
-                      defaultValue={(t.amount / 100).toFixed(2)}
-                      required
-                    />
-                  </label>
-                  <small>Records a payment already made.</small>
-                </Form>
+                <SettleForm g={g} from={t.from} to={t.to} amount={t.amount} currency={currency} open={codes} />
               </details>
             ))}
             {Object.entries({
@@ -456,6 +511,93 @@ function Balances({ g, entries }: { g: Group; entries: Expense[] }) {
         );
       })}
     </>
+  );
+}
+/** Records a payment in any currency. A currency with no open balance converts to the group currency. */
+function SettleForm({
+  g,
+  from,
+  to,
+  amount: owed,
+  currency: owedIn,
+  open,
+}: {
+  g: Group;
+  from: string;
+  to: string;
+  amount: number;
+  currency: string;
+  open: string[];
+}) {
+  const { save } = useLedger();
+  const [currency, setCurrency] = useState(owedIn);
+  const [text, setText] = useState((owed / 100).toFixed(2));
+  const [exchange, setExchange] = useState<Exchange | null>(null);
+  const [day] = useState(() => stamp());
+  const converts = currency !== g.currency && !open.includes(currency);
+  let typed: number | null = null;
+  try {
+    typed = minor(text);
+  } catch {
+    typed = null;
+  }
+  return (
+    <Form
+      label="Record payment"
+      submit={async () => {
+        const amount = minor(text);
+        if (amount <= 0) throw new Error("Enter a payment greater than zero.");
+        if (currency === owedIn && amount > owed)
+          throw new Error("Enter an amount up to the outstanding balance.");
+        if (converts && !exchange)
+          throw new Error("Wait for the rate, or enter your own rate.");
+        await save("/v1/entries", {
+          id: crypto.randomUUID(),
+          groupID: g.id,
+          title: "Settle-up payment",
+          amount,
+          currency,
+          paidBy: from,
+          splits: [{ memberID: to, amount }],
+          kind: "settlement",
+          splitMode: "exact",
+          createdAt: day,
+          ...(converts && exchange ? { exchange } : {}),
+        });
+      }}
+    >
+      <div className="columns">
+        <label>
+          Amount paid
+          <input
+            inputMode="decimal"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            required
+          />
+        </label>
+        <CurrencySelect
+          label="Paid in"
+          value={currency}
+          onChange={(c) => {
+            setCurrency(c);
+            const q = c === owedIn ? null : fx.rate(owedIn, c);
+            setText(((c === owedIn ? owed : q ? convert(owed, q.rateE8) : owed) / 100).toFixed(2));
+            if (c !== owedIn) void fx.latest(owedIn, c);
+          }}
+        />
+      </div>
+      {converts && (
+        <RateField
+          from={currency}
+          to={g.currency}
+          amount={typed}
+          date={day.slice(0, 10)}
+          onChange={setExchange}
+        />
+      )}
+      <small>Records a payment already made. Split doesn’t move money.</small>
+    </Form>
   );
 }
 export function GroupScreen() {
@@ -536,7 +678,8 @@ export function MemberScreen() {
     { gid, mid } = useParams(),
     [query, setQuery] = useSearchParams(),
     g = data.groups.find((g) => g.id === gid),
-    p = g?.members.find((p) => p.id === mid);
+    p = g?.members.find((p) => p.id === mid),
+    [target, setTarget] = useShowIn();
   if (!g || !p) return <p>Member unavailable in this group.</p>;
   const shared = membersGroups(data.groups, g, p),
     scope = query.get("scope") === "all" ? "all" : g.id,
@@ -611,6 +754,12 @@ export function MemberScreen() {
           <p className="hero-balance">
             <b className="pos">Settled up</b>
           </p>
+        )}
+        {open.length > 0 && (
+          <div className="hero-approx">
+            <Approx amounts={net} target={target} signed prefix="≈" />
+            <CurrencySelect label="Show in" value={target} onChange={setTarget} />
+          </div>
         )}
         <dl className="hero-stats">
           <div>

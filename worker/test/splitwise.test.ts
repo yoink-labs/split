@@ -45,7 +45,7 @@ describe('Splitwise CSV', () => {
     expect(g.skipped).toEqual(['Souvenirs (Maya only) (no effect on balances)']);
     expect(g.rows.filter(r => r.payment).map(r => r.title)).toEqual(['Harris paid Alex', 'Maya paid Sam']);
     const dinner = g.rows[1];
-    expect(dinner).toMatchObject({ title: 'Parrilla dinner, Don Julio', payer: 'Maya', amount: 18400050, currency: 'ARS', category: 'Dining out' });
+    expect(dinner).toMatchObject({ title: 'Parrilla dinner, Don Julio', payer: 'Maya', amount: 18400050, currency: 'ARS', category: 'Dining' });
     expect(dinner.splits).toEqual([{ name: 'Harris', amount: 4600013 }, { name: 'Maya', amount: 4600012 }, { name: 'Alex', amount: 4600013 }, { name: 'Sam', amount: 4600012 }]);
     expect(g.rows[3].title).toBe('Wine tasting "Malbec flight"');
     const asado = g.rows[4];

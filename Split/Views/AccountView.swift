@@ -8,7 +8,9 @@ struct AccountView: View {
     @Environment(\.horizontalSizeClass) private var size
     @AppStorage("split.appearance") private var appearance = "system"
     @AppStorage("split.balanceReminders") private var balanceReminders = true
-    @AppStorage("split.defaultCurrency") private var defaultCurrency = "USD"
+    @EnvironmentObject private var fx: FXStore
+    @State private var importing = false
+    @State private var converting = false
     @State private var confirmSignOut = false
     @State private var exporting = false
     @State private var exportText = ""
@@ -81,6 +83,7 @@ struct AccountView: View {
             }
             .background(AppBackground())
             .ledgerDestinations()
+            .sheet(isPresented: $importing) { SplitwiseImportView() }
             .navigationTitle("You")
             .confirmationDialog(
                 session.isDemo ? "Leave the sample preview?" : "Sign out?",
@@ -234,20 +237,35 @@ struct AccountView: View {
                     rowDivider
                     settingsRow(
                         icon: "banknote",
-                        title: "Default currency",
-                        subtitle: "Used when you start something new"
+                        title: "Home currency",
+                        subtitle: "New groups and approximate totals"
                     ) {
-                        Picker("Default currency", selection: $defaultCurrency) {
+                        Picker("Home currency", selection: $fx.home) {
                             ForEach(Money.currencies, id: \.self) { code in
                                 Text(code).tag(code)
                             }
                         }
                         .pickerStyle(.menu)
                         .labelsHidden()
+                        .accessibilityIdentifier("home-currency")
                     }
+                    rowDivider
+                    Button { converting = true } label: {
+                        settingsRow(
+                            icon: "dollarsign.arrow.circlepath",
+                            title: "Free currency conversion",
+                            subtitle: "Rates from Frankfurter (ECB) and BCRA, or your own"
+                        ) {
+                            Image(systemName: "chevron.right").font(.caption2.weight(.bold)).foregroundStyle(.tertiary)
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityHint("Opens the currency converter")
                 }
             }
         }
+        .sheet(isPresented: $converting) { ConverterView() }
     }
 
     @ViewBuilder
@@ -341,6 +359,15 @@ struct AccountView: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityHint("Creates a CSV file with every group and entry")
+                    rowDivider
+                    Button { importing = true } label: {
+                        settingsRow(icon: "arrow.down.doc", title: "Import from Splitwise", subtitle: "Bring groups over from Splitwise spreadsheets") {
+                            Image(systemName: "chevron.right").font(.caption2.weight(.bold)).foregroundStyle(.tertiary)
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("account-import-splitwise")
                     if let exportError {
                         Divider().overlay(Palette.line)
                         InlineError(text: exportError)
@@ -519,7 +546,7 @@ struct AccountView: View {
         exportError = nil
         var parts: [String] = ["# Split data", "# Exported \(ISO8601DateFormatter().string(from: Date()))"]
         if store.groups.isEmpty {
-            let placeholder = ExpenseGroup(name: "Split", kind: "group", currency: defaultCurrency, members: [])
+            let placeholder = ExpenseGroup(name: "Split", kind: "group", currency: fx.home, members: [])
             parts.append(LedgerCSV.export([], group: placeholder))
         } else {
             for group in store.groups.sorted(by: { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }) {

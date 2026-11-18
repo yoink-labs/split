@@ -33,6 +33,9 @@ struct AddExpenseView: View {
     @State private var manualRate = false
     @State private var quote: Exchange?
     @State private var rateError: String?
+    @State private var quoteIsCached = false
+    @State private var showConverter = false
+    @EnvironmentObject private var fx: FXStore
     @State private var recurrence = "off"
     @State private var repeatWorking = false
     @State private var saving = false
@@ -120,12 +123,9 @@ struct AddExpenseView: View {
         return nil
     }
     private var convertedTotal: Int64? {
-        guard let exchange = liveExchange, let total = totalAmount, total > 0 else { return nil }
-        var raw = Decimal(total) * exchange.rate
-        var rounded = Decimal()
-        NSDecimalRound(&rounded, &raw, 0, .plain)
-        guard rounded > 0, rounded <= Decimal(Money.maxAmount) else { return nil }
-        return NSDecimalNumber(decimal: rounded).int64Value
+        guard let exchange = liveExchange, let total = totalAmount, total > 0,
+              let converted = FXMath.convert(total, rateE8: exchange.rateE8), converted > 0, converted <= Money.maxAmount else { return nil }
+        return converted
     }
     private var splitIssue: String? {
         guard mode != .equal, !itemized, let total = totalAmount, total > 0, !people.isEmpty else { return nil }
@@ -342,66 +342,107 @@ struct AddExpenseView: View {
     private var exchangeCard: some View {
         Card {
             VStack(alignment: .leading, spacing: 12) {
-                SectionHeader(
-                    title: "Settle in \(group.currency)",
-                    subtitle: "Your group records balances in \(group.currency)."
-                )
-                Picker("Rate source", selection: $manualRate) {
-                    Text("Published").tag(false)
-                    Text("Manual").tag(true)
+                HStack(alignment: .firstTextBaseline) {
+                    SectionHeader(
+                        title: "Converted to \(group.currency)",
+                        subtitle: "Free. The \(currency) amount and this rate are saved with the expense."
+                    )
+                    Button { showConverter = true } label: {
+                        Image(systemName: "dollarsign.arrow.circlepath")
+                    }
+                    .buttonStyle(IconButton())
+                    .accessibilityLabel("Open the currency converter")
                 }
-                .pickerStyle(.segmented)
-                .accessibilityLabel("Rate source")
-                if manualRate {
-                    TextField("1 \(currency) in \(group.currency)", text: $rateText)
-                        .keyboardType(.decimalPad)
-                        .multilineTextAlignment(.trailing)
-                        .font(.splitAmount(17))
-                        .padding(.horizontal, 12)
-                        .frame(minHeight: 48)
-                        .background(Palette.raised)
-                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Palette.line, lineWidth: 1))
-                        .accessibilityLabel("Exchange rate, one \(currency) in \(group.currency)")
-                } else if let quote {
+                if let exchange = liveExchange {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(quote.description(base: currency))
-                            .font(.subheadline)
+                        Text("≈ " + (convertedTotal.map { Money.text($0, group.currency) } ?? "\(group.currency) —"))
+                            .font(.splitAmount(24, weight: .bold))
                             .foregroundStyle(Palette.ink)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.6)
+                            .contentTransition(.numericText())
+                            .accessibilityIdentifier("composer-converted")
+                        Text("at 1 \(currency) = \(FXMath.rateText(exchange.rateE8)) \(group.currency) (\(rateSource(exchange)))")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
-                        if let total = totalAmount, let converted = convertedTotal {
-                            Text("\(Money.text(total, currency)) becomes \(Money.text(converted, group.currency)).")
+                        if quoteIsCached && !manualRate {
+                            Label("Offline: last saved rate", systemImage: "wifi.slash")
                                 .font(.caption)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(Palette.amber)
                         }
                     }
-                } else if let rateError {
+                }
+                if manualRate {
+                    HStack(spacing: 8) {
+                        Text("1 \(currency) =").font(.subheadline).foregroundStyle(.secondary)
+                        TextField("Rate", text: $rateText)
+                            .keyboardType(.decimalPad)
+                            .multilineTextAlignment(.trailing)
+                            .font(.splitAmount(17))
+                            .accessibilityLabel("Exchange rate, one \(currency) in \(group.currency)")
+                            .accessibilityIdentifier("composer-rate")
+                        Text(group.currency).font(.subheadline).foregroundStyle(.secondary)
+                    }
+                    .padding(.horizontal, 12)
+                    .frame(minHeight: 48)
+                    .background(Palette.raised)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Palette.line, lineWidth: 1))
+                } else if quote == nil, let rateError {
                     InlineError(text: rateError)
-                    Button("Enter a manual rate") { manualRate = true }
-                        .buttonStyle(GhostButton())
-                } else {
+                } else if quote == nil {
                     HStack(spacing: 10) {
                         ProgressView()
-                        Text("Looking up the published rate…")
+                        Text("Looking up the rate for \(FXQuote.shortDay(quoteDate))…")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                     }
                     .frame(minHeight: 44, alignment: .leading)
                 }
-                Text("Published rates use the expense date. Manual rates are saved with this expense.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                HStack(spacing: 8) {
+                    if manualRate {
+                        Button { manualRate = false; if quote == nil { Task { await loadRate() } } } label: { Label("Use published rate", systemImage: "arrow.uturn.backward") }
+                            .buttonStyle(GhostButton())
+                    } else {
+                        Button {
+                            if let quote { rateText = NSDecimalNumber(decimal: quote.rate).stringValue }
+                            manualRate = true
+                        } label: { Label("Edit rate", systemImage: "pencil") }
+                            .buttonStyle(GhostButton())
+                            .accessibilityIdentifier("composer-edit-rate")
+                    }
+                    Spacer(minLength: 0)
+                }
+                if [currency, group.currency].contains("ARS") {
+                    Text("Pesos use the BCRA official rate. Paid at the blue or card rate? Edit the rate.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             .task(id: currency + quoteDate) { await loadRate() }
+        }
+        .sheet(isPresented: $showConverter) {
+            ConverterView(initialAmount: totalAmount, from: currency, to: group.currency)
+        }
+    }
+
+    private func rateSource(_ exchange: Exchange) -> String {
+        switch exchange.source {
+        case "Manual": return "your rate"
+        case "BCRA": return "BCRA official, " + FXQuote.shortDay(exchange.date)
+        default: return "Frankfurter, " + FXQuote.shortDay(exchange.date)
         }
     }
 
     private func loadRate() async {
         let base = currency
-        guard !base.isEmpty else { return }
+        guard !base.isEmpty, base != group.currency else { return }
         rateText = ""
         quote = nil
         rateError = nil
+        quoteIsCached = false
         manualRate = false
         if let original, base == original.currency, let exchange = original.exchange, exchange.target == group.currency {
             if exchange.source == "Manual" {
@@ -413,12 +454,13 @@ struct AddExpenseView: View {
             }
         }
         do {
-            let fetched = try await Exchange.fetch(base: base, target: group.currency, date: quoteDate)
+            let fetched = try await fx.quote(base: base, target: group.currency, date: quoteDate)
             guard !Task.isCancelled, base == currency else { return }
-            quote = fetched
+            quote = fetched.exchange
+            quoteIsCached = fx.offline
         } catch {
             guard !Task.isCancelled else { return }
-            rateError = "Published rate unavailable. Enter a manual rate."
+            rateError = "No published rate right now. Edit the rate to enter your own."
         }
     }
 

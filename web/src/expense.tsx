@@ -11,6 +11,8 @@ import {
   type Group,
 } from "./data";
 import type { Bill } from "../../worker/src/items";
+import { ConverterDialog, RateField } from "./fxui";
+import type { Exchange } from "./fx";
 
 export function ExpenseForm() {
   const { gid } = useParams(),
@@ -36,6 +38,16 @@ function Composer({ g }: { g: Group }) {
   );
   const [rows, setRows] = useState<string[]>([crypto.randomUUID()]);
   const [currency, setCurrency] = useState(g.currency);
+  const [amountText, setAmountText] = useState("");
+  const [exchange, setExchange] = useState<Exchange | null>(null);
+  const foreign = currency !== g.currency;
+  const [converter, setConverter] = useState(false);
+  let typed: number | null = null;
+  try {
+    typed = amountText ? minor(amountText) : null;
+  } catch {
+    typed = null;
+  }
   return (
     <>
       <p className="eyebrow">{g.name}</p>
@@ -100,6 +112,8 @@ function Composer({ g }: { g: Group }) {
                 memberID,
                 amount: portions[i],
               }));
+          if (foreign && !exchange)
+            throw new Error("Wait for the rate, or choose Edit rate to enter your own.");
           const category = value(f, "category");
           await save("/v1/entries", {
             id,
@@ -113,6 +127,7 @@ function Composer({ g }: { g: Group }) {
             kind: "expense",
             createdAt,
             ...(category ? { category } : {}),
+            ...(foreign && exchange ? { exchange } : {}),
             ...(bill ? { bill } : {}),
             ...(photos.length ? { photos } : {}),
           });
@@ -161,6 +176,21 @@ function Composer({ g }: { g: Group }) {
             <input name="category" maxLength={50} />
           </label>
         </div>
+        {!foreign && (
+          <button type="button" className="link" onClick={() => setConverter(true)}>
+            Currency converter
+          </button>
+        )}
+        <ConverterDialog open={converter} onClose={() => setConverter(false)} to={g.currency} amount={typed} />
+        {foreign && (
+          <RateField
+            from={currency}
+            to={g.currency}
+            amount={mode === "items" ? null : typed}
+            date={createdAt.slice(0, 10)}
+            onChange={setExchange}
+          />
+        )}
         <label>
           Split method
           <select value={mode} onChange={(e) => setMode(e.target.value)}>
@@ -246,6 +276,8 @@ function Composer({ g }: { g: Group }) {
                 required
                 inputMode="decimal"
                 placeholder="0.00"
+                value={amountText}
+                onChange={(e) => setAmountText(e.target.value)}
               />
             </label>
             <h2>Split with</h2>

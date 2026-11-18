@@ -106,7 +106,7 @@ struct WelcomeView: View {
                     .font(.splitDisplay(38))
                     .foregroundStyle(Palette.ink)
                     .fixedSize(horizontal: false, vertical: true)
-                Text("Track who paid, who owes, and who is square. Every Splitwise feature you use — free, with no ads and no Pro tier.")
+                Text("Track who paid, who owes, and who is square. Every Splitwise feature you use, plus free currency conversion — no ads and no Pro tier.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -227,7 +227,8 @@ struct WelcomeView: View {
                     feature("person.3", "Groups and one-to-one tabs", "Trips, homes, couples and roommates — all in one ledger.")
                     feature("receipt", "Receipts, notes and comments", "Split items, claims and the story behind each expense.")
                     feature("chart.bar.xaxis", "Insights and search", "The features other apps charge for are simply here.")
-                    feature("arrow.left.arrow.right", "Settle in any currency", "Historical rates, manual rates and payment links.")
+                    feature("dollarsign.arrow.circlepath", "Free currency conversion", "Rates for the expense date, totals in your home currency, and your own rate for the blue dollar.")
+                    feature("arrow.down.doc", "Import from Splitwise", "Bring every group with its expenses, payments and people, checked to the cent.")
                 }
             }
         }

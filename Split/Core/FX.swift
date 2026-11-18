@@ -152,11 +152,15 @@ struct FXCache: Codable, Equatable {
 @MainActor
 final class FXStore: ObservableObject {
     @Published private(set) var cache: FXCache
-    @Published var home: String { didSet { defaults.set(home, forKey: FXStore.homeKey) } }
+    /// The person's home currency, set in Account. Shared with the default for new groups.
+    @Published var home: String { didSet { defaults.set(home, forKey: FXStore.homeKey); display = home } }
+    /// The "Show in" currency for approximate totals. Starts as the home currency.
+    @Published var display: String { didSet { defaults.set(display, forKey: FXStore.displayKey) } }
     @Published private(set) var offline = false
     @Published private(set) var refreshing = false
 
-    static let homeKey = "split.homeCurrency"
+    static let homeKey = "split.defaultCurrency"
+    static let displayKey = "split.showInCurrency"
     private let defaults: UserDefaults
     private let fileURL: URL?
     private let fetcher: (URL) async throws -> (Data, URLResponse)
@@ -172,7 +176,9 @@ final class FXStore: ObservableObject {
         self.clock = clock
         let stored = defaults.string(forKey: FXStore.homeKey)
         let local = Locale.current.currency?.identifier
-        home = stored.flatMap { Money.currencies.contains($0) ? $0 : nil } ?? local.flatMap { Money.currencies.contains($0) ? $0 : nil } ?? "USD"
+        let resolvedHome = stored.flatMap { Money.currencies.contains($0) ? $0 : nil } ?? local.flatMap { Money.currencies.contains($0) ? $0 : nil } ?? "USD"
+        home = resolvedHome
+        display = defaults.string(forKey: FXStore.displayKey).flatMap { Money.currencies.contains($0) ? $0 : nil } ?? resolvedHome
         if let fileURL, let data = try? Data(contentsOf: fileURL), let decoded = try? JSONDecoder().decode(FXCache.self, from: data) {
             cache = decoded
         } else {

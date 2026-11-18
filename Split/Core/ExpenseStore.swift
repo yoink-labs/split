@@ -284,6 +284,64 @@ import ClerkKit
         return result.id
     }
 
+    struct SplitwiseResult: Decodable, Equatable { var groupID: String; var created: Bool; var inserted: Int; var duplicates: Int }
+
+    /// Imports one Splitwise group in a single atomic request. Demo mode applies it on the device.
+    func importSplitwise(_ request: SplitwiseImportRequest) async throws -> SplitwiseResult {
+        if demo { return try importSplitwiseLocally(request) }
+        let data = try await post("/v1/import/splitwise", JSONEncoder().encode(request))
+        let result = try JSONDecoder().decode(SplitwiseResult.self, from: data)
+        try await waitForSync()
+        await sync()
+        return result
+    }
+
+    private func importSplitwiseLocally(_ request: SplitwiseImportRequest) throws -> SplitwiseResult {
+        var next = state
+        let groupID = request.group?.id ?? request.groupID ?? ""
+        var created = false
+        if let spec = request.group, !next.snapshot.groups.contains(where: { $0.id == spec.id }) {
+            next.snapshot.groups.insert(ExpenseGroup(id: spec.id, name: spec.name, kind: spec.kind, currency: spec.currency, members: [], simplify: true), at: 0)
+            created = true
+        }
+        guard let index = next.snapshot.groups.firstIndex(where: { $0.id == groupID }) else { throw LedgerError.invalid("Group unavailable.") }
+        var ids: [String: String] = [:]
+        for person in request.people {
+            let key = person.name.lowercased()
+            if person.me == true {
+                if let mine = next.snapshot.groups[index].members.first(where: { $0.userID == currentUserID }) { ids[key] = mine.id }
+                else {
+                    let me = Person(id: "demo-me-" + groupID, groupID: groupID, userID: currentUserID, name: person.name)
+                    next.snapshot.groups[index].members.append(me); ids[key] = me.id
+                }
+            } else if let id = person.memberID { ids[key] = id }
+            else {
+                let id = "demo-sw-" + SplitwiseCSV.fingerprint(groupID + key).prefix(16)
+                if !next.snapshot.groups[index].members.contains(where: { $0.id == id }) {
+                    next.snapshot.groups[index].members.append(Person(id: id, groupID: groupID, name: person.name))
+                }
+                ids[key] = id
+            }
+        }
+        func id(_ name: String) throws -> String {
+            guard let id = ids[name.lowercased()] else { throw LedgerError.invalid("Every name in the import needs a person.") }
+            return id
+        }
+        var inserted = 0
+        for (offset, row) in request.rows.enumerated() {
+            let entryID = "demo-sw-" + SplitwiseCSV.fingerprint(groupID + String(offset) + row.title + row.day).prefix(24)
+            guard !next.snapshot.entries.contains(where: { $0.id == entryID }) else { continue }
+            var entry = LedgerEntry(id: entryID, groupID: groupID, title: row.title, amount: row.amount, currency: row.currency, paidBy: try id(row.payer),
+                                    splits: try row.splits.map { Portion(memberID: try id($0.name), amount: $0.amount) }, category: row.category,
+                                    kind: row.payment ? "settlement" : "expense", editable: true, splitMode: .exact, createdAt: row.day + "T12:00:00Z")
+            if let payers = row.payers, payers.count > 1 { entry.payers = try payers.map { Payer(memberID: try id($0.name), amount: $0.amount) } }
+            next.snapshot.entries.append(entry)
+            inserted += 1
+        }
+        try persist(next)
+        return SplitwiseResult(groupID: groupID, created: created, inserted: inserted, duplicates: request.rows.count - inserted)
+    }
+
     func change(_ original: LedgerEntry, to replacement: LedgerEntry?) async throws {
         guard demo || original.editable == true else { throw LedgerError.invalid("Only the person who recorded this entry can change it.") }
         if demo {

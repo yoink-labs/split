@@ -40,6 +40,9 @@ const key = (s: string) => s.trim().toLowerCase();
 // so columns are matched by position and rows by shape. These lists only add confidence.
 const PAYMENT = ['payment', 'zahlung', 'pago', 'paiement', 'pagamento', 'betaling', 'betalning', 'płatność', 'platba', 'платеж', 'ödeme'];
 const TOTAL = ['total balance', 'gesamtbilanz', 'saldo total', 'solde total', 'saldo totale', 'totaal saldo', 'saldo całkowite', 'общий баланс'];
+const CATEGORY: Record<string, string> = {'dining out': 'Dining', 'groceries': 'Groceries', 'liquor': 'Liquor', 'rent': 'Rent', 'mortgage': 'Rent', 'household supplies': 'Home', 'furniture': 'Home', 'maintenance': 'Home', 'pets': 'Home', 'services': 'Home', 'electronics': 'Home', 'home - other': 'Home', 'electricity': 'Utilities', 'heat/gas': 'Utilities', 'water': 'Utilities', 'tv/phone/internet': 'Utilities', 'trash': 'Utilities', 'cleaning': 'Utilities', 'utilities - other': 'Utilities', 'taxi': 'Transport', 'bus/train': 'Transport', 'car': 'Transport', 'gas/fuel': 'Transport', 'parking': 'Transport', 'bicycle': 'Transport', 'transportation - other': 'Transport', 'plane': 'Travel', 'hotel': 'Travel', 'movies': 'Entertainment', 'music': 'Entertainment', 'sports': 'Entertainment', 'games': 'Entertainment', 'entertainment - other': 'Entertainment', 'clothing': 'Shopping', 'gifts': 'Gifts', 'medical expenses': 'Health', 'education': 'Education', 'childcare': 'Education', 'insurance': 'Fees', 'taxes': 'Fees', 'food and drink - other': 'Dining', 'life - other': 'Other', 'other': 'Other', 'entertainment': 'Entertainment'};
+/** Splitwise's English category names mapped onto Split's; anything else keeps its own name. */
+export function splitCategory(name: string) { return CATEGORY[key(name)] ?? name.slice(0, 50); }
 /** The header is the first row with 6+ cells whose first cell isn't a date and fourth isn't an amount. */
 function isHeader(row: string[]) {
   return row.length >= 6 && row.slice(0, 5).every(c => c.trim()) && !isoDay(row[0]) && minor(row[3]) === null;
@@ -122,7 +125,7 @@ export async function parseSplitwise(raw: string, fileName: string): Promise<Spl
     for (const [name, net] of negative) splits.push({ name, amount: -net });
     splits.sort((a, b) => order.indexOf(a.name) - order.indexOf(b.name));
     out.push({ title: clean, day, payer: payers[0].name, amount: total, currency, payment: false, splits,
-      ...(category && !['general', 'allgemein', 'general ', 'général', 'generale', 'geral', 'algemeen'].includes(key(category)) ? { category: category.slice(0, 50) } : {}),
+      ...(category && !['general', 'allgemein', 'general ', 'général', 'generale', 'geral', 'algemeen'].includes(key(category)) ? { category: splitCategory(category) } : {}),
       ...(payers.length > 1 ? { payers } : {}) });
   }
   if (!out.length) throw new Error(`${fileName} has no expenses to import.`);

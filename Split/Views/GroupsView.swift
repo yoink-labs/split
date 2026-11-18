@@ -6,6 +6,7 @@ struct GroupsView: View {
     @State private var selection: String?
     @State private var showCreate = false
     @State private var joining = false
+    @State private var importing = false
     @State private var query = ""
     @State private var showArchived = false
 
@@ -30,6 +31,7 @@ struct GroupsView: View {
         .navigationSplitViewStyle(.balanced)
         .sheet(isPresented: $showCreate) { CreateGroupView(friend: false) }
         .sheet(isPresented: $joining) { JoinGroupView { id in selection = id } }
+        .sheet(isPresented: $importing) { SplitwiseImportView() }
         .onChange(of: store.joinedGroupID) { _, id in
             if let id { selection = id; store.joinedGroupID = nil }
         }
@@ -112,7 +114,13 @@ struct GroupsView: View {
                 if !store.hasLoaded {
                     ProgressView()
                 } else if query.isEmpty {
-                    EmptyStateView(title: "No groups yet", message: "Start a trip or a home, or join a group with an invite code.", symbol: "person.3", actionTitle: "New group") { showCreate = true }
+                    VStack(spacing: Spacing.s) {
+                        EmptyStateView(title: "No groups yet", message: "Start a trip or a home, join with an invite code, or bring your groups from Splitwise.", symbol: "person.3", actionTitle: "New group") { showCreate = true }
+                        Button { importing = true } label: { Label("Import from Splitwise", systemImage: "arrow.down.doc") }
+                            .buttonStyle(.splitSecondary)
+                            .fixedSize()
+                            .accessibilityIdentifier("groups-empty-import")
+                    }
                 } else {
                     ContentUnavailableView.search
                 }
@@ -120,7 +128,7 @@ struct GroupsView: View {
         }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                GroupAddMenu(create: { showCreate = true }, join: { joining = true })
+                GroupAddMenu(create: { showCreate = true }, join: { joining = true }, importSplitwise: { importing = true })
             }
         }
         .searchable(text: $query, placement: .sidebar, prompt: "Search groups")
@@ -208,10 +216,15 @@ struct GroupDetailPlaceholder: View {
 struct GroupAddMenu: View {
     var create: () -> Void
     var join: () -> Void
+    var importSplitwise: (() -> Void)? = nil
     var body: some View {
         Menu {
             Button(action: create) { Label("New group", systemImage: "person.3") }
             Button(action: join) { Label("Join with code or link", systemImage: "link") }
+            if let importSplitwise {
+                Divider()
+                Button(action: importSplitwise) { Label("Import from Splitwise", systemImage: "arrow.down.doc") }
+            }
         } label: {
             Label("Add group", systemImage: "plus")
         }

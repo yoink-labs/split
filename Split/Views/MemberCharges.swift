@@ -166,6 +166,9 @@ struct MemberCharges: View {
             HeroBalances(balances: net.keys.sorted().map { ($0, net[$0] ?? 0) },
                          positive: isMe ? "you’re owed" : "gets back",
                          negative: isMe ? "you owe" : "owes")
+            if net.values.contains(where: { $0 != 0 }) {
+                ApproxTotal(amounts: net, onHero: true, positive: isMe ? "you’re owed" : "gets back", negative: isMe ? "you owe" : "owes")
+            }
             HeroStats(items: [("Paid", text(paid)), ("Share", text(share)), ("Charges", "\(count)")])
         }
     }

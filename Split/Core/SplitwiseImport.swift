@@ -82,6 +82,10 @@ enum SplitwiseCSV {
     static let totalWords: Set<String> = ["total balance", "gesamtbilanz", "saldo total", "solde total", "saldo totale", "totaal saldo", "saldo całkowite", "общий баланс"]
     static let generalWords: Set<String> = ["general", "allgemein", "général", "generale", "geral", "algemeen"]
 
+    static let categories: [String: String] = ["dining out": "Dining", "groceries": "Groceries", "liquor": "Liquor", "rent": "Rent", "mortgage": "Rent", "household supplies": "Home", "furniture": "Home", "maintenance": "Home", "pets": "Home", "services": "Home", "electronics": "Home", "home - other": "Home", "electricity": "Utilities", "heat/gas": "Utilities", "water": "Utilities", "tv/phone/internet": "Utilities", "trash": "Utilities", "cleaning": "Utilities", "utilities - other": "Utilities", "taxi": "Transport", "bus/train": "Transport", "car": "Transport", "gas/fuel": "Transport", "parking": "Transport", "bicycle": "Transport", "transportation - other": "Transport", "plane": "Travel", "hotel": "Travel", "movies": "Entertainment", "music": "Entertainment", "sports": "Entertainment", "games": "Entertainment", "entertainment - other": "Entertainment", "clothing": "Shopping", "gifts": "Gifts", "medical expenses": "Health", "education": "Education", "childcare": "Education", "insurance": "Fees", "taxes": "Fees", "food and drink - other": "Dining", "life - other": "Other", "other": "Other", "entertainment": "Entertainment"]
+    /// Splitwise's English category names mapped onto Split's; anything else keeps its own name.
+    static func category(_ name: String) -> String { categories[key(name)] ?? String(name.prefix(50)) }
+
     /// The header is the first row with 6+ cells whose first cell isn't a date and fourth isn't an amount.
     private static func headerIndex(_ row: [String]) -> Int? {
         guard row.count >= 6, row.prefix(5).allSatisfy({ !$0.trimmingCharacters(in: .whitespaces).isEmpty }),
@@ -210,7 +214,7 @@ enum SplitwiseCSV {
             for (name, net) in negative { splits.append(CSVShare(name: name, amount: -net)) }
             let order = memberColumns.map(\.1)
             splits.sort { (order.firstIndex(of: $0.name) ?? 0) < (order.firstIndex(of: $1.name) ?? 0) }
-            let categoryName = category.isEmpty || generalWords.contains(key(category)) ? nil : String(category.prefix(50))
+            let categoryName = category.isEmpty || generalWords.contains(key(category)) ? nil : SplitwiseCSV.category(category)
             expenses.append(CSVExpense(title: clean, day: date, payer: payers[0].name, amount: total, currency: currency, category: categoryName, payment: false,
                                        splits: splits, sourceID: nil, sourceGroup: nil, exchange: nil, payers: payers.count > 1 ? payers : nil))
         }

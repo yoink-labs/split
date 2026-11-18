@@ -21,6 +21,8 @@ import {
   Account,
 } from "./screens";
 import { ExpenseForm } from "./expense";
+import { SplitwiseImport } from "./splitwise";
+import { ConverterScreen } from "./fxui";
 import "./style.css";
 
 function SignIn() {
@@ -138,6 +140,8 @@ function Ledger({ user }: { user: string }) {
               <Route path="/join" element={<Join />} />
               <Route path="/invite/:code" element={<Join />} />
               <Route path="/you" element={<Account />} />
+              <Route path="/import/splitwise" element={<SplitwiseImport />} />
+              <Route path="/convert" element={<ConverterScreen />} />
               <Route path="/g/:gid" element={<GroupScreen />} />
               <Route path="/g/:gid/m/:mid" element={<MemberScreen />} />
               <Route path="/g/:gid/e/:eid" element={<ExpenseScreen />} />

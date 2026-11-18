@@ -269,13 +269,18 @@ struct BalanceHero: View {
     var owed: [CurrencyTotal]
     var owe: [CurrencyTotal]
     var subtitle: String? = nil
+    /// When set, adds an approximate total in the "Show in" currency with its picker.
+    var approx: [String: Int64]? = nil
     @Environment(\.horizontalSizeClass) private var size
 
     var body: some View {
         Group {
             if size == .regular {
                 HStack(alignment: .top, spacing: 24) {
-                    netStack(compact: false)
+                    VStack(alignment: .leading, spacing: 10) {
+                        netStack(compact: false)
+                        if let approx { ApproxTotal(amounts: approx, onHero: true) }
+                    }
                     Rectangle()
                         .fill(Palette.lime.opacity(0.16))
                         .frame(width: 1)
@@ -290,6 +295,7 @@ struct BalanceHero: View {
             } else {
                 VStack(alignment: .leading, spacing: 10) {
                     netStack(compact: true)
+                    if let approx { ApproxTotal(amounts: approx, onHero: true) }
                     HStack(spacing: 12) {
                         heroStat("You owe", value: owe, tint: Color(red: 1, green: 0.74, blue: 0.64))
                         Rectangle().fill(Palette.lime.opacity(0.18)).frame(width: 1).padding(.vertical, 2)
@@ -474,6 +480,13 @@ struct Chip: View {
 struct PersonBalanceRow: View {
     var person: PersonBalance
     var showsChevron: Bool = true
+    @EnvironmentObject private var fx: FXStore
+    private var approx: Int64? {
+        let open = person.amounts.filter { $0.value != 0 }
+        guard open.keys.contains(where: { $0 != fx.display }) else { return nil }
+        let result = fx.total(open, in: fx.display)
+        return result.missing.isEmpty ? result.amount : nil
+    }
     var body: some View {
         HStack(spacing: 12) {
             Avatar(name: person.name, size: 42)
@@ -500,6 +513,13 @@ struct PersonBalanceRow: View {
                     Text(amount < 0 ? "you owe" : "owes you")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
+                }
+                if let approx, person.currencies.count > 1 || person.currencies.first != fx.display {
+                    Text("≈ " + Money.text(abs(approx), fx.display))
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                        .accessibilityLabel("About \(Money.text(abs(approx), fx.display)) in total")
                 }
             }
             .layoutPriority(1)

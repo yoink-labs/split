@@ -134,6 +134,9 @@ struct GroupDetail: View {
                             totalSpent(summary, group: group, alignment: .leading)
                         }
                     }
+                    if !summary.isSettled {
+                        ApproxTotal(amounts: summary.mine, onHero: true)
+                    }
                 }
             }
             .padding(18)
@@ -262,6 +265,7 @@ struct GroupDetail: View {
 struct GroupBalancesView: View {
     var groupID: String
     @EnvironmentObject private var store: ExpenseStore
+    @EnvironmentObject private var fx: FXStore
     @EnvironmentObject private var session: SessionStore
     @Environment(\.dismiss) private var dismiss
     @State private var settling: Transfer?
@@ -276,6 +280,7 @@ struct GroupBalancesView: View {
                 LazyVStack(alignment: .leading, spacing: 18) {
                     if let group {
                         if let error = store.error { InlineError(text: error) }
+                        if currencies.contains(where: { $0 != fx.display }) { convertedSection(group) }
                         ForEach(currencies, id: \.self) { currency in
                             currencySection(group, currency: currency)
                         }
@@ -385,6 +390,49 @@ struct GroupBalancesView: View {
         let person = group.members.first { $0.id == id }
         return person?.userID == store.currentUserID ? "You" : (person?.name ?? "Member")
     }
+
+    /// Every currency folded into the "Show in" currency at today's rate, per person.
+    private func convertedSection(_ group: ExpenseGroup) -> some View {
+        let perCurrency = Dictionary(uniqueKeysWithValues: currencies.map { ($0, Ledger.balances(entries, currency: $0)) })
+        let rows = group.members.compactMap { member -> (Person, Int64)? in
+            var amounts: [String: Int64] = [:]
+            for (currency, values) in perCurrency { if let v = values[member.id], v != 0 { amounts[currency] = v } }
+            guard !amounts.isEmpty else { return nil }
+            let result = fx.total(amounts, in: fx.display)
+            return result.missing.isEmpty ? (member, result.amount) : nil
+        }.sorted { abs($0.1) > abs($1.1) }
+        let all = perCurrency.mapValues { $0.values.filter { $0 > 0 }.reduce(0, +) }
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("All currencies").font(.headline)
+                Spacer()
+                ShowInMenu()
+            }
+            Card(padding: 0) {
+                VStack(spacing: 0) {
+                    ForEach(Array(rows.enumerated()), id: \.element.0.id) { index, row in
+                        HStack(spacing: 10) {
+                            Avatar(name: row.0.userID == store.currentUserID ? "You" : row.0.name, size: 32)
+                            Text(row.0.userID == store.currentUserID ? "You" : row.0.name).font(.subheadline.weight(.semibold))
+                            Spacer()
+                            Text("≈ " + Money.text(abs(row.1), fx.display))
+                                .font(.splitAmount(15))
+                                .foregroundStyle(row.1 > 0 ? Palette.positive : row.1 < 0 ? Palette.negative : Palette.ink)
+                            Text(row.1 > 0 ? "gets back" : row.1 < 0 ? "owes" : "square").font(.caption).foregroundStyle(.secondary)
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .accessibilityElement(children: .combine)
+                        if index < rows.count - 1 { Divider().overlay(Palette.line).padding(.leading, 56) }
+                    }
+                    Divider().overlay(Palette.line)
+                    ApproxTotal(amounts: all, positive: "owed in total", negative: "owed in total", showsMenu: false)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                }
+            }
+        }
+    }
 }
 
 struct SettleUpView: View {
@@ -402,6 +450,19 @@ struct SettleUpView: View {
     @State private var error: String?
     @State private var saving = false
     @State private var initialized = false
+    @State private var payQuote: Exchange?
+    @State private var payRateText = ""
+    @State private var payManual = false
+    @State private var payRateError: String?
+    @EnvironmentObject private var fx: FXStore
+
+    /// Paying in a currency the group has no balances in converts the payment to the group currency.
+    private var converts: Bool { !currency.isEmpty && currency != currentGroup.currency && !currencies.contains(currency) }
+    private var payExchange: Exchange? {
+        guard converts else { return nil }
+        if payManual { return Exchange.units(payRateText).map { Exchange(target: currentGroup.currency, rateE8: $0, date: String(ISO8601DateFormatter().string(from: Date()).prefix(10)), source: "Manual") } }
+        return payQuote
+    }
 
     private var entries: [LedgerEntry] { store.entries(in: store.group(group.id) ?? group) }
     private var currentGroup: ExpenseGroup { store.group(group.id) ?? group }
@@ -515,11 +576,12 @@ struct SettleUpView: View {
                         .accessibilityLabel("Payment amount")
                         .accessibilityIdentifier("settle-amount")
                     Picker("Currency", selection: $currency) {
-                        ForEach(Array(Set(currencies + [group.currency])).sorted(), id: \.self) { Text($0).tag($0) }
+                        ForEach(Money.currencies, id: \.self) { Text($0).tag($0) }
                     }
                     .labelsHidden()
                     .accessibilityLabel("Currency")
                 }
+                if converts { paymentConversion }
                 TextField("Note (optional)", text: $note, axis: .vertical)
                     .lineLimit(1...3)
                     .accessibilityLabel("Payment note")
@@ -528,6 +590,44 @@ struct SettleUpView: View {
                     PaymentActions(member: recipient, currency: currency, amount: amount)
                 }
             }
+        }
+    }
+
+    private var paymentConversion: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if let exchange = payExchange {
+                let converted = Money.parse(amount).flatMap { FXMath.convert($0, rateE8: exchange.rateE8) }
+                Text("≈ " + (converted.map { Money.text($0, currentGroup.currency) } ?? currentGroup.currency + " —"))
+                    .font(.splitAmount(17, weight: .semibold))
+                    .foregroundStyle(Palette.ink)
+                Text("at 1 \(currency) = \(FXMath.rateText(exchange.rateE8)) \(currentGroup.currency) (\(exchange.source == "Manual" ? "your rate" : exchange.source == "BCRA" ? "BCRA official" : "Frankfurter"), \(FXQuote.shortDay(exchange.date))). Settles \(currentGroup.currency) balances.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if let payRateError, !payManual {
+                Text(payRateError).font(.caption).foregroundStyle(Palette.coral)
+            } else if !payManual {
+                HStack(spacing: 8) { ProgressView(); Text("Getting today’s rate…").font(.caption).foregroundStyle(.secondary) }
+            }
+            if payManual {
+                HStack {
+                    Text("1 \(currency) =").font(.subheadline).foregroundStyle(.secondary)
+                    TextField("Rate", text: $payRateText).keyboardType(.decimalPad).multilineTextAlignment(.trailing)
+                        .accessibilityLabel("Exchange rate, one \(currency) in \(currentGroup.currency)")
+                    Text(currentGroup.currency).font(.subheadline).foregroundStyle(.secondary)
+                }
+            }
+            Button(payManual ? "Use published rate" : "Edit rate") {
+                if !payManual, let payQuote { payRateText = NSDecimalNumber(decimal: payQuote.rate).stringValue }
+                payManual.toggle()
+            }
+            .font(.caption.weight(.semibold))
+        }
+        .task(id: currency) {
+            payQuote = nil; payRateError = nil; payManual = false
+            guard converts else { return }
+            do { payQuote = try await fx.quote(base: currency, target: currentGroup.currency, date: String(ISO8601DateFormatter().string(from: Date()).prefix(10))).exchange }
+            catch { payRateError = "No published rate right now. Edit the rate to enter your own." }
         }
     }
 
@@ -584,6 +684,7 @@ struct SettleUpView: View {
         guard currentGroup.members.contains(where: { $0.id == from }), currentGroup.members.contains(where: { $0.id == to }) else {
             error = "Choose both people."; return
         }
+        if converts && payExchange == nil { error = "Wait for the rate, or edit it to enter your own."; return }
         saving = true; error = nil
         let cleanNote = note.trimmingCharacters(in: .whitespacesAndNewlines)
         let entry = LedgerEntry(
@@ -598,9 +699,11 @@ struct SettleUpView: View {
             splitMode: .exact,
             notes: cleanNote.isEmpty ? nil : cleanNote
         )
+        var payment = entry
+        payment.exchange = payExchange
         Task {
             defer { saving = false }
-            do { try store.add(entry); dismiss() }
+            do { try store.add(payment); dismiss() }
             catch { self.error = error.localizedDescription }
         }
     }

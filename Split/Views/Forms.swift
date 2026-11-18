@@ -75,11 +75,16 @@ struct AddExpenseView: View {
         }
         Section { Picker("Paid by",selection:$payer) { ForEach(current.members) { Text($0.userID == session.userID ? "You" : $0.name).tag($0.id) } } }
         Section {
-            Picker("Split",selection:$mode) { ForEach(SplitMode.allCases,id:\.self) { Text($0.title).tag($0) } }.pickerStyle(.menu)
+            Picker("Split",selection:Binding(get:{mode},set:{mode=$0; values=[:]; error=nil})) { ForEach(SplitMode.allCases,id:\.self) { Text($0.title).tag($0) } }.pickerStyle(.menu)
             ForEach(current.members) { person in
                 HStack(spacing:12) {
-                    Button { if selected.contains(person.id) { selected.remove(person.id) } else { selected.insert(person.id) } } label: { Image(systemName:selected.contains(person.id) ? "checkmark.circle.fill" : "circle").foregroundStyle(selected.contains(person.id) ? Palette.green : .secondary) }.buttonStyle(.borderless).accessibilityLabel("Include \(person.name)").accessibilityValue(selected.contains(person.id) ? "Yes" : "No")
-                    Text(person.userID == session.userID ? "You" : person.name).font(.subheadline)
+                    Button { if selected.contains(person.id) { selected.remove(person.id) } else { selected.insert(person.id) } } label: {
+                        HStack(spacing:10) {
+                            Image(systemName:selected.contains(person.id) ? "checkmark.circle.fill" : "circle")
+                                .foregroundStyle(selected.contains(person.id) ? Palette.green : .secondary)
+                            Text(person.userID == session.userID ? "You" : person.name).font(.subheadline).foregroundStyle(.primary)
+                        }.frame(minHeight:44).contentShape(Rectangle())
+                    }.buttonStyle(.borderless).accessibilityLabel("Include \(person.name)").accessibilityValue(selected.contains(person.id) ? "Yes" : "No")
                     Spacer()
                     if selected.contains(person.id) {
                         if mode == .equal { Text(portions?.first{$0.memberID==person.id}.map{Money.text($0.amount,currency)} ?? "—").font(.caption).foregroundStyle(.secondary) }

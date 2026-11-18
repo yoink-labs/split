@@ -1,14 +1,12 @@
-# Simulator screenshots
+# Split on iPhone
 
-Captured fresh on 2026-11-17 with ADE's lane-owned iPhone simulator, from the build 2 source. These show real isolated QA accounts and production-synced data, not the sample preview.
+The gallery shows the 0.2.0 app on the lane-owned iPhone simulator. The app screens use the fictional Buenos Aires preview. The invitation page uses an example code.
 
-| Flow | Light | Dark |
+| Screen | Light | Dark |
 | --- | --- | --- |
-| Groups and app logo | [light/groups.png](light/groups.png) | [dark/groups.png](dark/groups.png) |
-| Add an expense | [light/add-expense.png](light/add-expense.png) | [dark/add-expense.png](dark/add-expense.png) |
-| Balances after joining | [light/balances.png](light/balances.png) | [dark/balances.png](dark/balances.png) |
-| Invite confirmation | [light/invite.png](light/invite.png) | [dark/invite.png](dark/invite.png) |
+| Groups | [Light](light/groups.png) | [Dark](dark/groups.png) |
+| Add an expense | [Light](light/add-expense.png) | [Dark](dark/add-expense.png) |
+| Balances | [Light](light/balances.png) | [Dark](dark/balances.png) |
+| People and invitations | [Light](light/invite.png) | [Dark](dark/invite.png) |
 
-The add-expense screenshots show a filled form before saving. The invitation screenshots show a repeat opening of the already accepted QA invitation; initial joining and preservation of the ARS 12,000 balance were verified separately.
-
-The deployed branded invitation web fallback is shown in [web-fallback.png](web-fallback.png).
+[Web invitation landing page](web-fallback.png) · [Baseline audit and production flow checks](../docs/USABILITY.md)

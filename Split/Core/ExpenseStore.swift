@@ -7,12 +7,20 @@ import ClerkKit
     @Published private(set) var syncing = false
     @Published private(set) var online = true
     @Published var error: String?
+    @Published var joinedGroupID: String?
     @Published var pendingInvite: String?
     private var scope: String?
     private var demo = false
     private var monitor = NWPathMonitor()
     private var generation = UUID()
-    private let baseURL = URL(string: "https://split-api.yoinklabs.dev")!
+    private let baseURL: URL = {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-splitLocalAPI") {
+            return URL(string:"http://127.0.0.1:8787")!
+        }
+        #endif
+        return URL(string:"https://split-api.yoinklabs.dev")!
+    }()
     var groups: [ExpenseGroup] { state.snapshot.groups }
     var entries: [LedgerEntry] { state.snapshot.entries.sorted { $0.createdAt > $1.createdAt } }
     var pending: Int { state.outbox.count }
@@ -41,12 +49,12 @@ import ClerkKit
         state = next
     }
     func activate(userID: String?, demo: Bool) async {
-        generation = UUID(); syncing = false; self.scope = userID; self.demo = demo; state = DiskState(); error = nil
-        guard let userID else { return }
+        generation = UUID(); syncing = false; self.scope = userID.map { baseURL.host == "127.0.0.1" ? "local-" + $0 : $0 }; joinedGroupID = nil; self.demo = demo; state = DiskState(); error = nil
+        guard let scope else { return }
         if demo { state.snapshot = Fixtures.snapshot() }
         else {
-            do { let url = try file(for: userID); if FileManager.default.fileExists(atPath: url.path) { state = try JSONDecoder().decode(DiskState.self, from: Data(contentsOf: url)) } }
-            catch { self.error = "Could not open your saved expenses. Your existing file has been kept."; scope = nil; return }
+            do { let url = try file(for: scope); if FileManager.default.fileExists(atPath: url.path) { state = try JSONDecoder().decode(DiskState.self, from: Data(contentsOf: url)) } }
+            catch { self.error = "Could not open your saved expenses. Your existing file has been kept."; self.scope = nil; return }
             await sync()
         }
     }
@@ -190,7 +198,7 @@ import ClerkKit
 
     func join() async {
         guard let token = pendingInvite else { return }
-        do { _ = try await accept(token) }
+        do { joinedGroupID = try await accept(token) }
         catch { self.error = error.localizedDescription }
     }
 }

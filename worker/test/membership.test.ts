@@ -93,3 +93,11 @@ it('fetches verified profile data in workerd and retries after Clerk outages',as
     expect(transport).toHaveBeenCalledTimes(2);
   } finally { transport.mockRestore(); }
 });
+
+it('provides manual join instructions on the public invite landing page',async()=>{
+  const {default:worker}=await import('../src/index');
+  const link=new Request('https://split.test/join/SAMPLETEST22');
+  const page=await worker.fetch(link,env);
+  expect(page.status).toBe(200);
+  expect(await page.text()).toContain('enter <strong>SAMPLETEST22</strong>');
+});

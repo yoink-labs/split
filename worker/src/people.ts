@@ -62,7 +62,7 @@ export async function saveProfile(db: D1Database, profile: Profile) {
   ]);
 }
 
-export async function refreshIdentity(env: Env & {CLERK_SECRET_KEY:string}, userID:string) {
+export async function refreshIdentity(env: Env, userID:string) {
   const recent=await env.DB.prepare(`SELECT p.user_id FROM split_profiles p WHERE p.user_id=? AND p.refreshed_at>?
     AND NOT EXISTS (SELECT 1 FROM member_contacts c JOIN members m ON m.id=c.member_id
       LEFT JOIN member_aliases a ON a.member_id=m.id WHERE c.email=p.email AND m.user_id IS NULL AND a.member_id IS NULL)`)

@@ -9,7 +9,7 @@ struct MainView: View {
             GroupsView(friends:true).tabItem { Label("Friends",systemImage:"person.2") }.tag(1)
             ActivityView().tabItem { Label("Activity",systemImage:"clock.arrow.circlepath") }.tag(2)
             AccountView().tabItem { Label("You",systemImage:"person.crop.circle") }.tag(3)
-        }
+        }.onChange(of:store.joinedGroupID) { _,id in if id != nil { tab=0 } }
     }
 }
 struct GroupsView: View {
@@ -37,9 +37,9 @@ struct GroupsView: View {
                         Image("SplitLogo").resizable().frame(width:40,height:40).clipShape(RoundedRectangle(cornerRadius:11)).accessibilityHidden(true)
                     }
                     if !friends && !groups.isEmpty { summary }
-                    HStack {
-                        Button { showCreate=true } label: { Label(friends ? "Add friend" : "New group",systemImage:"plus") }.buttonStyle(.borderedProminent)
-                        if !friends { Button { joining=true } label: { Label("Join group",systemImage:"link") }.buttonStyle(.bordered) }
+                    ViewThatFits(in:.horizontal) {
+                        HStack { groupActions }
+                        VStack(alignment:.leading) { groupActions }
                     }.controlSize(.large)
                     if store.isDemo { Label("Sample groups · changes stay in this preview",systemImage:"sparkles").font(.caption).foregroundStyle(.secondary) }
                     if store.pending > 0 || !store.online { Label(store.online ? "\(store.pending) changes waiting to sync" : "Offline · new expenses are saved here",systemImage:store.online ? "arrow.triangle.2.circlepath" : "wifi.slash").font(.caption).foregroundStyle(Palette.green) }
@@ -49,8 +49,12 @@ struct GroupsView: View {
                     }
                     ForEach(groups) { group in NavigationLink(value:group.id) { GroupCard(group:group) }.buttonStyle(.plain) }
                 }.padding(24).frame(maxWidth:680)
-            }.frame(maxWidth:.infinity).background(Palette.background).toolbar(.hidden,for:.navigationBar).refreshable { await store.sync() }.navigationDestination(for:String.self) { GroupDetail(groupID:$0) }.sheet(isPresented:$joining) { JoinGroupView { id in path.append(id) } }.sheet(isPresented:$showCreate) { CreateGroupView(friend:friends) }
+            }.frame(maxWidth:.infinity).background(Palette.background).toolbar(.hidden,for:.navigationBar).refreshable { await store.sync() }.onChange(of:store.joinedGroupID,initial:true) { _,id in if !friends, let id { path=[id]; store.joinedGroupID=nil } }.navigationDestination(for:String.self) { GroupDetail(groupID:$0) }.sheet(isPresented:$joining) { JoinGroupView { id in path.append(id) } }.sheet(isPresented:$showCreate) { CreateGroupView(friend:friends) }
         }
+    }
+    @ViewBuilder private var groupActions: some View {
+        Button { showCreate=true } label: { Label(friends ? "Add friend" : "New group",systemImage:"plus") }.buttonStyle(.borderedProminent)
+        if !friends { Button { joining=true } label: { Label("Join group",systemImage:"link") }.buttonStyle(.bordered) }
     }
     private var summary: some View {
         VStack(alignment:.leading,spacing:16) {
@@ -68,11 +72,11 @@ struct GroupCard: View {
         Card {
             HStack(alignment:.top,spacing:16) {
                 Image(systemName:group.symbol).font(.title2).frame(width:58,height:58).background((group.kind == "trip" ? Palette.lime : Palette.green.opacity(0.15))).foregroundStyle(group.kind == "trip" ? Palette.ink : Palette.green).clipShape(RoundedRectangle(cornerRadius:18))
-                VStack(alignment:.leading,spacing:6) { Text(group.name).font(.title3.weight(.semibold)); Text("\(group.members.count) people · \(group.kind == "trip" ? "Trip" : group.kind == "home" ? "Home" : "Friend")").font(.caption).foregroundStyle(.secondary) }
+                VStack(alignment:.leading,spacing:6) { Text(group.name).font(.title3.weight(.semibold)); Text("\(group.members.count) \(group.members.count == 1 ? "person" : "people") · \(group.kind == "trip" ? "Trip" : group.kind == "home" ? "Home" : "Friend")").font(.caption).foregroundStyle(.secondary) }
                 Spacer(); Image(systemName:"chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.secondary).padding(.top,8)
             }
             Divider().padding(.vertical,12)
-            HStack { HStack(spacing:-8) { ForEach(Array(group.members.prefix(4))) { p in Avatar(name:p.name,size:28).overlay(Circle().stroke(Palette.card,lineWidth:2)) } }; Spacer(); Text(store.entries(in:group).isEmpty ? "Ready for your first expense" : "\(store.entries(in:group).count) entries").font(.caption).foregroundStyle(.secondary) }
+            HStack { HStack(spacing:-8) { ForEach(Array(group.members.prefix(4))) { p in Avatar(name:p.name,size:28).overlay(Circle().stroke(Palette.card,lineWidth:2)) } }; Spacer(); Text(store.entries(in:group).isEmpty ? "Ready for your first expense" : "\(store.entries(in:group).count) \(store.entries(in:group).count == 1 ? "entry" : "entries")").font(.caption).foregroundStyle(.secondary) }
         }
     }
 }

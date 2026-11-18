@@ -1,6 +1,16 @@
 import XCTest
 @testable import Split
 final class LedgerTests: XCTestCase {
+    @MainActor func testInvitesAcceptBothGenerationsAndOnlySplitLinks() {
+        let old=String(repeating:"a",count:72)
+        for value in ["abcd-efgh-2345", "https://split-api.yoinklabs.dev/join/ABCDEFGH2345",
+                      "com.yoinklabs.split://join/ABCDEFGH2345"] {
+            XCTAssertEqual(ExpenseStore.inviteToken(value),"ABCDEFGH2345")
+        }
+        XCTAssertEqual(ExpenseStore.inviteToken("https://split-api.yoinklabs.dev/join/"+old),old)
+        XCTAssertNil(ExpenseStore.inviteToken("https://example.com/join/ABCDEFGH2345"))
+        XCTAssertNil(ExpenseStore.inviteToken("abcdef"))
+    }
     func testRemaindersNeverLoseMoney() throws {
         for total in 1...1000 {
             for count in 1...12 {

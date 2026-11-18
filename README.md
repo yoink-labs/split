@@ -1,61 +1,82 @@
 # Split by Yoink Labs
 
-A free native iOS app for shared expenses. No paywall or Pro tier.
+Split is a free iPhone and iPad app for tracking shared expenses. Start a trip, household, or two-person tab, record who paid, and see who owes whom. Each currency has its own balance.
 
-- **Working name:** Split · `com.yoinklabs.split`
-- **Team:** `64PUT29XZ8`
-- **App:** SwiftUI, iOS 18+, XcodeGen, Clerk iOS 1.7.1
-- **API:** https://split-api.yoinklabs.dev · separate Cloudflare Worker and D1 database
-- **Identity:** the existing Yoink Labs production Clerk instance used by Wanderer and yoinklabs.dev
+[Join the TestFlight beta](https://testflight.apple.com/join/YX8W6bCx) · [Release and signing](docs/TESTFLIGHT.md) · [Simulator audit](docs/USABILITY.md) · [Screenshot gallery](screenshots/README.md)
 
-## First build
+<p>
+  <img src="screenshots/light/groups.png" width="225" alt="Split groups in light appearance">
+  <img src="screenshots/dark/add-expense.png" width="225" alt="Adding an expense in dark appearance">
+</p>
 
-Groups for trips and homes; one-to-one friend tabs; invitations to named member slots; expenses split equally, by exact amounts, percentages, or shares; per-currency balances; simplified group debts; partial/full settle-up records; activity feed; account-scoped local storage and a FIFO upload outbox. ARS, USD, EUR, GBP, BRL, CAD, AUD, MXN are supported with two decimal places. Currencies are never combined or converted.
+## Using Split
 
-The sample preview is explicitly labeled, uses fictional people, and never writes to the server. Sign in to use real groups. Returning email sign-in uses a code. Email signup also asks for a password because the existing shared Clerk instance requires it; no dashboard settings were changed.
+- **Create or join.** Start a group on your own. Open **People → Create group invite** to share a link or copy a code. Multiple people can use it for seven days. Create a fresh invitation at any time. In **Groups → Join group**, paste either the code or the full link.
+- **Add people.** Find a Split account by exact email or username. Name searches are limited to people with whom you already share a group. Select **Placeholder** to add someone by name, with optional email or phone. This works during group creation, from People, and while composing an expense.
+- **Claim history.** Send a placeholder’s personal invite, or let the person sign in with the matching verified primary email. Split preserves earlier expenses and payments. If they already joined the group separately, both records resolve to one member. Phone numbers are optional contact information. They do not prove ownership.
+- **Record an expense.** Tap **Add an expense**, enter the amount and save. The group currency, you as payer, and an equal split are preselected. Add a description or choose exact amounts, percentages, or shares. Tap a saved entry for the breakdown. Its author can edit an expense or delete an entry.
+- **Settle up.** Balances suggest payments within each currency. Record a full or partial payment after money changes hands. Split records payments and does not transfer funds.
+- **Use another device.** A Clerk session syncs your groups. **You → Connected computers** approves and revokes CLI/MCP access. The signed-out preview uses fictional data on the device.
 
-## Development
+Supported currencies are USD, ARS, EUR, GBP, BRL, CAD, AUD, and MXN. Amounts use integer minor units. Largest-remainder allocation preserves every cent.
+
+## Architecture
+
+| Component | Responsibility |
+| --- | --- |
+| [SwiftUI app](Split) | iOS 18+, system appearance and Dynamic Type, protected per-account cache, and FIFO outbox for new groups, expenses and payments |
+| [Split Worker](worker/src/index.ts) | Authenticated ledger and membership API, invitation landing page, universal-link association and CLI/MCP routes |
+| [D1 migrations](worker/migrations) | Groups, stable member IDs, private contact records, identity aliases, expenses, hashed invites, revisions via conditional updates, deletion tombstones and device credentials |
+| Clerk | Existing Yoink Labs sign-in. The Worker verifies signed sessions with public JWKS and reads the signed-in user’s verified profile through the Clerk backend API |
+
+New ledger records can be entered offline. Search, adding someone to an existing group, joining, sharing invites, editing and deleting require connectivity. Snapshot refreshes retry when the app becomes active or connectivity returns. The beta supports 50 active people per group, 100 groups per account and 5,000 visible entries per account. Split uses its own Worker and D1 database on Cloudflare’s free tier.
+
+## Local development
+
+Use Xcode with an iOS 18+ simulator, XcodeGen, Node 22.18+ and npm. Install project dependencies and generate the Xcode project from the repository root.
 
 ```sh
-xcodegen generate
-ade apple launch --follow --open-drawer --text
-ade apple test --scheme Split --text
 npm ci --prefix worker
-npm test --prefix worker
+xcodegen generate
 npm run typecheck --prefix worker
+npm test --prefix worker
+node --test cli/test/*.test.mjs
 ```
 
-The lane simulator is owned by ADE. On this Mac, the file provider adds FinderInfo metadata to build bundles and can make Xcode's final signing step fail after compilation. For **that specific metadata error only**, run `scripts/sign-simulator.sh`, then `ade apple install --no-build --launch --text`. The script finishes the ad-hoc signature using Xcode's generated entitlements; it does not disable authentication or change device signing. Do not use it to ignore compiler/test failures.
+Open `Split.xcodeproj` and run the Split scheme. In ADE, use `ade apple launch --follow --text` and `ade apple test --scheme Split --text`. The sample preview is usable without signing in. The app normally connects to the production Split API.
 
-## Backend deployment
+For a local Worker, apply migrations to the local D1 store, then start Wrangler with the Clerk binding in the process environment. Run these commands from the root with the ADE project vault available.
 
-Use the project's ADE secrets. Never put them in source, logs, or `.env` files.
+```sh
+npm run db:local --prefix worker
+ade secrets exec --env CLERK_SECRET_KEY -- /opt/homebrew/bin/node worker/node_modules/wrangler/bin/wrangler.js dev --local --config worker/wrangler.jsonc --port 8787
+```
+
+Use the absolute path to your Node executable if it differs. Add `-splitLocalAPI` to the **Debug simulator** launch arguments to use loopback port 8787. Local ledger storage has its own cache and outbox. The local Worker verifies real Clerk sessions. The automated Worker tests use isolated D1 test data and a stubbed identity response.
+
+On macOS file-provider volumes, Xcode may reject Finder metadata when signing a simulator bundle. Run `xcodebuild` with the same project, scheme and destination and the build setting `OTHER_CODE_SIGN_FLAGS=--strip-disallowed-xattrs`. This preserves normal signing and applies to dependency bundles as well.
+
+## Configuration and deployment
+
+| Name | Where it belongs |
+| --- | --- |
+| `CLERK_SECRET_KEY` | Split Worker secret and ADE vault. Used to read the authenticated user’s verified identity |
+| `CLERK_ISSUER`, `APP_URL` | Public Worker configuration |
+| `DB` | D1 binding to the database named `split` |
+| `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` | ADE deployment credentials |
+| `SPLIT_TOKEN`, `SPLIT_API_URL` | Optional CLI environment settings |
+| Clerk publishable key | Public client configuration in [SplitApp.swift](Split/SplitApp.swift) |
+
+The current production route is `split-api.yoinklabs.dev`. Verify the `split-api` Worker name and `split` database in [wrangler.jsonc](worker/wrangler.jsonc) before deployment. Apply outstanding migrations, then deploy from a revision containing both the iOS ledger and CLI/MCP routes. The Clerk secret must already be provisioned on this Worker. Keep credentials in the vault.
 
 ```sh
 ade secrets exec --env CLOUDFLARE_API_TOKEN --env CLOUDFLARE_ACCOUNT_ID -- /opt/homebrew/bin/node worker/node_modules/wrangler/bin/wrangler.js d1 migrations apply split --remote --config worker/wrangler.jsonc
 ade secrets exec --env CLOUDFLARE_API_TOKEN --env CLOUDFLARE_ACCOUNT_ID -- /opt/homebrew/bin/node worker/node_modules/wrangler/bin/wrangler.js deploy --config worker/wrangler.jsonc
 ```
 
-D1: `1bd76a4e-1855-4699-922d-c3f7f5486800`, Worker: `split-api`, account: `2bc9c3c136a62ea9dcbddaa6f59edca4`. No paid product is needed. No Wanderer route or database is reused. The Worker verifies RS256 JWTs using Clerk's public JWKS; it needs no Clerk private key. `CLERK_SECRET_KEY` and `CLERK_JWT_KEY` were copied securely as requested and remain only in ADE's vault.
+## License
 
-The compatibility date is 2026-11-16: the installed workerd binary rejects 2026-11-17 despite its package date. Advance it after the runtime supports that date and tests pass.
-
-## Data and security
-
-Amounts are integer minor units; largest-remainder allocation preserves every cent. Server-side validation checks the sum, participants, currency, amount limits and membership. Group creation is transactional. Expense IDs make retries idempotent; conflicting reuse is rejected. Invite tokens have 256+ bits of entropy, are hashed at rest, expire in seven days, and can claim only their assigned unclaimed member. Request bodies are limited to 32 KiB. There is no production test-auth bypass.
-
-The local cache/outbox uses file protection, atomic writes, per-account filenames, and is excluded from backup. Changes are acknowledged individually before leaving the outbox. Refresh preserves any changes made while a request was in flight. Returning to the foreground or regaining connectivity retries sync. iOS does not guarantee sync while the app is suspended.
-
-## Beta limitations and verification gaps
-
-- No currency conversion, expense editing/deletion, receipt upload, recurring expenses, or actual money transfer in this first build.
-- Server guardrails: 50 people/group, 100 groups/account, 5,000 entries/account. These are beta capacity safeguards, never paid upgrades.
-- Google now reaches the Google account sign-in page after Harris registered the native callback. Full Google/Apple/email-code completion still needs real-provider testing.
-- Two tagged QA accounts verified production group creation, expense sync, invite generation, universal links, web fallback/custom links, and joining with preexisting balances preserved. QA uses real Clerk sign-in tickets in Debug only; Release contains no ticket-file hook.
-- Account deletion/export, expense editing and broader device coverage remain follow-up work for the beta.
-- `npm audit --omit=dev` reports no production vulnerabilities. The local test toolchain has upstream advisories (picomatch/Vite); no Vite dev server is deployed.
-
-See [release status](docs/TESTFLIGHT.md) for TestFlight distribution and [fresh screenshots](screenshots/README.md).
+This repository has no published open-source license. Contact Yoink Labs for reuse permission. Third-party dependencies retain their own licenses.
 
 ## CLI and MCP
 

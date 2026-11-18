@@ -38,7 +38,7 @@ struct GroupDetail: View {
                 .sheet(item:$settlement) { transfer in SettlementView(group:group,transfer:transfer) }
                 .refreshable { await store.sync() }
             } else { ContentUnavailableView("Group unavailable",systemImage:"person.2.slash") }
-        }.navigationTitle(" ").navigationBarTitleDisplayMode(.inline)
+        }.navigationTitle(Text(verbatim:"")).navigationBarTitleDisplayMode(.inline)
     }
     @ViewBuilder private func balances(_ group: ExpenseGroup) -> some View {
         let entries = store.entries(in:group)

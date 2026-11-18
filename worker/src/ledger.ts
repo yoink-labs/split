@@ -12,7 +12,7 @@ export function allocate(total: number, weights: number[]): number[] {
   for (let i=0, left=total-amounts.reduce((a,b)=>a+b,0); i<left;i++) amounts[order[i].i]++;
   return amounts;
 }
-export function validateEntry(value: unknown, memberIDs: string[]): Entry {
+export function validateEntry(value: unknown, memberIDs: string[], previous?:Bill): Entry {
   if (!value || typeof value !== 'object') throw new InputError('Invalid entry.');
   const e = value as Entry;
   if (!validID(e.id) || !validID(e.groupID) || typeof e.title !== 'string' || !e.title.trim() || e.title.length > 120 || !Number.isSafeInteger(e.amount) || e.amount <= 0 || e.amount > 100_000_000_000 || !currencies.includes(e.currency as typeof currencies[number]) || !memberIDs.includes(e.paidBy) || !['expense','settlement'].includes(e.kind) || !['equal','exact','percent','shares'].includes(e.splitMode) || typeof e.createdAt !== 'string' || !Number.isFinite(Date.parse(e.createdAt))) throw new InputError('Check the entry amount, currency, and payer.');
@@ -25,7 +25,7 @@ export function validateEntry(value: unknown, memberIDs: string[]): Entry {
   }
   if(e.bill!=null) {
     if(e.kind!=='expense' || e.splitMode!=='exact') throw new InputError('Receipt items require an exact expense split.');
-    extras.bill=readBill(e.bill,memberIDs,e.amount);
+    extras.bill=readBill(e.bill,memberIDs,e.amount,previous);
     const portions=itemSplit(extras.bill,e.paidBy);
     if(portions.length!==e.splits.length || portions.some(p=>!e.splits.some(s=>p.memberID===s.memberID && p.amount===s.amount))) throw new InputError('Refresh the item split.');
   }

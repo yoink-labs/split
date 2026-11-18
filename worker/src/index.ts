@@ -87,24 +87,25 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
       throw new HTTPError(409,'This entry has been deleted.');
     }
     const ids=(await members(env,saved.group_id)).map(m=>m.id);
+      const aliases=new Map((await env.DB.prepare('SELECT member_id,canonical_id FROM member_aliases JOIN members ON members.id=member_id WHERE group_id=?')
+        .bind(saved.group_id).all<{member_id:string;canonical_id:string}>()).results.map(a=>[a.member_id,a.canonical_id]));
+    const canonical=resolveEntry(old,aliases);
     let payload: string | undefined;
     if (!deleting) {
-      const updated=validateEntry(b.entry,ids);
+      const updated=validateEntry(b.entry,ids,canonical.bill);
       if(updated.id!==revise[1] || updated.groupID!==saved.group_id || updated.createdAt!==old.createdAt || updated.kind!==old.kind)
         throw new InputError('Invalid edit.');
       payload=JSON.stringify(updated);
       if(updated.bill?.closed && !old.bill?.closed) throw new InputError('Use the payer close action.');
-      if(old.bill?.closed && (updated.paidBy!==old.paidBy || JSON.stringify(updated.bill)!==JSON.stringify(old.bill))) throw new InputError('This receipt is closed.');
+      if(old.bill?.closed && (updated.paidBy!==canonical.paidBy || JSON.stringify(updated.bill)!==JSON.stringify(canonical.bill))) throw new InputError('This receipt is closed.');
       if (old.bill && !updated.bill) throw new InputError('Keep the receipt items when editing this expense.');
       if(old.bill && old.bill.closed!==updated.bill?.closed) throw new InputError('Use the payer close action.');
       if (saved.payload===payload && !b.photos) return json({ok:true});
     }
     const conditional=!deleting || b.original!==undefined;
     if (conditional) {
-      const aliases=new Map((await env.DB.prepare('SELECT member_id,canonical_id FROM member_aliases JOIN members ON members.id=member_id WHERE group_id=?')
-        .bind(saved.group_id).all<{member_id:string;canonical_id:string}>()).results.map(a=>[a.member_id,a.canonical_id]));
-      const original=validateEntry(b.original,ids);
-      if (JSON.stringify(original)!==JSON.stringify(resolveEntry(old,aliases))) throw new HTTPError(409,'This entry changed. Refresh and try again.');
+      const original=validateEntry(b.original,ids,canonical.bill);
+      if (JSON.stringify(original)!==JSON.stringify(canonical)) throw new HTTPError(409,'This entry changed. Refresh and try again.');
     }
     const statement=deleting
       ? await env.DB.prepare('INSERT OR IGNORE INTO deleted_entries SELECT id FROM entries WHERE id=? AND (?=0 OR payload=?)')

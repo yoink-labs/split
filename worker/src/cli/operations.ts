@@ -45,7 +45,7 @@ function makeExpense(a: Args, group: Group, old?: Entry): Entry {
   }
   return validateEntry({ id: old?.id ?? crypto.randomUUID(), groupID: group.id, title: a.title ?? old?.title,
     amount, currency: a.currency ?? old?.currency ?? group.currency, paidBy: a.payer ?? old?.paidBy,
-    bill:old?.bill, category:a.category??old?.category, splits, kind: 'expense', splitMode: mode, createdAt: old?.createdAt ?? timestamp() }, ids);
+    bill:old?.bill, category:a.category??old?.category, splits, kind: 'expense', splitMode: mode, createdAt: old?.createdAt ?? timestamp() }, ids,old?.bill);
 }
 
 export async function operate(name: string, input: unknown, env: Env, user: string, handle: LedgerHandler) {

@@ -48,6 +48,7 @@ export async function purchaseRoute(req:Request,env:Env,user:string):Promise<Res
     const item=bill.items.find(i=>i.id===b.itemID);
     if(!item) throw new HTTPError(404,'Item not found.');
     if(!Array.isArray(b.original) || JSON.stringify(item.memberIDs)!==JSON.stringify(b.original)) throw new HTTPError(409,'The claims changed. Refresh and try again.');
+    if(JSON.stringify(item.memberIDs)!==JSON.stringify(ids)) delete item.roundingSeats;
     item.memberIDs=ids;
   }
   entry.splits=itemSplit(bill,entry.paidBy);

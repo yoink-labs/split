@@ -25,7 +25,11 @@ export function resolveEntry(entry: Entry, aliases: Map<string,string>): Entry {
     amounts.set(id, (amounts.get(id) ?? 0) + split.amount);
   }
   if(entry.bill) {
-    const bill={...entry.bill,items:entry.bill.items.map(i=>({...i,memberIDs:[...new Set(i.memberIDs.map(id=>aliases.get(id)??id))]}))};
+    const bill={...entry.bill,items:entry.bill.items.map(i=>{
+      const seats=(i.roundingSeats??i.memberIDs).map(id=>aliases.get(id)??id);
+      const memberIDs=[...new Set(seats)];
+      return {...i,memberIDs,...(seats.length>memberIDs.length?{roundingSeats:seats}:{})};
+    })};
     const paidBy=aliases.get(entry.paidBy)??entry.paidBy;
     return {...entry,bill,paidBy,splits:itemSplit(bill,paidBy)};
   }

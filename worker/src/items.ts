@@ -1,15 +1,19 @@
 import { allocate, Entry, InputError, validID, balances, simplify } from './ledger';
 
-export interface Item { id:string; title:string; amount:number; memberIDs:string[] }
+export interface Item { id:string; title:string; amount:number; memberIDs:string[]; roundingSeats?:string[] }
 export interface Bill { items:Item[]; tax:number; tip:number; closed:boolean }
 const cents=(n:number)=>Number.isSafeInteger(n) && n>=0 && n<=100_000_000_000;
-export function readBill(b:Bill, members:string[], total:number):Bill {
+export function readBill(b:Bill, members:string[], total:number, previous?:Bill):Bill {
   if (!b || !Array.isArray(b.items) || !b.items.length || b.items.length>50 || !cents(b.tax) || !cents(b.tip) || typeof b.closed!=='boolean') throw new InputError('Check items, tax and tip.');
   const items=b.items.map(i=>{
     if(!i || !validID(i.id) || typeof i.title!=='string' || !i.title.trim() || i.title.length>100 || !cents(i.amount) || !i.amount ||
        !Array.isArray(i.memberIDs) || i.memberIDs.length>50 || new Set(i.memberIDs).size!==i.memberIDs.length || i.memberIDs.some(id=>!members.includes(id)) || (b.closed && !i.memberIDs.length))
       throw new InputError('Check the item price, name and claimants.');
-    return {id:i.id,title:i.title.trim(),amount:i.amount,memberIDs:i.memberIDs};
+    // An account can inherit two historical seats. Keep their cent rounding until this item is reassigned.
+    const inherited=previous?.items.find(old=>old.id===i.id)?.roundingSeats;
+    if(i.roundingSeats && (!inherited || JSON.stringify(inherited)!==JSON.stringify(i.roundingSeats) ||
+       JSON.stringify([...new Set(inherited)])!==JSON.stringify(i.memberIDs))) throw new InputError('Refresh the historical item claims.');
+    return {id:i.id,title:i.title.trim(),amount:i.amount,memberIDs:i.memberIDs,...(i.roundingSeats?{roundingSeats:i.roundingSeats}:{})};
   });
   if(new Set(items.map(i=>i.id)).size!==items.length || items.reduce((s,i)=>s+i.amount,b.tax+b.tip)!==total) throw new InputError('Items, tax and tip must match the expense total.');
   return {items,tax:b.tax,tip:b.tip,closed:b.closed};
@@ -22,7 +26,7 @@ export function grossItems(b:Bill) {
 export function itemSplit(b:Bill,payer:string) {
   const totals=new Map<string,number>();
   for (const i of grossItems(b)) {
-    const ids=i.memberIDs.length ? i.memberIDs : [payer];
+    const ids=i.roundingSeats ?? (i.memberIDs.length ? i.memberIDs : [payer]);
     const amounts=allocate(i.gross,ids.map(()=>1));
     ids.forEach((id,index)=>totals.set(id,(totals.get(id)??0)+amounts[index]));
   }

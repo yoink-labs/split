@@ -62,3 +62,16 @@ it('stores photos atomically and privately, handles retries, caps attachments an
   await expect(call('maya',path)).rejects.toThrow('not found');
   expect(await env.DB.prepare('SELECT bytes FROM receipt_usage').first('bytes')).toBe(0);
 });
+it('retains both historical shares and rounding order when a placeholder merges into another claimant',async()=>{
+  const shared={...bill,items:[{...bill.items[0],memberIDs:[other,payer,guest]},bill.items[1]]};
+  const before={...e,bill:shared,splits:itemSplit(shared,payer)};
+  await call('alex','/v1/entries',before);
+  await env.DB.prepare('INSERT INTO member_aliases VALUES (?,?)').bind(guest,other).run();
+  const after=await snapshot();
+  expect(after.bill?.items[0].memberIDs).toEqual([other,payer]);
+  const paidShare=before.splits.find(p=>p.memberID===payer)!.amount;
+  expect(after.splits.find(p=>p.memberID===payer)?.amount).toBe(paidShare);
+  await call('alex',base+'/edit',{original:after,entry:{...after,title:'Updated receipt'}});
+  await call('maya',base+'/claim',{original:[other,payer],itemID:shared.items[0].id,memberIDs:[other]});
+  expect((await snapshot()).bill?.items[0].roundingSeats).toBeUndefined();
+});

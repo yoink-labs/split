@@ -171,10 +171,21 @@ function Composer({ g }: { g: Group }) {
               ))}
             </select>
           </label>
-          <label>
-            Category (optional)
-            <input name="category" maxLength={50} />
-          </label>
+          {mode === "items" ? (
+            <span />
+          ) : (
+            <label>
+              Amount ({currency})
+              <input
+                name="amount"
+                required
+                inputMode="decimal"
+                placeholder="0.00"
+                value={amountText}
+                onChange={(e) => setAmountText(e.target.value)}
+              />
+            </label>
+          )}
         </div>
         {!foreign && (
           <button type="button" className="link" onClick={() => setConverter(true)}>
@@ -191,6 +202,10 @@ function Composer({ g }: { g: Group }) {
             onChange={setExchange}
           />
         )}
+        <label>
+          Category (optional)
+          <input name="category" maxLength={50} placeholder="Dining, transport, lodging…" />
+        </label>
         <label>
           Split method
           <select value={mode} onChange={(e) => setMode(e.target.value)}>
@@ -269,17 +284,6 @@ function Composer({ g }: { g: Group }) {
           </>
         ) : (
           <>
-            <label>
-              Amount ({currency})
-              <input
-                name="amount"
-                required
-                inputMode="decimal"
-                placeholder="0.00"
-                value={amountText}
-                onChange={(e) => setAmountText(e.target.value)}
-              />
-            </label>
             <h2>Split with</h2>
             {g.members.map((p) => (
               <div className="row" key={p.id}>

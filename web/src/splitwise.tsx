@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useLedger } from "./context";
+import { Avatar } from "./ui";
 import { currencies, money, type Group } from "./data";
 import {
   importGroupID,
@@ -253,7 +254,7 @@ function Preview({
           <strong>Doesn’t match Splitwise’s Total balance</strong>
           {mismatches.map((m) => (
             <small key={m.currency + m.member}>
-              {m.member}: Splitwise {money(m.expected, m.currency)}, imported {money(m.imported, m.currency)}
+              {m.member}: Splitwise {signed(m.expected, m.currency)}, Split {signed(m.imported, m.currency)}
             </small>
           ))}
           <small>Check the file wasn’t edited, then export it again from Splitwise.</small>
@@ -305,7 +306,11 @@ function Preview({
           <h2>People</h2>
           {g.members.map((name) => (
             <label className="row map" key={name}>
-              <span>{name}</span>
+              <Avatar name={name} size={36} />
+              <span className="map-name">
+                <strong>{name}</strong>
+                <small>{standing(g.totals, name)}</small>
+              </span>
               <select
                 value={i.mapping[name] ?? "new"}
                 onChange={(e) => update({ mapping: { ...i.mapping, [name]: e.target.value } })}
@@ -325,20 +330,34 @@ function Preview({
           {problem && <p className="error">{problem}</p>}
         </fieldset>
       )}
-      <details>
-        <summary>First entries</summary>
-        {g.rows.slice(0, 6).map((r, n) => (
+      <h2>Entries</h2>
+      <div className="import-entries">
+        {g.rows.slice(0, 5).map((r, n) => (
           <p className="row" key={n}>
             <span>
-              {r.title}
+              <strong>{r.title}</strong>
               <small>
-                {r.day} · {r.payment ? "payment" : r.category ?? "expense"} · {r.payer} paid
+                {shortDay(r.day)} · {r.payment ? "Payment" : r.category ?? "General"} · {(r.payers ?? [{ name: r.payer }]).map((p) => p.name).join(" & ")} paid
               </small>
             </span>
             <b>{money(r.amount, r.currency)}</b>
           </p>
         ))}
-      </details>
+      </div>
+      {g.rows.length > 5 && (
+        <details>
+          <summary>{g.rows.length - 5} more</summary>
+          {g.rows.slice(5).map((r, n) => (
+            <p className="row" key={n}>
+              <span>
+                <strong>{r.title}</strong>
+                <small>{shortDay(r.day)} · {r.payer} paid</small>
+              </span>
+              <b>{money(r.amount, r.currency)}</b>
+            </p>
+          ))}
+        </details>
+      )}
       {g.skipped.length > 0 && (
         <details>
           <summary>{g.skipped.length} left out</summary>
@@ -355,4 +374,21 @@ function Preview({
       )}
     </section>
   );
+}
+
+function signed(amount: number, currency: string) {
+  return (amount > 0 ? "+" : amount < 0 ? "−" : "") + money(Math.abs(amount), currency);
+}
+/** "gets back ARS 112,854.55 · owes USD 120.00" from Splitwise's Total balance rows. */
+function standing(totals: Record<string, Record<string, number>>, name: string) {
+  const parts = Object.keys(totals)
+    .sort()
+    .map((c) => [c, totals[c][name] ?? 0] as const)
+    .filter(([, v]) => v)
+    .map(([c, v]) => (v > 0 ? "gets back " : "owes ") + money(Math.abs(v), c));
+  return parts.length ? "In Splitwise: " + parts.join(" · ") : "Settled in Splitwise";
+}
+function shortDay(day: string) {
+  const m = day.match(/^\d{4}-(\d\d)-(\d\d)$/);
+  return m ? ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][Number(m[1]) - 1] + " " + Number(m[2]) : day;
 }

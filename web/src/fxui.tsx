@@ -60,31 +60,53 @@ export function Approx({
   signed = false,
   prefix = "≈",
   className = "approx",
+  note = true,
+  positive,
+  negative,
 }: {
   amounts: Record<string, number>;
   target: string;
   signed?: boolean;
   prefix?: string;
   className?: string;
+  /** Show the "Approximate, at today's rate · source" line. Lists show it once instead. */
+  note?: boolean;
+  /** Words after the amount, e.g. "gets back" / "owes". Signs are dropped when given. */
+  positive?: string;
+  negative?: string;
 }) {
   const codes = Object.keys(amounts).filter((c) => amounts[c]);
   useRates(codes, target);
-  if (!codes.length || (codes.length === 1 && codes[0] === target)) return null;
+  if (!codes.length || (codes.length === 1 && codes[0] === target && note)) return null;
   const { amount, missing, quotes } = fx.total(amounts, target);
   if (missing.length === codes.length)
     return <small className={className}>Rates unavailable offline</small>;
+  const worded = positive !== undefined && amount !== 0;
+  const tone = amount > 0 ? "pos" : amount < 0 ? "neg" : "";
   return (
-    <p className={className}>
+    <p className={className + " " + tone}>
       <b>
-        {prefix} {signed && amount ? (amount > 0 ? "+" : "−") : ""}
-        {money(signed ? Math.abs(amount) : amount, target)}
+        {prefix} {signed && !worded && amount ? (amount > 0 ? "+" : "−") : ""}
+        {money(signed || worded ? Math.abs(amount) : amount, target)}
       </b>
-      <small>
-        Approximate, at today’s rate · {rateNote(quotes)}
-        {missing.length ? ` · ${missing.join(", ")} not included` : ""}
-      </small>
+      {worded && <small className="approx-word">{amount > 0 ? positive : negative}</small>}
+      {note && (
+        <small>
+          Approximate, at today’s rate · {rateNote(quotes)}
+          {missing.length ? ` · ${missing.join(", ")} not included` : ""}
+        </small>
+      )}
     </p>
   );
+}
+
+/** One shared "Approximate, at today's rate · source, date" line for a list of converted amounts. */
+export function ApproxNote({ codes, target }: { codes: string[]; target: string }) {
+  const foreign = codes.filter((c) => c !== target);
+  useRates(foreign, target);
+  const { quotes } = fx.total(Object.fromEntries(foreign.map((c) => [c, 1])), target);
+  if (!quotes.length) return null;
+  return <small className="approx-note">Approximate, in {target} at today’s rate · {rateNote(quotes)}. Settle up in any currency below.</small>;
 }
 
 /**
@@ -174,7 +196,7 @@ export function RateField({
             placeholder="1200"
             aria-invalid={!!text && !manual}
           />
-          <small>Your rate is saved with this entry. Use it for the ARS blue rate.</small>
+          <small>Saved with this expense. Use it for the blue or card rate.</small>
         </label>
       ) : error ? (
         <p className="error">{error}</p>
@@ -183,12 +205,14 @@ export function RateField({
       ) : null}
       {exchange && (
         <p className="rate-line">
-          {converted !== null ? <b>≈ {money(converted, to)}</b> : null}{" "}
-          at 1 {from} = {rateText(exchange.rateE8)} {to}{" "}
-          <small>
-            ({sourceLabel(exchange)}
-            {fx.offline && exchange.source !== "Manual" ? ", saved rate" : ""})
-          </small>
+          {converted !== null && <b>≈ {money(converted, to)}</b>}
+          <span>
+            at 1 {from} = {rateText(exchange.rateE8)} {to}{" "}
+            <small>
+              ({exchange.source === "Manual" ? "your rate" : sourceLabel(exchange)}
+              {fx.offline && exchange.source !== "Manual" ? ", saved rate" : ""})
+            </small>
+          </span>
         </p>
       )}
       <small>Split keeps the original {from} amount and freezes this rate. Conversion is free.</small>

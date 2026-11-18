@@ -948,3 +948,91 @@ dialog.sheet .titlebar h2 {
 .center {
   text-align: center;
 }
+
+/* Web verification polish: signed tones, one rate note per list, compact import rows. */
+.summary h2.neg {
+  color: #ffb89c;
+}
+.approx.pos b {
+  color: var(--pos);
+}
+.approx.neg b {
+  color: var(--neg);
+}
+.summary .approx.pos b {
+  color: var(--lime);
+}
+.summary .approx.neg b {
+  color: #ffb89c;
+}
+.approx-word {
+  display: inline;
+  margin-left: var(--space-2);
+}
+.row-approx {
+  display: grid;
+  justify-items: end;
+  flex-shrink: 0;
+}
+.row-approx .approx-word {
+  margin: 0;
+  font-size: 0.78rem;
+}
+.approx-note {
+  margin: var(--space-2) 0 var(--space-4);
+}
+.row:has(> label.check) {
+  padding: 2px 0;
+  min-height: 44px;
+}
+.row.map {
+  justify-content: flex-start;
+  padding: var(--space-2) 0;
+  min-height: 52px;
+}
+.row.map .map-name {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+.row.map .map-name small {
+  font-weight: 400;
+  font-size: 0.76rem;
+}
+.row.map select {
+  max-width: 200px;
+  flex-shrink: 0;
+}
+.import-card > h2,
+.import-card fieldset h2 {
+  font-size: 0.95rem;
+  margin: var(--space-4) 0 var(--space-1);
+}
+.import-entries .row {
+  padding: var(--space-2) 0;
+  min-height: 0;
+}
+.import-entries strong {
+  font-weight: 600;
+}
+.rate-line {
+  display: grid;
+  gap: 2px;
+}
+.rate-line b {
+  font-size: 1.35rem;
+  letter-spacing: -0.02em;
+}
+.summary .converted {
+  margin: 0 0 var(--space-2);
+  color: color-mix(in srgb, var(--lime) 85%, transparent);
+}
+.summary .converted small {
+  display: inline;
+}
+.row .avatar {
+  background: color-mix(in srgb, var(--lime) 45%, var(--card));
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 14%, transparent);
+}

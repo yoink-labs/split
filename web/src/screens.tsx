@@ -7,8 +7,8 @@ import {
 } from "react-router-dom";
 import { Form, useLedger, value } from "./context";
 import { AddMenu, Avatar, Badge, Balance, EmptyState, Hero, Row } from "./ui";
-import { Approx, CurrencySelect, RateField, useShowIn } from "./fxui";
-import { convert, fx, useHomeCurrency, type Exchange } from "./fx";
+import { Approx, ApproxNote, CurrencySelect, RateField, useShowIn } from "./fxui";
+import { convert, fx, rateText, sourceLabel, useHomeCurrency, type Exchange } from "./fx";
 import {
   balances,
   breakdown,
@@ -122,7 +122,7 @@ function HomeTotals() {
       </div>
       {open.length ? (
         open.map((c) => (
-          <h2 key={c}>
+          <h2 key={c} className={net[c] < 0 ? "neg" : undefined}>
             {net[c] > 0 ? "+" : "−"}
             {money(Math.abs(net[c]), c)}
           </h2>
@@ -297,7 +297,8 @@ function EntryRow({ e, g, seat }: { e: Expense; g: Group; seat?: string }) {
       detail={
         shortDate(e.createdAt) +
         (settlement ? "" : " · " + memberName(g, e.paidBy) + " paid") +
-        (open ? " · " + open + " open" : "")
+        (open ? " · " + open + " open" : "") +
+        (e.exchange && !settlement && share === null ? " · ≈ " + money(settlementEntry(e).amount, e.exchange.target) : "")
       }
       value={money(share !== null && !settlement ? share : e.amount, e.currency)}
       caption={
@@ -441,13 +442,18 @@ function Balances({ g, entries }: { g: Group; entries: Expense[] }) {
         <section>
           <div className="panel">
             {g.members.map((p) => (
-              <Link className="row" key={p.id} to={memberPath(g, p.id)}>
-                <strong>{p.name}</strong>
-                <Approx amounts={nets[p.id]} target={target} signed className="approx row-approx" />
+              <Link className="row ledger-row" key={p.id} to={memberPath(g, p.id)}>
+                <Avatar name={p.name} />
+                <span className="ledger-main">
+                  <strong>{p.name}</strong>
+                  <small>{codes.filter((c) => nets[p.id][c]).map((c) => (nets[p.id][c] > 0 ? "+" : "−") + money(Math.abs(nets[p.id][c]), c)).join(" · ") || "All square"}</small>
+                </span>
+                <Approx amounts={nets[p.id]} target={target} note={false} positive="gets back" negative="owes" className="approx row-approx" />
+                <span className="chevron" aria-hidden="true">›</span>
               </Link>
             ))}
           </div>
-          <small>Each person’s balance in every currency, shown in {target} at today’s rate. Settle up in any currency below.</small>
+          <ApproxNote codes={codes} target={target} />
         </section>
       )}
       {codes.map((currency) => {
@@ -965,6 +971,13 @@ export function ExpenseScreen() {
           {e.category && " · " + e.category}
         </small>
         <h2>{money(e.amount, e.currency)}</h2>
+        {e.exchange && (
+          <p className="converted">
+            Settles as <b>{money(settlementEntry(e).amount, e.exchange.target)}</b> at 1 {e.currency} ={" "}
+            {rateText(e.exchange.rateE8)} {e.exchange.target}{" "}
+            <small>({e.exchange.source === "Manual" ? "your rate" : sourceLabel(e.exchange as Parameters<typeof sourceLabel>[0])})</small>
+          </p>
+        )}
         Paid by{" "}
         <Link to={memberPath(g, e.paidBy)}>
           {payer?.name ?? "Group member"}

@@ -10,27 +10,16 @@ struct DashboardView: View {
     @State private var showNewPayment = false
     @State private var showSearch = false
     @State private var showCreateGroup = false
+    @State private var showJoin = false
 
     private var dashboard: DashboardModel { store.dashboard }
-    private var greeting: String {
-        let hour = Calendar.current.component(.hour, from: Date())
-        switch hour {
-        case 5..<12: return "Good morning"
-        case 12..<18: return "Good afternoon"
-        default: return "Good evening"
-        }
-    }
-    private var firstName: String {
-        session.displayName.split(separator: " ").first.map(String.init) ?? session.displayName
-    }
     private var visibleGroups: [GroupSummary] { Array(dashboard.groups.prefix(4)) }
     private var visiblePeople: [PersonBalance] { Array(dashboard.people.prefix(5)) }
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    header
+                VStack(alignment: .leading, spacing: Spacing.section) {
                     BalanceHero(net: dashboard.net, owed: dashboard.owed, owe: dashboard.owe, subtitle: "Your balance across \(dashboard.groups.count) \(dashboard.groups.count == 1 ? "group" : "groups")")
                     quickActions
                     if balanceReminders, !dashboard.people.isEmpty { reminderCard }
@@ -53,50 +42,44 @@ struct DashboardView: View {
                     adaptiveGrid
                     footer
                 }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 18)
+                .padding(.horizontal, Spacing.page)
+                .padding(.vertical, Spacing.m)
                 .frame(maxWidth: 980)
                 .frame(maxWidth: .infinity)
             }
             .background(AppBackground())
             .refreshable { await store.sync() }
-            .toolbar(.hidden, for: .navigationBar)
+            .navigationTitle("Home")
+            .navigationBarTitleDisplayMode(.large)
+            .toolbar {
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    Button { showSearch = true } label: { Label("Search everything", systemImage: "magnifyingglass") }
+                    Menu {
+                        Button { showNewExpense = true } label: { Label("Add expense", systemImage: "plus") }
+                        Button { showNewPayment = true } label: { Label("Settle up", systemImage: "arrow.left.arrow.right") }
+                            .disabled(dashboard.people.isEmpty)
+                        Divider()
+                        Button { showCreateGroup = true } label: { Label("New group", systemImage: "person.3") }
+                        Button { showJoin = true } label: { Label("Join with code or link", systemImage: "link") }
+                    } label: {
+                        Label("Add", systemImage: "plus")
+                    }
+                    .accessibilityIdentifier("home-add-menu")
+                }
+            }
             .ledgerDestinations()
             .sheet(item: $inspecting) { entry in EntrySheet(entry: entry) }
             .sheet(isPresented: $showNewExpense) { NewExpenseSheet() }
             .sheet(isPresented: $showNewPayment) { NewSettlementSheet() }
             .sheet(isPresented: $showSearch) { NavigationStack { SearchView() } }
             .sheet(isPresented: $showCreateGroup) { CreateGroupView(friend: false) }
+            .sheet(isPresented: $showJoin) { JoinGroupView { store.joinedGroupID = $0 } }
             .onChange(of: store.joinedGroupID) { _, id in if id != nil { showNewExpense = false } }
         }
     }
 
-    private var header: some View {
-        HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text("\(greeting), \(firstName)")
-                    .font(.splitDisplay(size == .regular ? 34 : 27))
-                    .foregroundStyle(Palette.ink)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-                Text(Date().formatted(.dateTime.weekday(.wide).month(.wide).day()))
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
-            Button { showSearch = true } label: { Image(systemName: "magnifyingglass") }
-                .buttonStyle(IconButton())
-                .accessibilityLabel("Search everything")
-            Image("SplitLogo")
-                .resizable()
-                .frame(width: 40, height: 40)
-                .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
-                .accessibilityHidden(true)
-        }
-    }
-
     private var quickActions: some View {
-        HStack(spacing: 10) {
+        ActionBar {
             SplitActionButton(title: "Add expense", symbol: "plus", prominent: true) {
                 showNewExpense = true
             }
@@ -104,11 +87,6 @@ struct DashboardView: View {
                 showNewPayment = true
             }
             .disabled(dashboard.people.isEmpty)
-            .opacity(dashboard.people.isEmpty ? 0.45 : 1)
-            SplitIconAction(title: "Create a group", symbol: "person.badge.plus") {
-                showCreateGroup = true
-            }
-            Spacer(minLength: 0)
         }
     }
 

@@ -41,23 +41,6 @@ struct GroupsView: View {
     private var sidebar: some View {
         List(selection: $selection) {
             Section {
-                HStack(alignment: .top, spacing: 10) {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("Groups")
-                            .font(.splitDisplay(30))
-                            .foregroundStyle(Palette.ink)
-                            .accessibilityAddTraits(.isHeader)
-                        Text("\(summaries.count) \(summaries.count == 1 ? "group" : "groups")\(openCount > 0 ? " · \(openCount) open" : "")")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer(minLength: 0)
-                }
-                .listRowInsets(EdgeInsets(top: 10, leading: 12, bottom: 8, trailing: 12))
-                .listRowSeparator(.hidden)
-                .listRowBackground(Color.clear)
-            }
-            Section {
                 if store.isDemo {
                     Label("Sample groups · changes stay here", systemImage: "sparkles")
                         .font(.caption).foregroundStyle(.secondary)
@@ -75,10 +58,6 @@ struct GroupsView: View {
                 }
             }
             Section {
-                if summaries.isEmpty {
-                    EmptyPanel(title: query.isEmpty ? "No groups yet" : "No matches", message: query.isEmpty ? "Create a trip, a home, or join a group with a code." : "Try a different name.", symbol: "person.3", actionTitle: query.isEmpty ? "New group" : nil) { showCreate = true }
-                        .listRowBackground(Color.clear)
-                }
                 ForEach(summaries) { summary in
                     Button { selection = summary.group.id } label: {
                         GroupSidebarRow(summary: summary)
@@ -89,6 +68,19 @@ struct GroupsView: View {
                     .listRowBackground(selection == summary.group.id ? Palette.lime.opacity(0.22) : Color.clear)
                     .tag(summary.group.id)
                     .accessibilityLabel(accessibility(summary))
+                }
+            }
+            if !archived.isEmpty {
+                Section {
+                    Button {
+                        withAnimation(.snappy) { showArchived.toggle() }
+                    } label: {
+                        Label(showArchived ? "Hide archived groups" : "Show \(archived.count) archived \(archived.count == 1 ? "group" : "groups")", systemImage: "archivebox")
+                            .font(.subheadline)
+                            .frame(minHeight: HitTarget.minimum)
+                    }
+                    .foregroundStyle(Palette.evergreen)
+                    .listRowBackground(Color.clear)
                 }
             }
             if showArchived, !archived.isEmpty {
@@ -113,30 +105,22 @@ struct GroupsView: View {
         .scrollContentBackground(.hidden)
         .background(AppBackground())
         .navigationSplitViewColumnWidth(min: 300, ideal: 340, max: 400)
-        .navigationTitle("")
-        .navigationBarTitleDisplayMode(.inline)
+        .navigationTitle("Groups")
+        .navigationBarTitleDisplayMode(.large)
+        .overlay {
+            if summaries.isEmpty {
+                if !store.hasLoaded {
+                    ProgressView()
+                } else if query.isEmpty {
+                    EmptyStateView(title: "No groups yet", message: "Start a trip or a home, or join a group with an invite code.", symbol: "person.3", actionTitle: "New group") { showCreate = true }
+                } else {
+                    ContentUnavailableView.search
+                }
+            }
+        }
         .toolbar {
-            ToolbarItemGroup(placement: .topBarTrailing) {
-                Menu {
-                    Toggle(isOn: $showArchived) { Label("Show archived", systemImage: "archivebox") }
-                    if let first = summaries.first {
-                        NavigationLink {
-                            InsightsView(group: first.group)
-                        } label: {
-                            Label("Insights", systemImage: "chart.bar.xaxis")
-                        }
-                    }
-                } label: {
-                    Label("More", systemImage: "ellipsis")
-                }
-                .accessibilityLabel("Group options")
-                Menu {
-                    Button { showCreate = true } label: { Label("New group", systemImage: "plus") }
-                    Button { joining = true } label: { Label("Join with a code", systemImage: "link") }
-                } label: {
-                    Label("Add group", systemImage: "plus")
-                }
-                .accessibilityLabel("Group actions")
+            ToolbarItem(placement: .topBarTrailing) {
+                GroupAddMenu(create: { showCreate = true }, join: { joining = true })
             }
         }
         .searchable(text: $query, placement: .sidebar, prompt: "Search groups")
@@ -162,48 +146,50 @@ struct GroupSidebarRow: View {
             return amount == 0 ? nil : (currency, amount)
         }
     }
+    private var kind: String {
+        summary.group.kind == "trip" ? "Trip" : summary.group.kind == "home" ? "Home" : "Group"
+    }
     var body: some View {
-        HStack(alignment: .center, spacing: 11) {
+        HStack(alignment: .center, spacing: Spacing.s) {
             Image(systemName: summary.group.symbol)
-                .font(.system(size: 17, weight: .semibold))
+                .font(.body.weight(.semibold))
                 .frame(width: 40, height: 40)
-                .background(summary.group.isFriend ? Palette.raised : Palette.lime.opacity(0.55))
-                .foregroundStyle(summary.group.isFriend ? Palette.evergreen : Palette.ink)
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            VStack(alignment: .leading, spacing: 3) {
+                .background(Palette.lime.opacity(0.55), in: RoundedRectangle(cornerRadius: Radius.badge))
+                .foregroundStyle(Palette.ink)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
                 Text(summary.group.name)
-                    .font(.subheadline.weight(.semibold))
+                    .font(.body.weight(.semibold))
                     .foregroundStyle(Palette.ink)
                     .lineLimit(1)
-                Text("\(summary.group.members.count) people · \(summary.group.kind == "trip" ? "Trip" : summary.group.kind == "home" ? "Home" : "Group")")
-                    .font(.caption2)
+                Text("\(summary.group.members.count) people · \(kind)")
+                    .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
-                if summary.isSettled {
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            VStack(alignment: .trailing, spacing: 2) {
+                if balances.isEmpty {
                     Text("Settled up")
-                        .font(.caption2)
+                        .font(.subheadline.weight(.semibold))
                         .foregroundStyle(Palette.evergreen)
                 } else {
-                    ForEach(Array(balances.prefix(2)), id: \.0) { balance in
-                        HStack(spacing: 4) {
-                            Text(Money.text(abs(balance.1), balance.0))
-                                .font(.splitAmount(12))
-                                .foregroundStyle(balance.1 > 0 ? Palette.positive : Palette.negative)
-                                .lineLimit(1)
-                                .minimumScaleFactor(0.7)
-                            Text(balance.1 > 0 ? "owed" : "you owe")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                        }
+                    BalanceLabel(amount: balances[0].1, currency: balances[0].0, positive: "you’re owed", negative: "you owe")
+                    if balances.count > 1 {
+                        Text("+\(balances.count - 1) more")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                 }
             }
-            Spacer(minLength: 4)
+            .layoutPriority(1)
             Image(systemName: "chevron.right")
-                .font(.caption2.weight(.bold))
+                .font(.footnote.weight(.semibold))
                 .foregroundStyle(.tertiary)
+                .accessibilityHidden(true)
         }
-        .padding(.vertical, 3)
+        .padding(.vertical, Spacing.xxs)
+        .frame(minHeight: HitTarget.minimum)
         .contentShape(Rectangle())
     }
 }
@@ -211,35 +197,24 @@ struct GroupSidebarRow: View {
 struct GroupDetailPlaceholder: View {
     @Binding var showCreate: Bool
     @Binding var joining: Bool
-    @EnvironmentObject private var store: ExpenseStore
     var body: some View {
-        ScrollView {
-            VStack(spacing: 24) {
-                Image("SplitLogo")
-                    .resizable()
-                    .frame(width: 76, height: 76)
-                    .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-                VStack(spacing: 8) {
-                    Text("Pick a group")
-                        .font(.splitDisplay(28))
-                        .foregroundStyle(Palette.ink)
-                    Text("Or start something new. Trips, homes, and two-person tabs all live here.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                }
-                HStack(spacing: 10) {
-                    SplitActionButton(title: "New group", symbol: "plus", prominent: true) { showCreate = true }
-                    SplitActionButton(title: "Join group", symbol: "link") { joining = true }
-                }
-                if store.dashboard.groups.isEmpty {
-                    EmptyPanel(title: "Nothing here yet", message: "Your first group starts with a name and a couple of people.", symbol: "person.3")
-                }
-            }
-            .padding(28)
-            .frame(maxWidth: 520)
+        EmptyStateView(title: "Pick a group", message: "Choose a group from the list, or start a new one with the + button.", symbol: "person.3", actionTitle: "New group") { showCreate = true }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(AppBackground())
+    }
+}
+
+/// The single place to start or join a group, shown as a toolbar "+".
+struct GroupAddMenu: View {
+    var create: () -> Void
+    var join: () -> Void
+    var body: some View {
+        Menu {
+            Button(action: create) { Label("New group", systemImage: "person.3") }
+            Button(action: join) { Label("Join with code or link", systemImage: "link") }
+        } label: {
+            Label("Add group", systemImage: "plus")
         }
-        .background(AppBackground())
+        .accessibilityIdentifier("groups-add-menu")
     }
 }

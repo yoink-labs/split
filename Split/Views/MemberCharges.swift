@@ -55,34 +55,76 @@ extension Snapshot {
     }
 }
 
+/// A member's statement: who they are and where they stand, then every charge
+/// they are part of, grouped by trip or group. Rows open the receipt.
 struct MemberCharges: View {
     let user: String?
     let groupID: String
     let seatID: String
-    @State private var selected: String?
+    @State private var scope: String?
+    @State private var scoped = false
+    @State private var kind: Kind = .charges
     @EnvironmentObject var store: ExpenseStore
     @EnvironmentObject var session: SessionStore
+
+    enum Kind: String, CaseIterable, Identifiable {
+        case charges = "Charges", payments = "Payments"
+        var id: String { rawValue }
+    }
+
+    private struct Statement: Identifiable {
+        var group: ExpenseGroup
+        var person: Person
+        var charges: [LedgerEntry]
+        var payments: [LedgerEntry]
+        var id: String { group.id }
+    }
 
     var body: some View {
         let snapshot = store.state.snapshot
         let memberships = snapshot.memberships(user: user, groupID: groupID, seatID: seatID)
-        if let (group, person) = memberships.first(where: { $0.0.id == (selected ?? groupID) }) ?? memberships.first {
-            let entries = snapshot.charges(group: group.id, seat: person.id)
+        let selected = scoped ? scope : (groupID.isEmpty ? nil : groupID)
+        let statements = memberships
+            .filter { selected == nil || $0.0.id == selected }
+            .map { group, person in
+                let all = snapshot.charges(group: group.id, seat: person.id)
+                return Statement(group: group, person: person,
+                                 charges: all.filter { $0.kind != "settlement" },
+                                 payments: all.filter { $0.kind == "settlement" })
+            }
+        if let first = statements.first ?? memberships.first.map({ Statement(group: $0.0, person: $0.1, charges: [], payments: []) }) {
+            let isMe = first.person.userID != nil && first.person.userID == session.userID
+            let name = isMe ? "You" : first.person.name
+            let hasPayments = statements.contains { !$0.payments.isEmpty }
+            let shown = hasPayments ? kind : .charges
+            let sections = statements.filter { !(shown == .charges ? $0.charges : $0.payments).isEmpty }
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    header(group: group, person: person, memberships: memberships)
-                    chargesSection("Charges", entries.filter { $0.kind == "expense" }, person: person, group: group)
-                    let payments = entries.filter { $0.kind == "settlement" }
-                    if !payments.isEmpty {
-                        chargesSection("Payments", payments, person: person, group: group)
+                VStack(alignment: .leading, spacing: Spacing.section) {
+                    header(name: name, isMe: isMe, person: first.person, statements: statements, memberships: memberships)
+                    if memberships.count > 1 { groupPicker(memberships, selected: selected) }
+                    if hasPayments {
+                        Picker("Show", selection: $kind) {
+                            ForEach(Kind.allCases) { Text($0.rawValue).tag($0) }
+                        }
+                        .pickerStyle(.segmented)
+                    }
+                    if sections.isEmpty {
+                        EmptyStateView(title: shown == .charges ? "No charges yet" : "No payments yet",
+                                       message: shown == .charges ? "Expenses \(isMe ? "you’re" : "\(name) is") part of appear here." : "Recorded payments appear here.",
+                                       symbol: shown == .charges ? "receipt" : "arrow.left.arrow.right")
+                    }
+                    ForEach(sections) { statement in
+                        section(statement, entries: shown == .charges ? statement.charges : statement.payments, kind: shown, isMe: isMe)
                     }
                 }
-                .padding(16)
+                .padding(.horizontal, Spacing.page)
+                .padding(.vertical, Spacing.m)
                 .frame(maxWidth: 760)
                 .frame(maxWidth: .infinity)
+                .animation(.snappy, value: shown)
             }
             .background(AppBackground())
-            .navigationTitle(person.userID == session.userID ? "Your activity" : person.name)
+            .navigationTitle(isMe ? "Your charges" : first.person.name)
             .navigationBarTitleDisplayMode(.inline)
             .refreshable { await store.sync() }
         } else {
@@ -91,147 +133,110 @@ struct MemberCharges: View {
         }
     }
 
-    private func header(group: ExpenseGroup, person: Person, memberships: [(ExpenseGroup, Person)]) -> some View {
-        let expenses = store.entries(in: group).filter { $0.kind == "expense" && $0.settling.currency == group.currency }
-        let paid = expenses.filter { $0.paidBy == person.id }.reduce(Int64(0)) { $0 + $1.settling.amount }
-        let share = expenses.reduce(Int64(0)) { sum, entry in
-            sum + (entry.settling.splits.first { $0.memberID == person.id }?.amount ?? 0)
+    // MARK: Header
+
+    private func header(name: String, isMe: Bool, person: Person, statements: [Statement], memberships: [(ExpenseGroup, Person)]) -> some View {
+        var net: [String: Int64] = [:]
+        var paid: [String: Int64] = [:]
+        var share: [String: Int64] = [:]
+        for statement in statements {
+            let entries = store.entries(in: statement.group)
+            for currency in Set(entries.map(\.settling.currency)) {
+                net[currency, default: 0] += Ledger.balances(entries, currency: currency)[statement.person.id] ?? 0
+            }
+            for entry in statement.charges.map(\.settling) {
+                paid[entry.currency, default: 0] += Ledger.paid(entry, by: statement.person.id)
+                share[entry.currency, default: 0] += Ledger.share(entry, of: statement.person.id)
+            }
         }
-        let count = store.state.snapshot.charges(group: group.id, seat: person.id).count
-        let label = person.userID == session.userID ? "You" : person.name
-        return VStack(alignment: .leading, spacing: 16) {
-            HStack(spacing: 14) {
-                Avatar(name: person.name, size: 52, tint: Palette.lime)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(label)
-                        .font(.splitDisplay(24))
-                        .foregroundStyle(Palette.onHero)
-                        .lineLimit(2)
-                    Text(person.userID == nil ? "Placeholder · \(group.name)" : "Group member · \(group.name)")
-                        .font(.caption)
-                        .foregroundStyle(Palette.lime.opacity(0.65))
+        let count = statements.reduce(0) { $0 + $1.charges.count }
+        let subtitle: String = {
+            if statements.count == 1, let group = statements.first?.group {
+                return (person.userID == nil ? "Placeholder · " : "") + group.name
+            }
+            return "\(statements.count) shared groups"
+        }()
+        func text(_ values: [String: Int64]) -> String {
+            let parts = values.keys.sorted().compactMap { key in values[key].flatMap { $0 == 0 ? nil : Money.text($0, key) } }
+            return parts.isEmpty ? "—" : parts.joined(separator: " · ")
+        }
+        return HeroHeader(title: name, subtitle: subtitle) {
+            Avatar(name: person.name, size: 52, tint: Palette.lime)
+        } footer: {
+            HeroBalances(balances: net.keys.sorted().map { ($0, net[$0] ?? 0) },
+                         positive: isMe ? "you’re owed" : "gets back",
+                         negative: isMe ? "you owe" : "owes")
+            HeroStats(items: [("Paid", text(paid)), ("Share", text(share)), ("Charges", "\(count)")])
+        }
+    }
+
+    private func groupPicker(_ memberships: [(ExpenseGroup, Person)], selected: String?) -> some View {
+        let binding = Binding<String?>(get: { selected }, set: { scope = $0; scoped = true })
+        return ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: Spacing.xs) {
+                Chip(title: "All groups", selected: selected == nil) { binding.wrappedValue = nil }
+                ForEach(memberships, id: \.0.id) { group, _ in
+                    Chip(title: group.name, symbol: group.symbol, selected: selected == group.id) { binding.wrappedValue = group.id }
                 }
-                Spacer(minLength: 0)
             }
-            if memberships.count > 1 {
-                Menu {
-                    ForEach(memberships.indices, id: \.self) { index in
-                        let membership = memberships[index]
-                        Button {
-                            selected = membership.0.id
-                        } label: {
-                            if membership.0.id == group.id {
-                                Label(membership.0.name, systemImage: "checkmark")
-                            } else {
-                                Text(membership.0.name)
-                            }
-                        }
-                    }
-                } label: {
-                    Label(group.name, systemImage: "chevron.up.chevron.down")
-                        .font(.subheadline.weight(.semibold))
-                        .padding(.horizontal, 13)
-                        .frame(minHeight: 42)
-                        .foregroundStyle(Palette.hero)
-                        .background(Palette.lime, in: Capsule())
-                }
-                .accessibilityLabel("Choose a group statement")
-            }
-            HStack(spacing: 0) {
-                stat("\(count)", label: "Entries")
-                divider
-                stat(Money.text(paid, group.currency), label: "Paid")
-                divider
-                stat(Money.text(share, group.currency), label: "Share")
-            }
-            .padding(.vertical, 10)
-            .background(Palette.onHero.opacity(0.06), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel("\(count) entries, paid \(Money.text(paid, group.currency)), share \(Money.text(share, group.currency))")
+            .frame(minHeight: HitTarget.minimum)
         }
-        .padding(18)
-        .background(
-            LinearGradient(colors: [Palette.hero, Palette.hero.opacity(0.94)], startPoint: .topLeading, endPoint: .bottomTrailing),
-            in: RoundedRectangle(cornerRadius: 24, style: .continuous)
-        )
-        .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).stroke(Palette.lime.opacity(0.16), lineWidth: 1))
+        .scrollClipDisabled()
+        .accessibilityLabel("Choose a group")
     }
 
-    private func stat(_ value: String, label: String) -> some View {
-        VStack(spacing: 2) {
-            Text(value)
-                .font(.splitAmount(15))
-                .foregroundStyle(Palette.onHero)
-                .lineLimit(1)
-                .minimumScaleFactor(0.6)
-            Text(label)
-                .font(.caption2)
-                .foregroundStyle(Palette.lime.opacity(0.62))
-        }
-        .frame(maxWidth: .infinity)
-    }
+    // MARK: Rows
 
-    private var divider: some View {
-        Rectangle().fill(Palette.lime.opacity(0.16)).frame(width: 1, height: 30)
-    }
-
-    private func chargesSection(_ title: String, _ entries: [LedgerEntry], person: Person, group: ExpenseGroup) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            SectionHeader(title: title, subtitle: entries.isEmpty ? "Nothing here yet" : "\(entries.count) \(entries.count == 1 ? "entry" : "entries")")
+    private func section(_ statement: Statement, entries: [LedgerEntry], kind: Kind, isMe: Bool) -> some View {
+        VStack(alignment: .leading, spacing: Spacing.xs) {
+            SectionHeader(title: statement.group.name,
+                          subtitle: "\(entries.count) \(entries.count == 1 ? (kind == .charges ? "charge" : "payment") : (kind == .charges ? "charges" : "payments"))")
             Card(padding: 0) {
-                if entries.isEmpty {
-                    HStack(spacing: 10) {
-                        Image(systemName: "checkmark.seal.fill").foregroundStyle(Palette.evergreen)
-                        Text("No \(title.lowercased()) in \(group.name).").font(.subheadline).foregroundStyle(.secondary)
-                        Spacer()
-                    }
-                    .padding(14)
-                } else {
-                    VStack(spacing: 0) {
-                        ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
-                            NavigationLink(value: LedgerRoute.entry(group: group.id, id: entry.id)) {
-                                row(entry, person: person, group: group)
-                            }
-                            .buttonStyle(.plain)
-                            if index < entries.count - 1 { Divider().overlay(Palette.line).padding(.leading, 64) }
+                VStack(spacing: 0) {
+                    ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
+                        NavigationLink(value: LedgerRoute.entry(group: statement.group.id, id: entry.id)) {
+                            row(entry, statement: statement, isMe: isMe)
                         }
+                        .buttonStyle(.plain)
+                        .accessibilityHint("Opens the receipt")
+                        if index < entries.count - 1 { RowDivider() }
                     }
                 }
             }
         }
     }
 
-    private func row(_ entry: LedgerEntry, person: Person, group: ExpenseGroup) -> some View {
-        let payer = group.members.first { $0.id == entry.paidBy }
-        let payerName = payer?.userID == session.userID ? "You" : (payer?.name ?? "Group member")
-        let share = entry.splits.first { $0.memberID == person.id }?.amount ?? 0
-        return HStack(alignment: .top, spacing: 11) {
-            CategoryBadge(category: entry.category, size: 38)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(entry.title)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(Palette.ink)
-                    .lineLimit(2)
-                Text("\(payerName) \(entry.kind == "settlement" ? "settled" : "paid") · \(entry.createdAt.prefix(10))")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                if entry.kind == "expense" {
-                    Text("Share \(Money.text(share, entry.currency))")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(Palette.evergreen)
-                }
+    private func memberName(_ id: String, in group: ExpenseGroup) -> String {
+        guard let person = group.members.first(where: { $0.id == id }) else { return "Someone" }
+        return person.userID != nil && person.userID == session.userID ? "You" : person.name
+    }
+
+    @ViewBuilder private func row(_ entry: LedgerEntry, statement: Statement, isMe: Bool) -> some View {
+        let date = LedgerDate.short(entry.createdAt)
+        if entry.kind == "settlement" {
+            let to = entry.splits.first.map { memberName($0.memberID, in: statement.group) } ?? "Someone"
+            LedgerRow(title: "\(memberName(entry.paidBy, in: statement.group)) → \(to)",
+                      detail: date,
+                      value: Money.text(entry.amount, entry.currency),
+                      valueCaption: "payment") {
+                Image(systemName: "arrow.left.arrow.right")
+                    .font(.body.weight(.semibold))
+                    .frame(width: 40, height: 40)
+                    .foregroundStyle(Palette.evergreen)
+                    .background(Palette.evergreen.opacity(0.12), in: RoundedRectangle(cornerRadius: Radius.badge))
+                    .accessibilityHidden(true)
             }
-            Spacer(minLength: 6)
-            VStack(alignment: .trailing, spacing: 3) {
-                AmountText(minor: entry.amount, currency: entry.currency, size: 14)
-                Image(systemName: "chevron.right")
-                    .font(.caption2.weight(.bold))
-                    .foregroundStyle(.tertiary)
+        } else {
+            let share = Ledger.share(entry, of: statement.person.id)
+            let payers = entry.allPayers.map { memberName($0.memberID, in: statement.group) }
+            LedgerRow(title: entry.title,
+                      detail: "\(date) · \(payers.count > 1 ? "\(payers.count) people" : payers.first ?? "Someone") paid",
+                      value: Money.text(share, entry.currency),
+                      valueCaption: "of \(Money.text(entry.amount, entry.currency))",
+                      valueTint: share == 0 ? Color.secondary : Palette.ink) {
+                CategoryBadge(category: entry.category, size: 40)
             }
+            .accessibilityValue("\(isMe ? "Your" : "Their") share \(Money.text(share, entry.currency)) of \(Money.text(entry.amount, entry.currency))")
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 11)
-        .contentShape(Rectangle())
-        .accessibilityElement(children: .combine)
     }
 }

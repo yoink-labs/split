@@ -139,23 +139,14 @@ struct GroupDetail: View {
             .padding(18)
             .background(
                 LinearGradient(colors: [Palette.hero, Palette.hero.opacity(0.94)], startPoint: .topLeading, endPoint: .bottomTrailing),
-                in: RoundedRectangle(cornerRadius: 24, style: .continuous)
+                in: RoundedRectangle(cornerRadius: Radius.header)
             )
-            .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).stroke(Palette.lime.opacity(0.16), lineWidth: 1))
+            .overlay(RoundedRectangle(cornerRadius: Radius.header).stroke(Palette.lime.opacity(0.16), lineWidth: 1))
 
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 9) {
-                    SplitActionButton(title: "Add expense", symbol: "plus", prominent: true) { adding = true }
-                        .accessibilityIdentifier("group-add-expense")
-                    SplitActionButton(title: "Settle up", symbol: "arrow.left.arrow.right") { settling = true }
-                    Spacer(minLength: 0)
-                }
-                HStack(spacing: 9) {
-                    SplitActionButton(title: "Add expense", symbol: "plus", prominent: true) { adding = true }
-                        .accessibilityIdentifier("group-add-expense")
-                    SplitIconAction(title: "Settle up", symbol: "arrow.left.arrow.right") { settling = true }
-                    Spacer(minLength: 0)
-                }
+            ActionBar {
+                SplitActionButton(title: "Add expense", symbol: "plus", prominent: true) { adding = true }
+                    .accessibilityIdentifier("group-add-expense")
+                SplitActionButton(title: "Settle up", symbol: "arrow.left.arrow.right") { settling = true }
             }
         }
     }

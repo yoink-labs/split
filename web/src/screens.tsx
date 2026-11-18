@@ -6,10 +6,13 @@ import {
   useSearchParams,
 } from "react-router-dom";
 import { Form, useLedger, value } from "./context";
+import { AddMenu, Avatar, Badge, Balance, EmptyState, Hero, Row } from "./ui";
 import {
+  balances,
   breakdown,
   currencies,
   dateText,
+  shortDate,
   entryPath,
   grossItems,
   memberEntries,
@@ -25,46 +28,62 @@ import {
 } from "./data";
 
 export function Groups() {
-  const { data } = useLedger();
+  const { data, user } = useLedger();
   return (
     <>
       <div className="titlebar">
         <h1>Groups</h1>
-        <div className="actions">
-          <Link className="secondary" to="/join">
-            Join group
-          </Link>
-          <Link className="primary" to="/new">
-            New group
-          </Link>
+        <AddMenu
+          label="Add group"
+          items={[
+            { label: "New group", to: "/new" },
+            { label: "Join with code or link", to: "/join" },
+          ]}
+        />
+      </div>
+      {data.groups.length === 0 ? (
+        <EmptyState
+          title="No groups yet"
+          message="Start a trip or a home, or join a group with an invite code from the + menu."
+          action={{ label: "New group", to: "/new" }}
+        />
+      ) : (
+        <div className="panel">
+          {data.groups.map((g) => {
+            const entries = data.entries.filter((e) => e.groupID === g.id);
+            const me = g.members.find((p) => p.userID === user);
+            const open = me
+              ? [...new Set([g.currency, ...entries.map((e) => settlementEntry(e).currency)])]
+                  .map((c) => ({ currency: c, amount: balances(entries, c)[me.id] ?? 0 }))
+                  .filter((b) => b.amount !== 0)
+              : [];
+            return (
+              <Link className="row ledger-row" key={g.id} to={"/g/" + g.id}>
+                <Badge label={g.name} />
+                <span className="ledger-main">
+                  <strong>{g.name}</strong>
+                  <small>
+                    {g.members.length} people · {g.kind}
+                  </small>
+                </span>
+                {open.length ? (
+                  <Balance
+                    amount={open[0].amount}
+                    currency={open[0].currency}
+                    positive="you’re owed"
+                    negative="you owe"
+                  />
+                ) : (
+                  <small className="accent">Settled up</small>
+                )}
+                <span className="chevron" aria-hidden="true">
+                  ›
+                </span>
+              </Link>
+            );
+          })}
         </div>
-      </div>
-      {data.groups.length === 0 && (
-        <p>
-          Create a group or enter an invitation code to start sharing expenses.
-        </p>
       )}
-      <div className="group-grid">
-        {data.groups.map((g) => {
-          const entries = data.entries.filter(
-            (e) => e.groupID === g.id && e.kind === "expense",
-          );
-          return (
-            <Link className="group-card" key={g.id} to={"/g/" + g.id}>
-              <span className="eyebrow">
-                {g.kind} · {g.currency}
-              </span>
-              <h2>{g.name}</h2>
-              <span>
-                {g.members.length} people · {entries.length} expenses
-              </span>
-              <span aria-hidden="true" className="arrow">
-                ↗
-              </span>
-            </Link>
-          );
-        })}
-      </div>
     </>
   );
 }
@@ -198,28 +217,36 @@ export function Account() {
 }
 function EntryRow({ e, g, seat }: { e: Expense; g: Group; seat?: string }) {
   const open = e.bill?.items.filter((i) => !i.memberIDs.length).length;
+  const share = seat
+    ? (e.splits.find((s) => s.memberID === seat)?.amount ?? 0)
+    : null;
+  const settlement = e.kind === "settlement";
   return (
-    <Link className="row" to={entryPath(e)}>
-      <div>
-        <strong>{e.title}</strong>
-        <small>
-          {dateText(e.createdAt)} · Paid by {memberName(g, e.paidBy)}
-        </small>
-        {!!open && <small className="accent">{open} open purchases</small>}
-      </div>
-      <div className="amount">
-        <b>{money(e.amount, e.currency)}</b>
-        {seat && e.kind === "expense" && (
-          <small>
-            Share{" "}
-            {money(
-              e.splits.find((s) => s.memberID === seat)?.amount ?? 0,
-              e.currency,
-            )}
-          </small>
-        )}
-      </div>
-    </Link>
+    <Row
+      to={entryPath(e)}
+      badge={<Badge label={settlement ? "↔" : (e.category ?? e.title)} />}
+      title={
+        settlement
+          ? memberName(g, e.paidBy) +
+            " → " +
+            memberName(g, e.splits[0]?.memberID ?? "")
+          : e.title
+      }
+      detail={
+        shortDate(e.createdAt) +
+        (settlement ? "" : " · " + memberName(g, e.paidBy) + " paid") +
+        (open ? " · " + open + " open" : "")
+      }
+      value={money(share !== null && !settlement ? share : e.amount, e.currency)}
+      caption={
+        share !== null && !settlement
+          ? "of " + money(e.amount, e.currency)
+          : settlement
+            ? "payment"
+            : undefined
+      }
+      tone={share === 0 ? "muted" : undefined}
+    />
   );
 }
 function People({ g }: { g: Group }) {
@@ -505,50 +532,156 @@ export function GroupScreen() {
   );
 }
 export function MemberScreen() {
-  const { data } = useLedger(),
-    nav = useNavigate(),
+  const { data, user } = useLedger(),
     { gid, mid } = useParams(),
+    [query, setQuery] = useSearchParams(),
     g = data.groups.find((g) => g.id === gid),
     p = g?.members.find((p) => p.id === mid);
   if (!g || !p) return <p>Member unavailable in this group.</p>;
   const shared = membersGroups(data.groups, g, p),
-    entries = memberEntries(data.entries, g.id, p.id);
+    scope = query.get("scope") === "all" ? "all" : g.id,
+    kind = query.get("show") === "payments" ? "settlement" : "expense",
+    me = !!p.userID && p.userID === user,
+    statements = shared
+      .filter((s) => scope === "all" || s.group.id === scope)
+      .map((s) => ({
+        ...s,
+        all: memberEntries(data.entries, s.group.id, s.person.id),
+      }));
+  const net: Record<string, number> = {},
+    paid: Record<string, number> = {},
+    share: Record<string, number> = {};
+  for (const s of statements) {
+    const entries = data.entries.filter((e) => e.groupID === s.group.id);
+    for (const c of new Set(entries.map((e) => settlementEntry(e).currency)))
+      net[c] = (net[c] ?? 0) + (balances(entries, c)[s.person.id] ?? 0);
+    for (const e of s.all.filter((e) => e.kind === "expense").map(settlementEntry)) {
+      paid[e.currency] = (paid[e.currency] ?? 0) + (e.paidBy === s.person.id ? e.amount : 0);
+      share[e.currency] =
+        (share[e.currency] ?? 0) +
+        (e.splits.find((x) => x.memberID === s.person.id)?.amount ?? 0);
+    }
+  }
+  const sum = (v: Record<string, number>) =>
+    Object.keys(v)
+      .sort()
+      .filter((c) => v[c])
+      .map((c) => money(v[c], c))
+      .join(" · ") || "—";
+  const count = statements.reduce(
+      (n, s) => n + s.all.filter((e) => e.kind === "expense").length,
+      0,
+    ),
+    hasPayments = statements.some((s) => s.all.some((e) => e.kind === "settlement")),
+    shown = hasPayments ? kind : "expense",
+    open = Object.keys(net).sort().filter((c) => net[c]),
+    set = (key: string, value: string | null) => {
+      const next = new URLSearchParams(query);
+      if (value === null) next.delete(key);
+      else next.set(key, value);
+      setQuery(next, { replace: true });
+    };
   return (
     <>
-      <p className="eyebrow">{p.userID ? "Group member" : "Placeholder"}</p>
-      <div className="titlebar">
-        <h1>{p.name}</h1>
-        {shared.length > 1 ? (
-          <label>
-            Group
-            <select
-              value={g.id}
-              onChange={(e) => {
-                const s = shared.find((s) => s.group.id === e.target.value)!;
-                nav(memberPath(s.group, s.person.id));
-              }}
-            >
-              {shared.map((s) => (
-                <option key={s.group.id} value={s.group.id}>
-                  {s.group.name}
-                </option>
-              ))}
-            </select>
-          </label>
+      <Hero
+        leading={<Avatar name={p.name} size={52} />}
+        title={me ? "You" : p.name}
+        subtitle={
+          statements.length === 1
+            ? (p.userID ? "" : "Placeholder · ") + statements[0].group.name
+            : statements.length + " shared groups"
+        }
+      >
+        {open.length ? (
+          open.map((c) => (
+            <p className="hero-balance" key={c}>
+              <b className={net[c] > 0 ? "pos" : "neg"}>
+                {money(Math.abs(net[c]), c)}
+              </b>{" "}
+              {net[c] > 0
+                ? me
+                  ? "you’re owed"
+                  : "gets back"
+                : me
+                  ? "you owe"
+                  : "owes"}
+            </p>
+          ))
         ) : (
-          <Link to={"/g/" + g.id}>{g.name}</Link>
+          <p className="hero-balance">
+            <b className="pos">Settled up</b>
+          </p>
         )}
-      </div>
-      {["expense", "settlement"].map((kind) => {
-        const rows = entries.filter((e) => e.kind === kind);
-        if (kind === "settlement" && !rows.length) return null;
+        <dl className="hero-stats">
+          <div>
+            <dt>Paid</dt>
+            <dd>{sum(paid)}</dd>
+          </div>
+          <div>
+            <dt>Share</dt>
+            <dd>{sum(share)}</dd>
+          </div>
+          <div>
+            <dt>Charges</dt>
+            <dd>{count}</dd>
+          </div>
+        </dl>
+      </Hero>
+      {shared.length > 1 && (
+        <div className="chips" role="group" aria-label="Choose a group">
+          <button aria-pressed={scope === "all"} onClick={() => set("scope", "all")}>
+            All groups
+          </button>
+          {shared.map((s) => (
+            <Link
+              key={s.group.id}
+              className="chip"
+              aria-current={scope === s.group.id ? "true" : undefined}
+              to={memberPath(s.group, s.person.id)}
+              replace
+            >
+              {s.group.name}
+            </Link>
+          ))}
+        </div>
+      )}
+      {hasPayments && (
+        <div className="segmented" role="group" aria-label="Show">
+          <button aria-pressed={shown === "expense"} onClick={() => set("show", null)}>
+            Charges
+          </button>
+          <button aria-pressed={shown === "settlement"} onClick={() => set("show", "payments")}>
+            Payments
+          </button>
+        </div>
+      )}
+      {statements.every((s) => !s.all.some((e) => e.kind === shown)) && (
+        <EmptyState
+          title={shown === "expense" ? "No charges yet" : "No payments yet"}
+          message={
+            shown === "expense"
+              ? "Expenses " + (me ? "you’re" : p.name + " is") + " part of appear here."
+              : "Recorded payments appear here."
+          }
+        />
+      )}
+      {statements.map((s) => {
+        const rows = s.all.filter((e) => e.kind === shown);
+        if (!rows.length) return null;
         return (
-          <section key={kind}>
-            <h2>{kind === "expense" ? "Charges" : "Payments"}</h2>
-            {!rows.length && <p>No charges in this group yet.</p>}
+          <section key={s.group.id}>
+            <h2 className="section-title">
+              {s.group.name}
+              <small>
+                {rows.length}{" "}
+                {shown === "expense"
+                  ? rows.length === 1 ? "charge" : "charges"
+                  : rows.length === 1 ? "payment" : "payments"}
+              </small>
+            </h2>
             <div className="panel">
               {rows.map((e) => (
-                <EntryRow key={e.id} e={e} g={g} seat={p.id} />
+                <EntryRow key={e.id} e={e} g={s.group} seat={s.person.id} />
               ))}
             </div>
           </section>

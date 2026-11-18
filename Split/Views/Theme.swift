@@ -26,6 +26,8 @@ enum Palette {
     /// A hairline that lifts glass off the background; stronger in dark mode
     /// where Liquid Glass over the dark paper is otherwise near-invisible.
     static let glassEdge = Color(light: UIColor.white.withAlphaComponent(0.55), dark: UIColor.white.withAlphaComponent(0.10))
+    /// Coral that stays legible on the ink hero card.
+    static let heroNegative = Color(red: 1, green: 0.72, blue: 0.60)
 }
 
 extension Color {
@@ -154,6 +156,8 @@ extension View {
     }
 }
 
+/// A labelled action that shares its row equally with its siblings. Put
+/// these in an `ActionBar`; the prominent one uses the primary style.
 struct SplitActionButton: View {
     var title: String
     var symbol: String
@@ -162,17 +166,13 @@ struct SplitActionButton: View {
     var action: () -> Void
 
     var body: some View {
-        Button(action: action) {
-            Label(title, systemImage: symbol)
-                .font(.subheadline.weight(.semibold))
-                .padding(.horizontal, 15)
-                .frame(minHeight: 46)
-                .foregroundStyle(prominent ? Palette.hero : Palette.ink)
-                .contentShape(Capsule())
+        if prominent {
+            Button(action: action) { Label(title, systemImage: symbol) }
+                .buttonStyle(.splitPrimary)
+        } else {
+            Button(action: action) { Label(title, systemImage: symbol) }
+                .buttonStyle(.splitSecondary)
         }
-        .buttonStyle(.plain)
-        .glassCapsule(tint: prominent ? Palette.lime : tint)
-        .accessibilityLabel(title)
     }
 }
 
@@ -304,9 +304,9 @@ struct BalanceHero: View {
         .background(
             LinearGradient(colors: [Palette.hero, Palette.hero.opacity(0.94)], startPoint: .topLeading, endPoint: .bottomTrailing)
         )
-        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: Radius.header))
         .overlay(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
+            RoundedRectangle(cornerRadius: Radius.header)
                 .stroke(Palette.lime.opacity(0.16), lineWidth: 1)
         )
     }

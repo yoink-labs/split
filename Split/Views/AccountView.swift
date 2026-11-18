@@ -148,9 +148,9 @@ struct AccountView: View {
         .padding(18)
         .background(
             LinearGradient(colors: [Palette.hero, Palette.hero.opacity(0.94)], startPoint: .topLeading, endPoint: .bottomTrailing),
-            in: RoundedRectangle(cornerRadius: 24, style: .continuous)
+            in: RoundedRectangle(cornerRadius: Radius.header)
         )
-        .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).stroke(Palette.lime.opacity(0.16), lineWidth: 1))
+        .overlay(RoundedRectangle(cornerRadius: Radius.header).stroke(Palette.lime.opacity(0.16), lineWidth: 1))
         .accessibilityElement(children: .combine)
     }
 

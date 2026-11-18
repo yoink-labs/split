@@ -147,3 +147,12 @@ export async function receiptPhoto(file: File) {
     URL.revokeObjectURL(url);
   }
 }
+/** "Nov 17", or "Nov 17, 2025" outside the current year. */
+export const shortDate = (stamp: string) => {
+  const d = new Date(stamp);
+  return d.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    ...(d.getFullYear() === new Date().getFullYear() ? {} : { year: "numeric" }),
+  });
+};

@@ -321,7 +321,7 @@ struct EntryDetails: View {
         Card {
             VStack(alignment: .leading, spacing: 10) {
                 SectionHeader(
-                    title: entry.isSettlement ? "Paid to" : "Split",
+                    title: entry.isSettlement ? "Paid to" : "Split with",
                     subtitle: entry.isSettlement ? nil : splitSubtitle
                 )
                 ForEach(entry.splits, id: \.memberID) { portion in

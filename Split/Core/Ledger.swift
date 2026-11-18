@@ -85,7 +85,7 @@ struct Transfer: Identifiable {
     var from: String; var to: String; var amount: Int64; var currency: String
     var id: String { from + to + currency }
 }
-struct Snapshot: Codable { var groups: [ExpenseGroup] = []; var entries: [LedgerEntry] = [] }
+struct Snapshot: Codable, Equatable { var groups: [ExpenseGroup] = []; var entries: [LedgerEntry] = [] }
 struct OutboxItem: Codable, Identifiable {
     var id: String
     var path: String

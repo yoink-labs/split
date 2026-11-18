@@ -113,8 +113,8 @@ struct InviteView: View {
             if let error = errors["group"] { heroError(error) }
         }
         .padding(20)
-        .background(Palette.hero, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).stroke(Palette.lime.opacity(0.16), lineWidth: 1))
+        .background(Palette.hero, in: RoundedRectangle(cornerRadius: Radius.header))
+        .overlay(RoundedRectangle(cornerRadius: Radius.header).stroke(Palette.lime.opacity(0.16), lineWidth: 1))
     }
 
     // MARK: - People

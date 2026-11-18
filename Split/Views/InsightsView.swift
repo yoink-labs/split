@@ -313,8 +313,8 @@ struct InsightsView: View {
         .padding(20)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(LinearGradient(colors: [Palette.hero, Palette.hero.opacity(0.94)], startPoint: .topLeading, endPoint: .bottomTrailing))
-        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).stroke(Palette.lime.opacity(0.16), lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: Radius.header))
+        .overlay(RoundedRectangle(cornerRadius: Radius.header).stroke(Palette.lime.opacity(0.16), lineWidth: 1))
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Total spent \(Money.text(total, currency)), \(expenseCount) expenses\(rangeLabel.map { ", \($0)" } ?? "")")
     }

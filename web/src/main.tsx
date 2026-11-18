@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   BrowserRouter,
@@ -9,6 +9,7 @@ import {
   useNavigate,
 } from "react-router-dom";
 import { api, type Snapshot } from "./data";
+import { isAbort, mergeSnapshot, singleFlight } from "./refresh";
 import { LedgerContext } from "./context";
 import {
   Groups,
@@ -42,38 +43,44 @@ function Ledger({ user }: { user: string }) {
   const [data, setData] = useState<Snapshot | null>(null),
     [error, setError] = useState("");
   const [checking, setChecking] = useState(false);
-  const revision = useRef(0);
+  const alive = useRef(true);
   const request = useCallback(
     <T,>(path: string, body?: unknown, photo = false) =>
       api<T>(path, user, body, photo),
     [user],
   );
-  const refresh = useCallback(async () => {
-    const current = ++revision.current;
-    setChecking(true);
-    try {
-      const next = await request<Snapshot>("/v1/snapshot");
-      if (next.userID !== user)
-        throw new Error("Sign in again to refresh this account.");
-      if (current === revision.current) {
-        setData(next);
-        setError("");
-      }
-    } catch (e) {
-      if (current === revision.current)
-        setError(e instanceof Error ? e.message : "Refresh failed.");
-    } finally {
-      if (current === revision.current) setChecking(false);
-    }
-  }, [request, user]);
+  // One snapshot request at a time. The current ledger stays on screen while
+  // it loads, cancellations stay silent, and identical data keeps its
+  // identity so rows do not flash or reorder.
+  const refresh = useMemo(
+    () =>
+      singleFlight(async () => {
+        setChecking(true);
+        try {
+          const next = await request<Snapshot>("/v1/snapshot");
+          if (next.userID !== user)
+            throw new Error("Sign in again to refresh this account.");
+          if (!alive.current) return;
+          setData((previous) => mergeSnapshot(previous, next));
+          setError("");
+        } catch (e) {
+          if (alive.current && !isAbort(e))
+            setError(e instanceof Error ? e.message : "Refresh failed.");
+        } finally {
+          if (alive.current) setChecking(false);
+        }
+      }),
+    [request, user],
+  );
   useEffect(() => {
     void refresh();
     const focus = () => {
       if (document.visibilityState === "visible") void refresh();
     };
     document.addEventListener("visibilitychange", focus);
+    alive.current = true;
     return () => {
-      revision.current++;
+      alive.current = false;
       document.removeEventListener("visibilitychange", focus);
     };
   }, [refresh]);
@@ -97,11 +104,13 @@ function Ledger({ user }: { user: string }) {
           <Link to="/">Groups</Link>
           <Link to="/you">You</Link>
           <button
+            className="icon refresh"
             onClick={() => void refresh()}
             disabled={checking}
-            aria-label="Refresh ledger"
+            aria-busy={checking}
+            aria-label={checking ? "Refreshing" : "Refresh ledger"}
           >
-            ↻
+            <span aria-hidden="true">↻</span>
           </button>
         </nav>
       </header>

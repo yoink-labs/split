@@ -8,6 +8,36 @@ Versions match the iOS app's marketing version. The TestFlight build number
 is noted next to each release. The CLI is versioned separately with
 `split-v*` tags.
 
+## [0.7.1] - 2026-11-18
+
+TestFlight build 9, Yoink Internal only.
+
+### Changed
+
+- One header pattern on every tab: a system large title with actions in the
+  top trailing toolbar. Groups uses a single "+" menu for **New group** and
+  **Join with code or link**. On the web, the left-aligned buttons are replaced
+  by the same "+" menu.
+- Add expense and Settle up share one row at equal widths, and stack at
+  accessibility text sizes.
+- Member statements show the avatar, name and net balance, group chips
+  including **All groups**, a Charges/Payments switch, charges grouped by trip,
+  and rows with the date, their share and the total. The same layout is on the web.
+- Empty lists show a centred state with one primary action.
+- Shared spacing, radius, row, balance, header and empty-state components
+  (`DesignSystem.swift`, and matching CSS variables on the web). See
+  [the audit](docs/design/ui-audit.md).
+
+### Fixed
+
+- Pull-to-refresh now waits for a sync already in flight instead of ending
+  early, and one sync runs at a time.
+- A cancelled refresh no longer shows an error, and the error banner no longer
+  flickers between attempts.
+- Refreshes that return the same data no longer redraw every list. Rows are
+  deduplicated by id and keep a stable order when timestamps match.
+- Lists show a spinner instead of an empty state until the first sync finishes.
+
 ## [0.7.0] - 2026-11-18
 
 TestFlight build 8 (pending).

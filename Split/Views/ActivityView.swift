@@ -90,8 +90,7 @@ struct ActivityFeedView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 18) {
-                    header
+                LazyVStack(alignment: .leading, spacing: Spacing.section) {
                     statusLine
                     if !filteredEntries.isEmpty { statRail }
                     filterChips
@@ -111,7 +110,14 @@ struct ActivityFeedView: View {
             }
             .background(AppBackground())
             .refreshable { await store.sync() }
-            .toolbar(.hidden, for: .navigationBar)
+            .navigationTitle("Activity")
+            .navigationBarTitleDisplayMode(.large)
+            .toolbar {
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    Button { showSearch = true } label: { Label("Search everything", systemImage: "magnifyingglass") }
+                    filterMenu
+                }
+            }
             .ledgerDestinations()
             .sheet(isPresented: $showSearch) {
                 NavigationStack { SearchView() }
@@ -119,31 +125,6 @@ struct ActivityFeedView: View {
             .sheet(item: $inspecting) { selection in
                 EntryDetails(entry: selection.entry, group: selection.group)
             }
-        }
-    }
-
-    private var header: some View {
-        HStack(alignment: .top, spacing: 12) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text("Activity")
-                    .font(.splitDisplay(30))
-                    .foregroundStyle(Palette.ink)
-                    .accessibilityAddTraits(.isHeader)
-                Text("Expenses, payments and the story around them")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer(minLength: 8)
-            Button { showSearch = true } label: {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 16, weight: .semibold))
-                    .frame(width: 44, height: 44)
-                    .foregroundStyle(Palette.ink)
-            }
-            .buttonStyle(.plain)
-            .glassCapsule(tint: Palette.card.opacity(0.40))
-            .accessibilityLabel("Search everything")
-            filterMenu
         }
     }
 
@@ -267,13 +248,8 @@ struct ActivityFeedView: View {
                 }
             }
         } label: {
-            Image(systemName: "line.3.horizontal.decrease.circle")
-                .font(.system(size: 16, weight: .semibold))
-                .frame(width: 44, height: 44)
-                .foregroundStyle(hasFilters ? Palette.evergreen : Palette.ink)
-                .glassCapsule(tint: hasFilters ? Palette.lime.opacity(0.55) : Palette.card.opacity(0.40))
+            Label("Filter activity", systemImage: hasFilters ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
         }
-        .accessibilityLabel("Filter activity")
     }
 
     private func monthSection(_ section: MonthSection) -> some View {

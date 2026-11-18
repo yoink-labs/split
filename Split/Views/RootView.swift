@@ -118,7 +118,7 @@ struct WelcomeView: View {
     private var miniLedger: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("Buenos Aires")
+                Text("Buenos Aires Trip")
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(Palette.lime)
                 Spacer()
@@ -138,7 +138,7 @@ struct WelcomeView: View {
                 Spacer()
             }
             HStack(spacing: 8) {
-                ForEach(["Maya", "Jules", "Harris"], id: \.self) { name in
+                ForEach(["Maya", "Sam", "Harris"], id: \.self) { name in
                     HStack(spacing: 6) {
                         Avatar(name: name, size: 24, tint: Palette.lime)
                         Text(name)

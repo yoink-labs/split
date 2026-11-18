@@ -5,6 +5,9 @@ import ClerkKit
 @MainActor final class ExpenseStore: ObservableObject {
     @Published private(set) var state = DiskState()
     @Published private(set) var syncing = false
+    /// False until this account has data to show (from disk or the first
+    /// sync), so lists show a loading state instead of flashing "empty".
+    @Published private(set) var hasLoaded = false
     @Published private(set) var online = true
     @Published private(set) var currentUserID: String?
     @Published private(set) var comments: [String:[EntryComment]] = [:]
@@ -17,6 +20,7 @@ import ClerkKit
     private var demo = false
     private var monitor = NWPathMonitor()
     private var generation = UUID()
+    private let flight = SingleFlight()
     private let baseURL: URL = {
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("-splitLocalAPI") {
@@ -26,7 +30,7 @@ import ClerkKit
         return URL(string:"https://split-api.yoinklabs.dev")!
     }()
     var groups: [ExpenseGroup] { state.snapshot.groups }
-    var entries: [LedgerEntry] { state.snapshot.entries.sorted { $0.createdAt > $1.createdAt } }
+    var entries: [LedgerEntry] { SnapshotMerge.ordered(state.snapshot.entries) }
     var pending: Int { state.outbox.count }
     var isDemo: Bool { demo }
     init() {
@@ -54,12 +58,12 @@ import ClerkKit
     }
     func activate(userID: String?, demo: Bool) async {
         demoPhotos.removeAll(); demoComments.removeAll(); comments.removeAll()
-        generation = UUID(); syncing = false; self.scope = userID.map { baseURL.host == "127.0.0.1" ? "local-" + $0 : $0 }; joinedGroupID = nil; self.demo = demo; state = DiskState(); error = nil
+        generation = UUID(); syncing = false; self.scope = userID.map { baseURL.host == "127.0.0.1" ? "local-" + $0 : $0 }; joinedGroupID = nil; self.demo = demo; state = DiskState(); error = nil; hasLoaded = false
         currentUserID = userID
         guard let scope else { return }
-        if demo { state.snapshot = Fixtures.snapshot(); demoComments = Fixtures.comments() }
+        if demo { state.snapshot = Fixtures.snapshot(); demoComments = Fixtures.comments(); hasLoaded = true }
         else {
-            do { let url = try file(for: scope); if FileManager.default.fileExists(atPath: url.path) { state = try JSONDecoder().decode(DiskState.self, from: Data(contentsOf: url)) } }
+            do { let url = try file(for: scope); if FileManager.default.fileExists(atPath: url.path) { state = try JSONDecoder().decode(DiskState.self, from: Data(contentsOf: url)); hasLoaded = true } }
             catch { self.error = "Could not open your saved expenses. Your existing file has been kept."; self.scope = nil; return }
             await sync()
         }
@@ -94,10 +98,19 @@ import ClerkKit
         }
         return data
     }
+    /// Pull-to-refresh, connectivity changes and writes all funnel through
+    /// here. Only one sync runs at a time; a caller that arrives mid-flight
+    /// waits for it (and one follow-up pass) rather than returning early,
+    /// so the refresh spinner stays until fresh data is on screen.
     func sync() async {
-        guard scope != nil, !demo, online, !syncing else { return }
-        let current = generation; syncing = true; error = nil
-        defer { if current == generation { syncing = false } }
+        guard scope != nil, !demo else { return }
+        guard online else { hasLoaded = true; return }
+        await flight.run { [weak self] in await self?.performSync() }
+    }
+    private func performSync() async {
+        guard scope != nil, !demo, online else { return }
+        let current = generation; syncing = true
+        defer { if current == generation { syncing = false; hasLoaded = true } }
         do {
             // FIFO makes an offline group reach the server before its expenses.
             while let item = state.outbox.first {
@@ -107,19 +120,20 @@ import ClerkKit
             }
             let data = try await request(path: "/v1/snapshot")
             guard current == generation else { return }
-            var remote = try JSONDecoder().decode(Snapshot.self, from: data)
+            let remote = try JSONDecoder().decode(Snapshot.self, from: data)
             // Changes can arrive while a request is suspended. Never replace pending local work.
-            let ids = Set(state.outbox.map(\.id))
-            remote.groups += groups.filter { ids.contains($0.id) && !remote.groups.map(\.id).contains($0.id) }
-            remote.entries += entries.filter { ids.contains($0.id) && !remote.entries.map(\.id).contains($0.id) }
-            try persist(DiskState(snapshot: remote, outbox: state.outbox))
-            if !state.outbox.isEmpty { Task { await self.syncAfterCurrent() } }
-        } catch { if current == generation { self.error = error.localizedDescription } }
+            let merged = SnapshotMerge.merge(remote: remote, local: state.snapshot, pendingIDs: Set(state.outbox.map(\.id)))
+            // Publishing an identical snapshot would still redraw every list; skip it.
+            if merged != state.snapshot { try persist(DiskState(snapshot: merged, outbox: state.outbox)) }
+            if error != nil { error = nil }
+        } catch {
+            guard current == generation, !SyncFailure.isCancellation(error) else { return }
+            self.error = error.localizedDescription
+        }
     }
-    private func syncAfterCurrent() async { await Task.yield(); await sync() }
     private func waitForSync() async throws {
         let current = generation
-        while syncing && current == generation { try await Task.sleep(for: .milliseconds(80)) }
+        while flight.isRunning && current == generation { try await Task.sleep(for: .milliseconds(80)) }
         guard scope != nil, current == generation else { throw LedgerError.invalid("Sign in again to continue.") }
     }
 
@@ -384,10 +398,10 @@ enum Fixtures {
         let people = [
             Person(id:"demo-alex",groupID:trip,userID:"demo-user",name:"Alex"),
             Person(id:"demo-maya",groupID:trip,userID:"demo-maya-account",name:"Maya"),
-            Person(id:"demo-jules",groupID:trip,name:"Jules"),
+            Person(id:"demo-sam",groupID:trip,userID:"demo-sam-account",name:"Sam"),
             Person(id:"demo-harris",groupID:trip,userID:"demo-harris-account",name:"Harris")
         ]
-        let group = ExpenseGroup(id:trip,name:"Buenos Aires",kind:"trip",currency:"ARS",members:people,simplify:true)
+        let group = ExpenseGroup(id:trip,name:"Buenos Aires Trip",kind:"trip",currency:"ARS",members:people,simplify:true)
         let houseMembers = [Person(id:"demo-home-alex",groupID:home,userID:"demo-user",name:"Alex"),Person(id:"demo-home-sam",groupID:home,userID:"demo-sam-account",name:"Sam"),Person(id:"demo-home-nina",groupID:home,name:"Nina")]
         let house = ExpenseGroup(id:home,name:"Our place",kind:"home",currency:"USD",members:houseMembers,simplify:true)
         let spainMembers = [Person(id:"demo-spain-alex",groupID:spain,userID:"demo-user",name:"Alex"),Person(id:"demo-spain-harris",groupID:spain,userID:"demo-harris-account",name:"Harris"),Person(id:"demo-spain-sanjit",groupID:spain,name:"Sanjit"),Person(id:"demo-spain-rock",groupID:spain,name:"Rock")]
@@ -400,12 +414,12 @@ enum Fixtures {
         }
 
         var e: [LedgerEntry] = []
-        e.append(entry("demo-dinner",trip,"Guerrín dinner (pizza, empanadas, beer)",20845000,"ARS",people[3].id,[("demo-alex",5200000),("demo-maya",4200000),("demo-jules",5200000),("demo-harris",6245000)],category:"Dining",notes:"Split the provoleta three ways. Harris covered the tip in cash."))
-        e.append(entry("demo-uber",trip,"Uber EZE to Palermo",7592500,"ARS",people[3].id,[("demo-alex",1898125),("demo-maya",1898125),("demo-jules",1898125),("demo-harris",1898125)],category:"Transport",day:"2026-11-17T09:10:00Z"))
-        e.append(entry("demo-coffee",trip,"Coffee & medialunas",1850000,"ARS",people[1].id,[("demo-alex",616667),("demo-maya",616667),("demo-jules",616666)],category:"Dining",day:"2026-11-16T14:05:00Z"))
-        e.append(entry("demo-stay",trip,"A place for the weekend",18000,"USD",people[2].id,[("demo-alex",6000),("demo-maya",6000),("demo-jules",6000)],category:"Lodging",day:"2026-11-15T12:00:00Z"))
-        e.append(entry("demo-wine",trip,"Wine tasting in San Telmo",4300000,"ARS",people[0].id,[("demo-alex",1433333),("demo-maya",1433333),("demo-jules",1433334)],category:"Entertainment",day:"2026-11-14T19:00:00Z"))
-        e.append(entry("demo-ride",trip,"Uber to Av. Corrientes",884100,"ARS",people[3].id,[("demo-alex",221025),("demo-maya",221025),("demo-jules",221025),("demo-harris",221025)],category:"Transport",day:"2026-11-13T21:15:00Z"))
+        e.append(entry("demo-dinner",trip,"Guerrín dinner (pizza, empanadas, beer)",20845000,"ARS",people[3].id,[("demo-alex",5200000),("demo-maya",4200000),("demo-sam",5200000),("demo-harris",6245000)],category:"Dining",notes:"Split the provoleta three ways. Harris covered the tip in cash."))
+        e.append(entry("demo-uber",trip,"Uber EZE to Palermo",7592500,"ARS",people[3].id,[("demo-alex",1898125),("demo-maya",1898125),("demo-sam",1898125),("demo-harris",1898125)],category:"Transport",day:"2026-11-17T09:10:00Z"))
+        e.append(entry("demo-coffee",trip,"Coffee & medialunas",1850000,"ARS",people[1].id,[("demo-alex",616667),("demo-maya",616667),("demo-sam",616666)],category:"Dining",day:"2026-11-16T14:05:00Z"))
+        e.append(entry("demo-stay",trip,"A place for the weekend",18000,"USD",people[2].id,[("demo-alex",6000),("demo-maya",6000),("demo-sam",6000)],category:"Lodging",day:"2026-11-15T12:00:00Z"))
+        e.append(entry("demo-wine",trip,"Wine tasting in San Telmo",4300000,"ARS",people[0].id,[("demo-alex",1433333),("demo-maya",1433333),("demo-sam",1433334)],category:"Entertainment",day:"2026-11-14T19:00:00Z"))
+        e.append(entry("demo-ride",trip,"Uber to Av. Corrientes",884100,"ARS",people[3].id,[("demo-alex",221025),("demo-maya",221025),("demo-sam",221025),("demo-harris",221025)],category:"Transport",day:"2026-11-13T21:15:00Z"))
         e.append(entry("demo-rainforest",spain,"Rainforest dinner",62109,"EUR",spainMembers[1].id,[("demo-spain-alex",15527),("demo-spain-harris",15527),("demo-spain-sanjit",15527),("demo-spain-rock",15528)],category:"Dining",notes:"Table for four, set menu.",day:"2026-11-12T20:00:00Z"))
         e.append(entry("demo-boat",spain,"WeBoat Tour",47044,"EUR",spainMembers[2].id,[("demo-spain-alex",11761),("demo-spain-harris",11761),("demo-spain-sanjit",11761),("demo-spain-rock",11761)],category:"Travel",day:"2026-11-09T10:00:00Z"))
         e.append(entry("demo-rent",home,"November rent",240000,"USD",houseMembers[0].id,[("demo-home-alex",80000),("demo-home-sam",80000),("demo-home-nina",80000)],category:"Rent",day:"2026-11-01T08:00:00Z"))

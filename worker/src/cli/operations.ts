@@ -1,3 +1,4 @@
+import { breakdown, grossItems } from '../items';
 import { tools } from '../../../cli/lib/catalog.mjs';
 import { CfWorkerJsonSchemaValidator } from '@modelcontextprotocol/sdk/validation/cfworker';
 import type { JsonSchemaType } from '@modelcontextprotocol/sdk/validation/types';
@@ -8,7 +9,7 @@ interface Args {
   group: string; expense: string; member: string; name: string; self: string; placeholders?: string[];
   query: string; user?: string; email?: string; phone?: string;
   invite: string; kind?: string; title?: string; amount?: string; payer?: string; currency?: string;
-  from: string; to: string; mode?: 'equal'|'exact'|'percent'; participants?: string[]; values?: string[];
+  from: string; to: string; category?:string; item:string; photo:string; action?:string; mode?: 'equal'|'exact'|'percent'|'shares'; participants?: string[]; values?: string[];
   yes?: boolean; revision?: string;
 }
 interface Member { id: string; userID: string|null; name: string }
@@ -35,7 +36,7 @@ function makeExpense(a: Args, group: Group, old?: Entry): Entry {
       if (a.values) throw new InputError('Equal splits use participants only.');
       portions = allocate(amount, participants.map(() => 1));
     } else {
-      if (!a.values || mode === 'shares') throw new InputError('Choose exact or percent and supply the allocation values.');
+      if (!a.values) throw new InputError('Supply one allocation value per participant.');
       const values = a.values.map(minor);
       if (mode === 'percent' && values.reduce((n,v) => n+v,0) !== 10000) throw new InputError('Percentages must sum to 100.');
       portions = mode === 'exact' ? values : allocate(amount, values);
@@ -44,7 +45,7 @@ function makeExpense(a: Args, group: Group, old?: Entry): Entry {
   }
   return validateEntry({ id: old?.id ?? crypto.randomUUID(), groupID: group.id, title: a.title ?? old?.title,
     amount, currency: a.currency ?? old?.currency ?? group.currency, paidBy: a.payer ?? old?.paidBy,
-    splits, kind: 'expense', splitMode: mode, createdAt: old?.createdAt ?? timestamp() }, ids);
+    bill:old?.bill, category:a.category??old?.category, splits, kind: 'expense', splitMode: mode, createdAt: old?.createdAt ?? timestamp() }, ids);
 }
 
 export async function operate(name: string, input: unknown, env: Env, user: string, handle: LedgerHandler) {
@@ -117,6 +118,33 @@ export async function operate(name: string, input: unknown, env: Env, user: stri
     return { applied: true, id: a.expense };
   }
   const entries = snapshot.entries.filter(e => e.groupID === group.id);
+  if(name==='groups_breakdown') {
+    if(a.member && !members.some(m=>m.id===a.member)) throw new InputError('Choose a group member.');
+    return [...new Set([group.currency,...entries.map(e=>e.currency)])].map(currency=>{
+      const report=breakdown(entries,members,currency);
+      return a.member ? {...report,members:report.members.filter(m=>m.id===a.member),expenses:entries.filter(e=>e.currency===currency && e.kind==='expense' && (e.paidBy===a.member || e.splits.some(s=>s.memberID===a.member)))} : report;
+    });
+  }
+  if(name==='items_open') return entries.filter(e=>e.bill).flatMap(e=>grossItems(e.bill!).filter(i=>!i.memberIDs.length).map(i=>({expense:e.id,expenseTitle:e.title,currency:e.currency,...i})));
+  if(name.startsWith('receipts_') || name.startsWith('items_')) {
+    const e=entries.find(e=>e.id===a.expense);
+    if(!e) throw new HTTPError(404,'Expense not found.');
+    const path='/v1/entries/'+e.id;
+    if(name==='receipts_list') return e.receiptIDs??[];
+    if(name==='receipts_get') {
+      const res=await handle(new Request(env.APP_URL+path+'/receipts/'+a.photo),env,user);
+      const bytes=new Uint8Array(await res.arrayBuffer());
+      let raw='';
+      for(const byte of bytes) raw+=String.fromCharCode(byte);
+      return {mimeType:'image/jpeg',data:btoa(raw)};
+    }
+    if(name==='items_close') return ledger(path+'/close',{memberIDs:a.participants??members.map(m=>m.id)});
+    const item=e.bill?.items.find(i=>i.id===a.item);
+    if(!item) throw new HTTPError(404,'Item not found.');
+    const claimant=a.member??members.find(m=>m.userID===user)!.id;
+    const ids=a.action==='remove' ? item.memberIDs.filter(id=>id!==claimant) : [...new Set([...item.memberIDs,claimant])];
+    return ledger(path+'/claim',{itemID:item.id,original:item.memberIDs,memberIDs:ids});
+  }
   if (name === 'expenses_list') return entries.filter(e => e.kind === 'expense');
   if (name === 'activity') return entries;
   if (name === 'balances') return [...new Set([group.currency, ...entries.map(e => e.currency)])].map(currency => {

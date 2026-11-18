@@ -1,3 +1,4 @@
+import { purchaseRoute, attachments } from './receipts';
 import { claimSeat, lookup, refreshIdentity, resolveEntry } from './people';
 import { HTTPError, json, body } from './http';
 import { deviceRoute, deviceIdentity, manageDevices } from './cli/devices';
@@ -20,6 +21,8 @@ async function members(env:Env,groupID:string):Promise<Member[]> {return (await 
 const hash=async(token:string)=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(token)))).map(x=>x.toString(16).padStart(2,'0')).join('');
 export async function handle(request:Request,env:Env,userID:string):Promise<Response> {
   const url=new URL(request.url), path=url.pathname;
+  const purchase=await purchaseRoute(request,env,userID);
+  if(purchase) return purchase;
   if(path==='/v1/snapshot' && request.method==='GET') {
     const groups=(await env.DB.prepare('SELECT g.id,g.name,g.kind,g.currency,g.created_at AS createdAt FROM groups g JOIN members m ON g.id=m.group_id WHERE m.user_id=? ORDER BY g.created_at DESC LIMIT 101').bind(userID).all()).results;
     if(groups.length>100) throw new HTTPError(409,'This beta supports up to 100 groups.');
@@ -29,9 +32,9 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
     const visible=(await env.DB.prepare(`SELECT m.id,m.group_id AS groupID,m.user_id AS userID,m.name FROM members m
       JOIN members viewer ON viewer.group_id=m.group_id WHERE viewer.user_id=? ORDER BY m.rowid`).bind(userID).all<Member>()).results;
     const all=groups.map(g=>({...g,members:visible.filter(m=>m.groupID===g.id && !aliases.has(m.id))}));
-    const entries=(await env.DB.prepare('SELECT e.payload,e.author FROM entries e JOIN members m ON m.group_id=e.group_id WHERE m.user_id=? AND e.id NOT IN (SELECT entry_id FROM deleted_entries) ORDER BY e.created_at DESC LIMIT 5001').bind(userID).all<{payload:string;author:string}>()).results;
+    const entries=(await env.DB.prepare('SELECT e.payload,e.author,(SELECT json_group_array(id) FROM receipts WHERE entry_id=e.id) AS photos FROM entries e JOIN members m ON m.group_id=e.group_id WHERE m.user_id=? AND e.id NOT IN (SELECT entry_id FROM deleted_entries) ORDER BY e.created_at DESC LIMIT 5001').bind(userID).all<{payload:string;author:string;photos:string}>()).results;
     if(entries.length>5000)throw new HTTPError(409,'This beta supports up to 5,000 entries. Export support is coming.');
-    return json({groups:all,entries:entries.map(e=>({...resolveEntry(JSON.parse(e.payload),aliases), editable:e.author===userID}))});
+    return json({groups:all,entries:entries.map(e=>({...resolveEntry(JSON.parse(e.payload),aliases), receiptIDs:JSON.parse(e.photos),editable:e.author===userID}))});
   }
   if(path==='/v1/groups' && request.method==='POST') {
     const b=await body(request);
@@ -57,11 +60,12 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
     return json({ok:true},201);
   }
   if(path==='/v1/entries' && request.method==='POST') {
-    const b=await body(request); if(!validID(b.groupID)) throw new InputError('Invalid group.');
+    const b=await body(request,1_350_000); if(!validID(b.groupID)) throw new InputError('Invalid group.');
     await member(env,b.groupID,userID);
     const e=validateEntry(b,(await members(env,b.groupID)).map(m=>m.id)), payload=JSON.stringify(e);
+    if(e.bill?.closed) throw new InputError('New receipts start open.');
     // DO NOTHING is safe under concurrent retries; compare after insertion.
-    await env.DB.prepare('INSERT INTO entries VALUES (?,?,?,?,?) ON CONFLICT(id) DO NOTHING').bind(e.id,e.groupID,userID,payload,new Date().toISOString()).run();
+    await env.DB.batch([env.DB.prepare('INSERT INTO entries VALUES (?,?,?,?,?) ON CONFLICT(id) DO NOTHING').bind(e.id,e.groupID,userID,payload,new Date().toISOString()), ...attachments(env.DB,e,userID,payload,b.photos)]);
     const saved=await env.DB.prepare('SELECT author,payload FROM entries WHERE id=?').bind(e.id).first<{author:string;payload:string}>();
     if(saved?.author!==userID||saved.payload!==payload)throw new HTTPError(409,'An entry already uses this ID.');
     return json({ok:true});
@@ -71,7 +75,7 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
   }
   const revise=path.match(/^\/v1\/entries\/([\w-]+)\/(edit|delete)$/);
   if (revise && request.method==='POST') {
-    const b=await body(request);
+    const b=await body(request,1_350_000);
     const saved=await env.DB.prepare('SELECT group_id,author,payload FROM entries WHERE id=?').bind(revise[1]).first<{group_id:string;author:string;payload:string}>();
     if (!saved || saved.author!==userID) throw new HTTPError(403,'Only the person who recorded this entry can change it.');
     await member(env,saved.group_id,userID);
@@ -89,7 +93,11 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
       if(updated.id!==revise[1] || updated.groupID!==saved.group_id || updated.createdAt!==old.createdAt || updated.kind!==old.kind)
         throw new InputError('Invalid edit.');
       payload=JSON.stringify(updated);
-      if (saved.payload===payload) return json({ok:true});
+      if(updated.bill?.closed && !old.bill?.closed) throw new InputError('Use the payer close action.');
+      if(old.bill?.closed && (updated.paidBy!==old.paidBy || JSON.stringify(updated.bill)!==JSON.stringify(old.bill))) throw new InputError('This receipt is closed.');
+      if (old.bill && !updated.bill) throw new InputError('Keep the receipt items when editing this expense.');
+      if(old.bill && old.bill.closed!==updated.bill?.closed) throw new InputError('Use the payer close action.');
+      if (saved.payload===payload && !b.photos) return json({ok:true});
     }
     const conditional=!deleting || b.original!==undefined;
     if (conditional) {
@@ -98,11 +106,12 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
       const original=validateEntry(b.original,ids);
       if (JSON.stringify(original)!==JSON.stringify(resolveEntry(old,aliases))) throw new HTTPError(409,'This entry changed. Refresh and try again.');
     }
-    const result=deleting
+    const statement=deleting
       ? await env.DB.prepare('INSERT OR IGNORE INTO deleted_entries SELECT id FROM entries WHERE id=? AND (?=0 OR payload=?)')
-        .bind(revise[1],Number(conditional),saved.payload).run()
+        .bind(revise[1],Number(conditional),saved.payload)
       : await env.DB.prepare('UPDATE entries SET payload=? WHERE id=? AND payload=? AND id NOT IN (SELECT entry_id FROM deleted_entries)')
-        .bind(payload!,revise[1],saved.payload).run();
+        .bind(payload!,revise[1],saved.payload);
+    const [result]=await env.DB.batch([statement,...(deleting?[]:attachments(env.DB,JSON.parse(payload!),userID,payload!,b.photos))]);
     if (!result.meta.changes && !(deleting && await env.DB.prepare('SELECT entry_id FROM deleted_entries WHERE entry_id=?').bind(revise[1]).first()))
       throw new HTTPError(409,'This entry changed. Refresh and try again.');
     return json({ok:true});
@@ -188,6 +197,6 @@ export default {
      await refreshIdentity(env,userID);
    }
    return await handle(request,env,userID);
-  }catch(error){if(error instanceof Error && /Group is full|Account group limit reached/.test(error.message)) return json({error:'Member or account group limit reached.'},409);if(error instanceof HTTPError)return json({error:error.message},error.status);if(error instanceof InputError)return json({error:error.message},422);console.error(JSON.stringify({event:'request_failed',type:error instanceof Error?error.name:'unknown'}));return json({error:'Could not save this change. Please retry.'},500);}
+  }catch(error){if(error instanceof Error && /Receipt limit reached|bytes BETWEEN/.test(error.message)) return json({error:'Receipt storage limit reached.'},409);if(error instanceof Error && /Group is full|Account group limit reached/.test(error.message)) return json({error:'Member or account group limit reached.'},409);if(error instanceof HTTPError)return json({error:error.message},error.status);if(error instanceof InputError)return json({error:error.message},422);console.error(JSON.stringify({event:'request_failed',type:error instanceof Error?error.name:'unknown'}));return json({error:'Could not save this change. Please retry.'},500);}
  }
 } satisfies ExportedHandler<Env>;

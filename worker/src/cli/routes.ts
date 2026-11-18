@@ -25,6 +25,7 @@ export async function cliRoute(request: Request, env: Env, user: string, handle:
   server.setRequestHandler(CallToolRequestSchema, async ({ params }) => {
     try {
       const result = await operate(params.name, params.arguments ?? {}, env, user, handle);
+      if(params.name==='receipts_get') return {content:[{type:'image',...result as {data:string;mimeType:string}}]};
       return { content: [{ type: 'text', text: JSON.stringify(result) }] };
     } catch (e) {
       if (!(e instanceof HTTPError || e instanceof InputError)) throw new Error('Split could not complete the request.');

@@ -9,8 +9,8 @@ const member = id('Member ID from members list.');
 const currency = enumeration('Three-letter currency. Defaults to the group currency.', ['USD','ARS','EUR','GBP','BRL','CAD','AUD','MXN']);
 const list = (description, items) => ({ type: 'array', description, items, minItems: 1, maxItems: 50, uniqueItems: true });
 const allocation = {
-  title: text('Expense description.'), amount: money, payer: member, currency,
-  mode: enumeration('How to allocate the expense.', ['equal','exact','percent']),
+  category: text('Spending category.',50), title: text('Expense description.'), amount: money, payer: member, currency,
+  mode: enumeration('How to allocate the expense.', ['equal','exact','percent','shares']),
   participants: list('Member IDs, in rounding order. Equal split defaults to all members.', member),
   values: listValues()
 };
@@ -26,6 +26,12 @@ function op(name, description, properties = {}, required = [], readOnly = false,
     annotations: { readOnlyHint: readOnly, destructiveHint: destructive, openWorldHint: false } };
 }
 export const tools = [
+  op('groups_breakdown','Spending, categories, months, paid, shares, balances and suggested transfers by currency. Provide a member ID for their expense detail.',{group,member},['group'],true),
+  op('items_open','List open purchases with tax and tip included in each gross amount.',{group},['group'],true),
+  op('items_claim','Add or remove a claimant on a purchase. Defaults to yourself.',{group,expense,item:id('Receipt item ID.'),member,action:enumeration('Defaults to add.',['add','remove'])},['group','expense','item']),
+  op('items_close','As payer, close a receipt and split remaining purchases across the selected members or everyone.',{group,expense,participants:list('Members for remaining items.',member)},['group','expense']),
+  op('receipts_list','List receipt photo IDs on an expense.',{group,expense},['group','expense'],true),
+  op('receipts_get','Read one private receipt photo as base64 JPEG.',{group,expense,photo:id('Receipt photo ID.')},['group','expense','photo'],true),
   op('groups_list','List groups you belong to.', {}, [], true),
   op('groups_show','Show one group and its members.', { group }, ['group'], true),
   op('groups_create','Create a group with you and optional placeholder members.', {
@@ -42,7 +48,7 @@ export const tools = [
   op('invite','Create a group invitation, or target a placeholder member. Returns a link and code.', { group, member }, ['group']),
   op('join','Claim an invited member slot with a Split invite link or code.', { invite: text('Invite link or code.',512) }, ['invite']),
   op('expenses_list','List expenses in a group. Amounts in results are integer minor units.', { group }, ['group'], true),
-  op('expenses_add','Record an expense with an equal, exact or percentage allocation.', { group, ...allocation }, ['group','title','amount','payer']),
+  op('expenses_add','Record an expense with an equal, exact, weighted or percentage allocation.', { group, ...allocation }, ['group','title','amount','payer']),
   op('expenses_edit','Preview changes to your expense. Review the preview before confirming with yes and revision.', { group, expense, ...allocation, ...confirmation }, ['group','expense'], false, true),
   op('expenses_delete','Preview deletion of your expense. Review the preview before confirming with yes and revision.', { group, expense, ...confirmation }, ['group','expense'], false, true),
   op('balances','Show each member’s net balance and suggested settlements, separately by currency, in minor units.', { group }, ['group'], true),

@@ -70,12 +70,12 @@ Verification commands:
 
 ```sh
 npm run typecheck --prefix worker
-npm test --prefix worker          # 6 files, 39 tests
+npm test --prefix worker          # 7 files, 42 tests
 node --test cli/test/*.test.mjs   # 2 tests
 xcodegen generate
 xcodebuild build -project Split.xcodeproj -scheme Split \
   -destination 'platform=iOS Simulator,name=iPhone 17' CODE_SIGNING_ALLOWED=NO
-ade apple test --scheme Split     # 25 tests
+ade apple test --scheme Split     # 26 tests
 ```
 
 The simulator does not render the fold's curved division region, so fold
@@ -103,7 +103,8 @@ correctly shows the signed-out error instead of generating a fake link.
 The system TabView is kept (no `.id(size)` workaround). Folding with an open
 expense sheet preserved the sheet and the selected group in simulator checks;
 the custom navigation shell was discarded because it covered the system
-toolbar. The new suite runs 25 iOS tests, 39 Worker tests and 2 CLI tests.
+toolbar. The new suite runs 26 iOS tests, 42 Worker tests, 2 CLI tests and a production web bundle build.
+
 ## Member activity on iOS
 
 From You, Alex opened a receipt-sharing group, checked the original charge, opened its attached café receipt and selected Guest from Split with. Guest's statement showed the same charge and Guest's own share. Back returned to Guest after reopening the expense. The account group picker also exposed Alex's other shared trips at Accessibility Large.

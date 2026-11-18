@@ -10,6 +10,7 @@ import ClerkKit
     @Published var joinedGroupID: String?
     @Published var pendingInvite: String?
     private var scope: String?
+    private var demoPhotos: [String:Data] = [:]
     private var demo = false
     private var monitor = NWPathMonitor()
     private var generation = UUID()
@@ -49,6 +50,7 @@ import ClerkKit
         state = next
     }
     func activate(userID: String?, demo: Bool) async {
+        demoPhotos.removeAll()
         generation = UUID(); syncing = false; self.scope = userID.map { baseURL.host == "127.0.0.1" ? "local-" + $0 : $0 }; joinedGroupID = nil; self.demo = demo; state = DiskState(); error = nil
         guard let scope else { return }
         if demo { state.snapshot = Fixtures.snapshot() }
@@ -163,6 +165,56 @@ import ClerkKit
         }
     }
 
+    func saveReceipted(_ entry: LedgerEntry, original: LedgerEntry?, photos: [ReceiptPhoto]) async throws {
+        guard !photos.isEmpty else {
+            if let original { try await change(original,to:entry) } else { try add(entry) }
+            return
+        }
+        if demo {
+            var copy = entry
+            copy.receiptIDs = (original?.receiptIDs ?? []) + photos.map(\.id)
+            for photo in photos { demoPhotos[photo.id] = photo.data }
+            if let original { try await change(original,to:copy) } else { try add(copy) }
+            return
+        }
+        let encoder=JSONEncoder()
+        var payload:[String:Any]
+        let path:String
+        if let original {
+            payload=["entry":try JSONSerialization.jsonObject(with:encoder.encode(entry)), "original":try JSONSerialization.jsonObject(with:encoder.encode(original))]
+            path="/v1/entries/\(entry.id)/edit"
+        } else {
+            payload=try JSONSerialization.jsonObject(with:encoder.encode(entry)) as? [String:Any] ?? [:]
+            path="/v1/entries"
+        }
+        payload["photos"]=try JSONSerialization.jsonObject(with:encoder.encode(photos))
+        _ = try await post(path,JSONSerialization.data(withJSONObject:payload))
+        try await waitForSync()
+        await sync()
+    }
+    func image(entry:String,id:String) async throws -> Data {
+        if demo, let data=demoPhotos[id] { return data }
+        return try await request(path:"/v1/entries/\(entry)/receipts/\(id)")
+    }
+    func claim(_ entry:LedgerEntry,item:Purchase?,people:[String]) async throws {
+        guard var bill=entry.bill, !bill.closed else { throw LedgerError.invalid("This receipt is closed.") }
+        if demo {
+            var updated=entry
+            if let item, let index=bill.items.firstIndex(where:{$0.id==item.id}) { bill.items[index].memberIDs=people; bill.items[index].roundingSeats=nil }
+            else { for i in bill.items.indices where bill.items[i].memberIDs.isEmpty { bill.items[i].memberIDs=people }; bill.closed=true }
+            updated.bill=bill; updated.splits=try bill.split(payer:entry.paidBy)
+            try await change(entry,to:updated)
+        } else {
+            var data:[String:Any]=["memberIDs":people]
+            if let item { data["itemID"]=item.id; data["original"]=item.memberIDs }
+            let action=item == nil ? "close" : "claim"
+            do { _ = try await post("/v1/entries/\(entry.id)/\(action)",JSONSerialization.data(withJSONObject:data)) }
+            catch { await sync(); throw error }
+            try await waitForSync()
+            await sync()
+        }
+    }
+
     func invite(group: ExpenseGroup, memberID: String? = nil) async throws -> URL {
         guard !demo else { throw LedgerError.invalid("Sign in to share a group invitation.") }
         let data = try await post("/v1/groups/\(group.id)/invites", JSONEncoder().encode(["memberID":memberID]))
@@ -211,7 +263,15 @@ enum Fixtures {
         let people = [Person(id:"demo-alex",groupID:id,userID:"demo-user",name:"Alex"),Person(id:"demo-maya",groupID:id,name:"Maya"),Person(id:"demo-jules",groupID:id,name:"Jules")]
         let group = ExpenseGroup(id:id,name:"Buenos Aires",kind:"trip",currency:"ARS",members:people)
         let house = ExpenseGroup(id:home,name:"Our place",kind:"home",currency:"USD",members:[Person(id:"demo-home-alex",groupID:home,userID:"demo-user",name:"Alex"),Person(id:"demo-home-sam",groupID:home,name:"Sam")])
-        let e = [LedgerEntry(id:"demo-dinner",groupID:id,title:"Dinner in Palermo",amount:8400000,currency:"ARS",paidBy:people[0].id,splits:people.map{Portion(memberID:$0.id,amount:2800000)}),LedgerEntry(id:"demo-coffee",groupID:id,title:"Coffee & medialunas",amount:1850000,currency:"ARS",paidBy:people[1].id,splits:[Portion(memberID:people[0].id,amount:616667),Portion(memberID:people[1].id,amount:616667),Portion(memberID:people[2].id,amount:616666)]),LedgerEntry(id:"demo-stay",groupID:id,title:"A place for the weekend",amount:18000,currency:"USD",paidBy:people[2].id,splits:people.map{Portion(memberID:$0.id,amount:6000)})]
+        var e = [LedgerEntry(id:"demo-dinner",groupID:id,title:"Dinner in Palermo",amount:8400000,currency:"ARS",paidBy:people[0].id,splits:people.map{Portion(memberID:$0.id,amount:2800000)}),LedgerEntry(id:"demo-coffee",groupID:id,title:"Coffee & medialunas",amount:1850000,currency:"ARS",paidBy:people[1].id,splits:[Portion(memberID:people[0].id,amount:616667),Portion(memberID:people[1].id,amount:616667),Portion(memberID:people[2].id,amount:616666)]),LedgerEntry(id:"demo-stay",groupID:id,title:"A place for the weekend",amount:18000,currency:"USD",paidBy:people[2].id,splits:people.map{Portion(memberID:$0.id,amount:6000)})]
+        let dinner=ReceiptBill(items:[
+            Purchase(title:"Empanadas",amount:1800000,memberIDs:[people[0].id,people[1].id]),
+            Purchase(title:"Mushroom pasta",amount:2500000,memberIDs:[people[2].id]),
+            Purchase(title:"Grilled provoleta",amount:2700000)
+        ],tax:700000,tip:700000)
+        e[0].bill=dinner; e[0].splitMode = .exact; e[0].category="Dining"
+        e[0].splits=(try? dinner.split(payer:people[0].id)) ?? e[0].splits
+        e[1].category="Dining"; e[2].category="Lodging"
         return Snapshot(groups:[group,house],entries:e)
     }
 }

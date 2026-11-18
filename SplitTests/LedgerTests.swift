@@ -1,6 +1,15 @@
 import XCTest
 @testable import Split
 final class LedgerTests: XCTestCase {
+    func testReceiptSuggestionsAndGrossClaims() throws {
+        let bill=ReceiptReader.suggest(["Coffee 5.01","Toast 9.99","SUBTOTAL 15.00","Tax 1.01","Tip 2.00","Total 18.01"])
+        XCTAssertEqual(bill.items.map(\.title),["Coffee","Toast"])
+        XCTAssertEqual(bill.openTotal,1801)
+        var shared=bill; shared.items[0].memberIDs=["Alex","Maya"]
+        XCTAssertEqual(try shared.gross(),[602,1199])
+        XCTAssertEqual(shared.openTotal,1199)
+        XCTAssertEqual(try shared.split(payer:"Alex"),[Portion(memberID:"Alex",amount:1500),Portion(memberID:"Maya",amount:301)])
+    }
     @MainActor func testInvitesAcceptBothGenerationsAndOnlySplitLinks() {
         let old=String(repeating:"a",count:72)
         for value in ["abcd-efgh-2345", "https://split-api.yoinklabs.dev/join/ABCDEFGH2345",

@@ -22,8 +22,8 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.yoinklabs.split
-        MARKETING_VERSION: '0.2.0'
-        CURRENT_PROJECT_VERSION: '3'
+        MARKETING_VERSION: '0.3.0'
+        CURRENT_PROJECT_VERSION: '4'
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_FILE: Split/Resources/Info.plist
         INFOPLIST_KEY_CFBundleDisplayName: Split

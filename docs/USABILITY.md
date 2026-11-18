@@ -23,3 +23,15 @@ The baseline was the merged 0.1.0 (2) app on a lane-owned iPhone simulator. Two 
 The revised email signup used a fresh QA mailbox, the standard Clerk password flow and the emailed verification code. The two existing QA accounts exercised cross-account lookup and claiming. The Worker suite covers concurrent-safe claim transactions, combining both sides of a historical split, existing settlement history, stale edits and deletes, private name visibility, legacy data and invite expiry. See the [screenshots](../screenshots/README.md) for the app’s light and dark appearances.
 
 On the revised simulator build, Alex joined Maya’s previously solo group by code. A new signup added Alex by exact email and added Maya as a placeholder from an expense. Maya’s next sign-in brought across the USD 28 share. The author changed the description, created an amount-only expense and deleted it. At Accessibility Large, the expense action and Add person remained reachable. Screenshot review also caught a stray title above the group detail, which was removed.
+
+## Density, spending and receipts in 0.3
+
+| Finding | Change and verification |
+| --- | --- |
+| Group cards spent a second row on repeated avatars and large titles crowded out balances. | Compact cards show the group, roster size and open-purchase badge. The balances screen shows paid, share and net together. Tap a person to inspect their expenses. |
+| A blank navigation title left a stray mark in the balances and invitations flow. | The group name and **People & invites** appear as explicit titles in both appearances. |
+| A receipt total alone could not explain individual purchases. | A simulator photo of a fictional café receipt produced Coffee 5.01, Toast 9.99, Soup 6.50, tax 1.50 and tip 2.00. The expense showed a 25.00 open total. Verified thumbnail and full-screen viewing. |
+| A second person could change a split between preview and save. | Claim updates check the previous claimants. Worker tests cover conflicting updates, shared and placeholder claims, returning items to open status, payer close and historical rounding after member merges. |
+| Shared receipts needed cross-account verification. | Two signed-in QA accounts used the production Worker. The second account retrieved the same private JPEG bytes and shared a claim with a placeholder. The payer refreshed the ledger and closed the remaining item. Tests also exercise membership checks, per-expense limits, rollback and deletion. |
+
+The simulator exercises the photo library. The physical camera path uses the system camera picker and requires a device with a camera.

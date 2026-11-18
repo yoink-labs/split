@@ -6,7 +6,7 @@ Split is a free iPhone and iPad app for tracking shared expenses. Start a trip, 
 
 <p>
   <img src="screenshots/light/groups.png" width="225" alt="Split groups in light appearance">
-  <img src="screenshots/dark/add-expense.png" width="225" alt="Adding an expense in dark appearance">
+  <img src="screenshots/dark/receipt.png" width="225" alt="Receipt photos and open purchases in dark appearance">
 </p>
 
 ## Using Split
@@ -15,6 +15,9 @@ Split is a free iPhone and iPad app for tracking shared expenses. Start a trip, 
 - **Add people.** Find a Split account by exact email or username. Name searches are limited to people with whom you already share a group. Select **Placeholder** to add someone by name, with optional email or phone. This works during group creation, from People, and while composing an expense.
 - **Claim history.** Send a placeholder’s personal invite, or let the person sign in with the matching verified primary email. Split preserves earlier expenses and payments. If they already joined the group separately, both records resolve to one member. Phone numbers are optional contact information. They do not prove ownership.
 - **Record an expense.** Tap **Add an expense**, enter the amount and save. The group currency, you as payer, and an equal split are preselected. Add a description or choose exact amounts, percentages, or shares. Tap a saved entry for the breakdown. Its author can edit an expense or delete an entry.
+- **Read a receipt.** Add up to four photos from the library or camera. Vision suggests editable names, prices, tax and tip on the device. Review the suggestions, correct them or add items by hand. You can also keep photos on a regular split. Group members can tap a thumbnail to open the full-size receipt.
+- **Claim purchases.** Open an item and select one person or several, including placeholders. The item’s price and proportional tax and tip are shared evenly. Unclaimed costs stay with the payer and appear in the open total. Tap the open-purchases filter in the group to find them. Pull to refresh for other people’s claims. The payer can close a receipt, distributing all remaining items to everyone or selected people. If the payer is a placeholder, the person who recorded the expense can close it.
+- **Explore group spending.** Open **Balances** for totals in each currency, expand a category or month, or tap a person for expenses they paid or shared. Paid and share measure spending. Net includes recorded payments.
 - **Settle up.** Balances suggest payments within each currency. Record a full or partial payment after money changes hands. Split records payments and does not transfer funds.
 - **Use another device.** A Clerk session syncs your groups. **You → Connected computers** approves and revokes CLI/MCP access. The signed-out preview uses fictional data on the device.
 
@@ -26,10 +29,10 @@ Supported currencies are USD, ARS, EUR, GBP, BRL, CAD, AUD, and MXN. Amounts use
 | --- | --- |
 | [SwiftUI app](Split) | iOS 18+, system appearance and Dynamic Type, protected per-account cache, and FIFO outbox for new groups, expenses and payments |
 | [Split Worker](worker/src/index.ts) | Authenticated ledger and membership API, invitation landing page, universal-link association and CLI/MCP routes |
-| [D1 migrations](worker/migrations) | Groups, stable member IDs, private contact records, identity aliases, expenses, hashed invites, revisions via conditional updates, deletion tombstones and device credentials |
+| [D1 migrations](worker/migrations) | Groups, stable member IDs, private contact records, identity aliases, expenses, hashed invites, revisions via conditional updates, deletion tombstones, private receipt images and device credentials |
 | Clerk | Existing Yoink Labs sign-in. The Worker verifies signed sessions with public JWKS and reads the signed-in user’s verified profile through the Clerk backend API |
 
-New ledger records can be entered offline. Search, adding someone to an existing group, joining, sharing invites, editing and deleting require connectivity. Snapshot refreshes retry when the app becomes active or connectivity returns. The beta supports 50 active people per group, 100 groups per account and 5,000 visible entries per account. Split uses its own Worker and D1 database on Cloudflare’s free tier.
+New ledger records without photos can be entered offline. Photo uploads, full-size downloads and shared claims require a connection. The app compresses each photo to a JPEG of at most 240 KiB and strips original image metadata. Split stores photos in its existing D1 database, checks group membership on every download, and caps receipt bytes at 100 MiB across the service. Deleting an expense removes its photos. Search, adding someone to an existing group, joining, sharing invites, editing and deleting require connectivity. Snapshot refreshes retry when the app becomes active or connectivity returns. The beta supports 50 active people per group, 100 groups per account and 5,000 visible entries per account. Split uses its own Worker and D1 database on Cloudflare’s free tier.
 
 ## Local development
 
@@ -104,4 +107,4 @@ command = "/opt/homebrew/bin/split"
 args = ["mcp"]
 ```
 
-Remote MCP clients can use Streamable HTTP at `https://split-api.yoinklabs.dev/mcp` with a device bearer token. See the [CLI and MCP guide](cli/README.md) for expense splits, placeholder invitations, lookup, confirmation previews and remote client configuration.
+Remote MCP clients can use Streamable HTTP at `https://split-api.yoinklabs.dev/mcp` with a device bearer token. See the [CLI and MCP guide](cli/README.md) for receipt photos, open purchases, spending breakdowns, expense splits, placeholder invitations, lookup, confirmation previews and remote client configuration.

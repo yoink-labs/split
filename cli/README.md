@@ -57,6 +57,23 @@ split expenses delete --group "$GROUP" --expense "$EXPENSE"
 split expenses delete --group "$GROUP" --expense "$EXPENSE" --yes --revision "$REVISION"
 ```
 
+## Receipts, claims and spending
+
+The current checkout includes the receipt commands below. Use `./cli/bin/split` from the repository root with Node 22.18+ to run the updated client. Connected MCP clients discover the same tools from the production Worker, including through an existing stdio bridge.
+
+```sh
+split groups breakdown --group GROUP_ID
+split groups breakdown --group GROUP_ID --member MEMBER_ID
+split items open --group GROUP_ID
+split items claim --group GROUP_ID --expense EXPENSE_ID --item ITEM_ID
+split items claim --group GROUP_ID --expense EXPENSE_ID --item ITEM_ID --member MEMBER_ID --action remove
+split items close --group GROUP_ID --expense EXPENSE_ID --participants '["MEMBER_ID"]'
+split receipts list --group GROUP_ID --expense EXPENSE_ID
+split receipts get --group GROUP_ID --expense EXPENSE_ID --photo PHOTO_ID
+```
+
+Claim defaults to adding yourself. Pass a group member ID to add a second claimant or act for a placeholder. Close defaults to everyone for the remaining purchases. Each group report keeps currencies separate, includes member expense IDs, and returns full expense detail when filtered by member. The CLI returns JPEG content as base64 JSON. MCP returns JPEG image content. Take or select and review receipt photos in the iOS app. `expenses add` accepts a category and equal, exact, percent or shares allocation.
+
 ## MCP clients
 
 Sign in on the computer running the client. Use the absolute path from `command -v split` and verify it with `--version`. Desktop clients may otherwise find the macOS utility. The examples below use the default Apple silicon Homebrew path.

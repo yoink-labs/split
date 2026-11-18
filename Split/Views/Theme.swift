@@ -12,7 +12,7 @@ extension Color {
 }
 struct SolidButton: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label.font(.headline).frame(maxWidth:.infinity).padding(.vertical,18).background(Palette.green).foregroundStyle(Palette.background).clipShape(RoundedRectangle(cornerRadius:18)).opacity(configuration.isPressed ? 0.7 : 1)
+        configuration.label.font(.headline).frame(maxWidth:.infinity).padding(.vertical,9).frame(minHeight:44).background(Palette.green).foregroundStyle(Palette.background).clipShape(RoundedRectangle(cornerRadius:12)).opacity(configuration.isPressed ? 0.7 : 1)
     }
 }
 struct Avatar: View {
@@ -21,6 +21,6 @@ struct Avatar: View {
 }
 struct Card<Content: View>: View {
     @ViewBuilder var content: Content
-    var body: some View { VStack(alignment: .leading, spacing: 0) { content }.padding(20).frame(maxWidth:.infinity,alignment:.leading).background(Palette.card).clipShape(RoundedRectangle(cornerRadius:24)) }
+    var body: some View { VStack(alignment: .leading, spacing: 0) { content }.padding(14).frame(maxWidth:.infinity,alignment:.leading).background(Palette.card).clipShape(RoundedRectangle(cornerRadius:15)) }
 }
 struct ErrorText: View { var text: String; var body: some View { Label(text,systemImage:"exclamationmark.circle").font(.subheadline).foregroundStyle(.red).fixedSize(horizontal:false,vertical:true).accessibilityIdentifier("error-message") } }

@@ -22,8 +22,8 @@ struct InviteView: View {
                 Section {
                     Button { adding=true } label: { Label("Add person",systemImage:"person.badge.plus") }
                     ForEach(current.members) { member in
-                        VStack(alignment:.leading,spacing:10) {
-                            HStack { Avatar(name:member.name,size:36); VStack(alignment:.leading) {
+                        VStack(alignment:.leading,spacing:6) {
+                            HStack { Avatar(name:member.name,size:30); VStack(alignment:.leading) {
                                 Text(member.name).font(.headline)
                                 Text(member.userID == nil ? "Placeholder" : "Joined").font(.caption).foregroundStyle(.secondary)
                             } }
@@ -32,7 +32,7 @@ struct InviteView: View {
                     }
                 } header: { Text("People · \(current.members.count)") }
                 if let error { ErrorText(text:error) }
-            }.navigationTitle("People").navigationBarTitleDisplayMode(.inline)
+            }.navigationTitle(Text(verbatim:"People & invites")).navigationBarTitleDisplayMode(.inline)
                 .toolbar { ToolbarItem(placement:.confirmationAction) { Button("Done") { dismiss() } } }
                 .sheet(isPresented:$adding) {
                     MemberEditor { draft in _ = try await store.addMember(groupID:group.id,draft:draft) }
@@ -43,7 +43,7 @@ struct InviteView: View {
     @ViewBuilder private func invitation(member:Person?) -> some View {
         let key = member?.id ?? "group"
         if let link=links[key] {
-            VStack(alignment:.leading,spacing:10) {
+            VStack(alignment:.leading,spacing:6) {
                 Text(link.lastPathComponent).font(.title3.monospaced().weight(.semibold)).textSelection(.enabled)
                     .accessibilityLabel("Invite code " + link.lastPathComponent)
                 ViewThatFits(in:.horizontal) {

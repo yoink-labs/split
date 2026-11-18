@@ -30,6 +30,9 @@ struct LedgerEntry: Codable, Identifiable, Equatable {
     var currency: String
     var paidBy: String
     var splits: [Portion]
+    var category: String?
+    var bill: ReceiptBill?
+    var receiptIDs: [String]?
     var kind: String = "expense"
     var editable: Bool?
     var splitMode: SplitMode = .equal

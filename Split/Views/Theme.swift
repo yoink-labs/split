@@ -9,6 +9,8 @@ enum Palette {
     static let ink = Color(light: 0x0F241C, dark: 0xEAF2EC)
     /// The ink card stays dark in both appearances; it is the one loud surface.
     static let hero = Color(light: 0x0F241C, dark: 0x122A20)
+    /// Body text on the ink hero in both appearances.
+    static let onHero = Color(hex: 0xF4F1E8)
     static let evergreen = Color(light: 0x1D4C3A, dark: 0x7BC7A0)
     static let green = evergreen
     static let lime = Color(light: 0xD6F294, dark: 0xC9EC86)
@@ -21,6 +23,9 @@ enum Palette {
     static let negative = coral
     static let sky = Color(light: 0x2F6E86, dark: 0x8EC8DC)
     static let lavender = Color(light: 0x6C5A93, dark: 0xB7A6E0)
+    /// A hairline that lifts glass off the background; stronger in dark mode
+    /// where Liquid Glass over the dark paper is otherwise near-invisible.
+    static let glassEdge = Color(light: UIColor.white.withAlphaComponent(0.55), dark: UIColor.white.withAlphaComponent(0.10))
 }
 
 extension Color {
@@ -125,7 +130,9 @@ private struct GlassSurface: ViewModifier {
             let effect: Glass = interactive
                 ? .regular.tint(tint).interactive()
                 : .regular.tint(tint)
-            content.glassEffect(effect, in: shape)
+            content
+                .glassEffect(effect, in: shape)
+                .overlay(shape.stroke(Palette.glassEdge, lineWidth: 0.75))
         } else {
             content
                 .background(.ultraThinMaterial, in: shape)
@@ -281,17 +288,19 @@ struct BalanceHero: View {
                     .frame(width: 300, alignment: .leading)
                 }
             } else {
-                VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: 10) {
                     netStack(compact: true)
-                    HStack(spacing: 0) {
+                    HStack(spacing: 12) {
                         heroStat("You owe", value: owe, tint: Color(red: 1, green: 0.74, blue: 0.64))
-                        Rectangle().fill(Palette.lime.opacity(0.18)).frame(width: 1, height: 30)
+                        Rectangle().fill(Palette.lime.opacity(0.18)).frame(width: 1).padding(.vertical, 2)
                         heroStat("You’re owed", value: owed, tint: Palette.lime)
                     }
+                    .fixedSize(horizontal: false, vertical: true)
                 }
             }
         }
-        .padding(size == .regular ? 24 : 18)
+        .padding(.horizontal, size == .regular ? 24 : 16)
+        .padding(.vertical, size == .regular ? 22 : 14)
         .background(
             LinearGradient(colors: [Palette.hero, Palette.hero.opacity(0.94)], startPoint: .topLeading, endPoint: .bottomTrailing)
         )
@@ -309,19 +318,21 @@ struct BalanceHero: View {
                     .font(.splitEyebrow)
                     .foregroundStyle(Palette.lime.opacity(0.72))
                 Spacer(minLength: 8)
-                Image(systemName: "equal.circle.fill")
-                    .font(.system(size: 22, weight: .light))
-                    .foregroundStyle(Palette.lime.opacity(0.32))
-                    .accessibilityHidden(true)
+                if !compact {
+                    Image(systemName: "equal.circle.fill")
+                        .font(.system(size: 22, weight: .light))
+                        .foregroundStyle(Palette.lime.opacity(0.32))
+                        .accessibilityHidden(true)
+                }
             }
             if net.isEmpty {
                 Text("All settled")
-                    .font(.splitDisplay(compact ? 34 : 40))
+                    .font(.splitDisplay(compact ? 30 : 40))
                     .foregroundStyle(Palette.lime)
             } else {
                 ForEach(net) { total in
                     Text(Money.text(total.amount, total.currency, signed: true))
-                        .font(.splitDisplay(compact ? (net.count > 1 ? 25 : 32) : (net.count > 1 ? 30 : 38), weight: .bold))
+                        .font(.splitDisplay(compact ? (net.count > 1 ? 24 : 30) : (net.count > 1 ? 30 : 38), weight: .bold))
                         .foregroundStyle(total.amount < 0 ? Color(red: 1, green: 0.72, blue: 0.60) : Palette.lime)
                         .lineLimit(1)
                         .minimumScaleFactor(0.6)
@@ -484,11 +495,14 @@ struct PersonBalanceRow: View {
                     Text(Money.text(abs(amount), currency))
                         .font(.splitAmount(15))
                         .foregroundStyle(amount < 0 ? Palette.negative : Palette.positive)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
                     Text(amount < 0 ? "you owe" : "owes you")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
             }
+            .layoutPriority(1)
             if showsChevron {
                 Image(systemName: "chevron.right").font(.caption2.weight(.bold)).foregroundStyle(.tertiary)
             }
@@ -505,6 +519,7 @@ struct EntryRow: View {
     var showGroup: Bool = false
     var showDate: Bool = false
     var showSocial: Bool = true
+    @Environment(\.horizontalSizeClass) private var size
     private var meta: CategoryMeta { CategoryMeta.named(entry.category) }
     private var me: Person? { Analytics.me(in: group, userID: currentUserID) }
     private var mine: Int64 { guard let me else { return 0 }; return Ledger.net(entry, for: me.id) }
@@ -514,70 +529,130 @@ struct EntryRow: View {
         }
         return "Someone"
     }
+
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            ZStack(alignment: .bottomTrailing) {
-                CategoryBadge(category: entry.category, size: 40)
-                if entry.isSettlement {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 15, weight: .bold))
-                        .foregroundStyle(Palette.paper, Palette.evergreen)
-                        .offset(x: 3, y: 3)
-                }
-            }
-            VStack(alignment: .leading, spacing: 4) {
-                Text(entry.title)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(Palette.ink)
-                    .lineLimit(2)
-                HStack(spacing: 4) {
-                    Text(entry.isSettlement ? "\(name(entry.paidBy)) settled up" : "\(name(entry.paidBy)) paid")
-                    if showGroup { Text("· \(group.name)") }
-                    if showDate, let date = ISO8601DateFormatter().date(from: entry.createdAt) {
-                        Text("· \(date.formatted(.dateTime.month(.abbreviated).day()))")
-                    }
-                }
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                if let notes = entry.notes, !notes.isEmpty {
-                    Text(notes).font(.caption).foregroundStyle(.tertiary).lineLimit(1)
-                }
-                if let bill = entry.bill, bill.openCount > 0 {
-                    Text("\(bill.openCount) open \(bill.openCount == 1 ? "purchase" : "purchases") · \(Money.text(bill.openTotal, entry.currency))")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(Palette.amber)
-                }
-                if showSocial, (entry.commentCount ?? 0) > 0 || (entry.likeCount ?? 0) > 0 {
-                    HStack(spacing: 10) {
-                        if let likes = entry.likeCount, likes > 0 {
-                            Label("\(likes)", systemImage: entry.likedByMe == true ? "hand.thumbsup.fill" : "hand.thumbsup")
-                                .foregroundStyle(entry.likedByMe == true ? Palette.evergreen : .secondary)
-                        }
-                        if let count = entry.commentCount, count > 0 {
-                            Label("\(count)", systemImage: "bubble.left")
-                        }
-                    }
-                    .font(.caption2.weight(.medium))
-                    .foregroundStyle(.secondary)
-                }
-            }
-            Spacer(minLength: 6)
-            VStack(alignment: .trailing, spacing: 3) {
-                AmountText(minor: entry.amount, currency: entry.currency, size: 15)
-                if entry.kind == "expense" && mine != 0 {
-                    Text(mine > 0 ? "you lent \(Money.text(mine, entry.currency))" : "you owe \(Money.text(abs(mine), entry.currency))")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(mine > 0 ? Palette.positive : Palette.negative)
-                        .multilineTextAlignment(.trailing)
-                } else if entry.kind == "expense" {
-                    Text("not involved").font(.caption2).foregroundStyle(.tertiary)
-                }
-            }
+        Group {
+            if size == .compact { compactBody } else { regularBody }
         }
         .padding(.vertical, 2)
         .accessibilityElement(children: .combine)
     }
+
+    private var iconView: some View {
+        ZStack(alignment: .bottomTrailing) {
+            CategoryBadge(category: entry.category, size: 40)
+            if entry.isSettlement {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundStyle(Palette.paper, Palette.evergreen)
+                    .offset(x: 3, y: 3)
+            }
+        }
+        .accessibilityHidden(true)
+    }
+
+    private var titleView: some View {
+        Text(entry.title)
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(Palette.ink)
+            .lineLimit(2)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    @ViewBuilder private var metaLine: some View {
+        HStack(spacing: 4) {
+            Text(entry.isSettlement ? "\(name(entry.paidBy)) settled up" : "\(name(entry.paidBy)) paid")
+            if showGroup { Text("· \(group.name)") }
+            if showDate, let date = ISO8601DateFormatter().date(from: entry.createdAt) {
+                Text("· \(date.formatted(.dateTime.month(.abbreviated).day()))")
+            }
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+    }
+
+    @ViewBuilder private var noteLine: some View {
+        if let notes = entry.notes, !notes.isEmpty {
+            Text(notes).font(.caption).foregroundStyle(.tertiary).lineLimit(1)
+        }
+    }
+
+    @ViewBuilder private var openLine: some View {
+        if let bill = entry.bill, bill.openCount > 0 {
+            Text("\(bill.openCount) open \(bill.openCount == 1 ? "purchase" : "purchases") · \(Money.text(bill.openTotal, entry.currency))")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(Palette.amber)
+        }
+    }
+
+    @ViewBuilder private var socialLine: some View {
+        if showSocial, (entry.commentCount ?? 0) > 0 || (entry.likeCount ?? 0) > 0 {
+            HStack(spacing: 10) {
+                if let likes = entry.likeCount, likes > 0 {
+                    Label("\(likes)", systemImage: entry.likedByMe == true ? "hand.thumbsup.fill" : "hand.thumbsup")
+                        .foregroundStyle(entry.likedByMe == true ? Palette.evergreen : .secondary)
+                }
+                if let count = entry.commentCount, count > 0 {
+                    Label("\(count)", systemImage: "bubble.left")
+                }
+            }
+            .font(.caption2.weight(.medium))
+            .foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder private var netLine: some View {
+        if entry.kind == "expense" && mine != 0 {
+            Text(mine > 0 ? "you lent \(Money.text(mine, entry.currency))" : "you owe \(Money.text(abs(mine), entry.currency))")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(mine > 0 ? Palette.positive : Palette.negative)
+                .lineLimit(2)
+                .minimumScaleFactor(0.7)
+        } else if entry.kind == "expense" {
+            Text("not involved").font(.caption2).foregroundStyle(.tertiary).lineLimit(1)
+        }
+    }
+
+    private var compactBody: some View {
+        HStack(alignment: .top, spacing: 10) {
+            iconView
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    titleView
+                    Spacer(minLength: 4)
+                    AmountText(minor: entry.amount, currency: entry.currency, size: 15)
+                        .layoutPriority(1)
+                }
+                metaLine
+                netLine
+                noteLine
+                openLine
+                socialLine
+            }
+        }
+    }
+
+    private var regularBody: some View {
+        HStack(alignment: .top, spacing: 12) {
+            iconView
+            VStack(alignment: .leading, spacing: 4) {
+                titleView
+                metaLine
+                noteLine
+                openLine
+                socialLine
+            }
+            Spacer(minLength: 6)
+            VStack(alignment: .trailing, spacing: 3) {
+                AmountText(minor: entry.amount, currency: entry.currency, size: 15)
+                netLine
+                    .multilineTextAlignment(.trailing)
+            }
+            .frame(maxWidth: 150, alignment: .trailing)
+        }
+    }
 }
+
 
 struct GroupCard: View {
     var summary: GroupSummary
@@ -601,20 +676,10 @@ struct GroupCard: View {
                 Spacer()
                 Image(systemName: "chevron.right").font(.caption2.weight(.bold)).foregroundStyle(.tertiary)
             }
-            ViewThatFits(in: .horizontal) {
-                HStack(alignment: .firstTextBaseline) {
-                    groupBalances
-                    Spacer(minLength: 6)
-                    groupEntryCount
-                }
-                VStack(alignment: .leading, spacing: 4) {
-                    groupBalances
-                    groupEntryCount
-                }
-            }
-            if summary.currencies.count > 1 && !summary.isSettled {
-                Text(summary.currencies.joined(separator: " + ") + " · tap for details")
-                    .font(.caption2).foregroundStyle(.tertiary)
+            HStack(alignment: .lastTextBaseline, spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) { groupBalances }
+                Spacer(minLength: 6)
+                groupEntryCount
             }
         }
         .padding(16)
@@ -634,15 +699,15 @@ struct GroupCard: View {
                 if amount != 0 {
                     HStack(spacing: 4) {
                         Text(Money.text(abs(amount), currency))
-                            .font(.splitAmount(19))
+                            .font(.splitAmount(summary.currencies.count > 1 ? 16 : 19))
                             .foregroundStyle(amount > 0 ? Palette.positive : Palette.negative)
                             .lineLimit(1)
                             .minimumScaleFactor(0.7)
                         Text(amount > 0 ? "you’re owed" : "you owe")
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                            .lineLimit(1)
                     }
-                    .padding(.trailing, 8)
                 }
             }
         }
@@ -696,4 +761,175 @@ struct InlineError: View {
 struct ErrorText: View {
     var text: String
     var body: some View { InlineError(text: text) }
+}
+
+/// A wrapping row of chips. Each chip keeps its intrinsic width; a chip wider
+/// than the row is clamped to the row so long names truncate instead of clip.
+struct FlowLayout: Layout {
+    var spacing: CGFloat = 8
+    var lineSpacing: CGFloat? = nil
+
+    private func measure(_ subview: LayoutSubview, maxWidth: CGFloat) -> CGSize {
+        let ideal = subview.sizeThatFits(.unspecified)
+        guard ideal.width > maxWidth, maxWidth.isFinite else { return ideal }
+        return subview.sizeThatFits(ProposedViewSize(width: maxWidth, height: nil))
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let maxWidth = proposal.width ?? .infinity
+        let rowGap = lineSpacing ?? spacing
+        var width: CGFloat = 0
+        var height: CGFloat = 0
+        var rowWidth: CGFloat = 0
+        var rowHeight: CGFloat = 0
+        for subview in subviews {
+            let size = measure(subview, maxWidth: maxWidth)
+            if rowWidth > 0, rowWidth + spacing + size.width > maxWidth {
+                width = max(width, rowWidth)
+                height += rowHeight + rowGap
+                rowWidth = size.width
+                rowHeight = size.height
+            } else {
+                rowWidth += (rowWidth == 0 ? 0 : spacing) + size.width
+                rowHeight = max(rowHeight, size.height)
+            }
+        }
+        width = max(width, rowWidth)
+        height += rowHeight
+        return CGSize(width: width, height: height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let rowGap = lineSpacing ?? spacing
+        var x = bounds.minX
+        var y = bounds.minY
+        var rowHeight: CGFloat = 0
+        for subview in subviews {
+            let size = measure(subview, maxWidth: bounds.width)
+            if x > bounds.minX, x + size.width > bounds.maxX {
+                x = bounds.minX
+                y += rowHeight + rowGap
+                rowHeight = 0
+            }
+            subview.place(at: CGPoint(x: x, y: y), anchor: .topLeading,
+                          proposal: ProposedViewSize(width: size.width, height: size.height))
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+        }
+    }
+}
+
+/// An avatar + name capsule for a group member. Used for receipt claimants:
+/// selected chips are filled with the member colour, unselected chips are
+/// outlined, and the checkmark carries state so it is not colour-only.
+struct PersonChip: View {
+    var name: String
+    var label: String? = nil
+    var selected: Bool = true
+    var compact: Bool = false
+    var action: (() -> Void)? = nil
+
+    private var display: String { label ?? name }
+
+    var body: some View {
+        let content = HStack(spacing: 6) {
+            Avatar(name: name, size: compact ? 20 : 24)
+            Text(display)
+                .font((compact ? Font.caption : Font.subheadline).weight(.semibold))
+                .lineLimit(1)
+            if action != nil {
+                Image(systemName: selected ? "checkmark" : "plus")
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(selected ? Palette.evergreen : Color.secondary)
+                    .accessibilityHidden(true)
+            }
+        }
+        .padding(.leading, compact ? 3 : 4)
+        .padding(.trailing, compact ? 9 : 11)
+        .padding(.vertical, compact ? 3 : 4)
+        .foregroundStyle(selected ? Palette.ink : Color.secondary)
+        .background(selected ? Palette.mint.opacity(0.75) : Palette.raised.opacity(0.55), in: Capsule())
+        .overlay(
+            Capsule().strokeBorder(
+                selected ? Palette.evergreen.opacity(0.28) : Palette.line,
+                style: StrokeStyle(lineWidth: 1, dash: selected ? [] : [3, 3])
+            )
+        )
+        .contentShape(Capsule())
+
+        if let action {
+            Button(action: action) {
+                content
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(display)
+            .accessibilityValue(selected ? "Sharing" : "Not sharing")
+            .accessibilityHint(selected ? "Double-tap to remove from this item" : "Double-tap to add to this item")
+            .accessibilityAddTraits(selected ? .isSelected : [])
+        } else {
+            content
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(display)
+        }
+    }
+}
+
+/// "6 items · 2 unassigned · ARS 25.00" — a compact receipt summary rail.
+/// A sidebar list on regular width, a plain list on a phone. The sidebar style
+/// is unreadable on a compact phone: its section spacing and row insets leave
+/// a large hole above the first group.
+private struct AdaptiveSidebarListStyle: ViewModifier {
+    @Environment(\.horizontalSizeClass) private var size
+    @ViewBuilder func body(content: Content) -> some View {
+        if size == .regular {
+            content.listStyle(.sidebar)
+        } else {
+            content.listStyle(.plain)
+        }
+    }
+}
+
+extension View {
+    func adaptiveSidebarListStyle() -> some View {
+        modifier(AdaptiveSidebarListStyle())
+    }
+}
+
+struct ReceiptSummaryRail: View {
+    var bill: ReceiptBill
+    var currency: String
+    var openLabel: String = "unassigned"
+
+    var body: some View {
+        let open = bill.openCount
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 8) { pills(open) }
+            VStack(alignment: .leading, spacing: 6) { pills(open) }
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    @ViewBuilder private func pills(_ open: Int) -> some View {
+        pill("\(bill.items.count) \(bill.items.count == 1 ? "item" : "items")", symbol: "list.bullet", tint: Palette.evergreen)
+        pill(open == 0 ? "All assigned" : "\(open) \(openLabel)",
+             symbol: open == 0 ? "checkmark.circle.fill" : "circle.dashed",
+             tint: open == 0 ? Palette.positive : Palette.amber)
+        pill(Money.text(bill.total, currency), symbol: "sum", tint: Palette.ink, strong: true)
+    }
+
+    private func pill(_ text: String, symbol: String, tint: Color, strong: Bool = false) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: symbol).font(.caption2.weight(.bold)).accessibilityHidden(true)
+            Text(text)
+                .font(strong ? .splitAmount(13, weight: .bold) : .caption.weight(.semibold))
+                .lineLimit(1)
+        }
+        .foregroundStyle(tint)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(tint.opacity(0.10), in: Capsule())
+        .fixedSize()
+    }
 }

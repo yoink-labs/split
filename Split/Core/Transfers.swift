@@ -50,6 +50,29 @@ extension Ledger {
 }
 
 extension Ledger {
+    /// Direct matching without subset or exact-opposite simplification. Used
+    /// when a group turns "Simplify payments" off: every nonzero balance pays
+    /// the people it can, in a stable order, without routing through others.
+    static func directPlan(_ values: [String: Int64], currency: String) -> [Transfer] {
+        var remaining = values.filter { $0.value != 0 }
+        var debtors = remaining.filter { $0.value < 0 }.keys.sorted()
+        var creditors = remaining.filter { $0.value > 0 }.keys.sorted()
+        var transfers: [Transfer] = []
+        var d = 0, c = 0
+        while d < debtors.count, c < creditors.count {
+            let from = debtors[d], to = creditors[c]
+            let amount = min(-(remaining[from] ?? 0), remaining[to] ?? 0)
+            if amount > 0 {
+                transfers.append(Transfer(from: from, to: to, amount: amount, currency: currency))
+                remaining[from, default: 0] += amount
+                remaining[to, default: 0] -= amount
+            }
+            if (remaining[from] ?? 0) == 0 { d += 1 }
+            if (remaining[to] ?? 0) == 0 { c += 1 }
+        }
+        return transfers
+    }
+
     /// Exponential search for large ledgers, run off the UI thread only on request.
     /// Eliminating a seat against each opposite balance enumerates balanced partitions.
     static func minimumPlan(_ values:[String:Int64],currency:String) throws -> [Transfer] {

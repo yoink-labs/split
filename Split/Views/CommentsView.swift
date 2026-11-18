@@ -5,7 +5,11 @@ import SwiftUI
 struct CommentsView: View {
     var entryID: String
     var compact: Bool = false
+    /// Called when the comment field gains focus, so a parent scroll view can
+    /// bring the composer above the keyboard.
+    var onFocus: (() -> Void)? = nil
     @EnvironmentObject private var store: ExpenseStore
+    @FocusState private var fieldFocused: Bool
 
     @State private var draft = ""
     @State private var loading = false
@@ -37,6 +41,13 @@ struct CommentsView: View {
             composer
         }
         .task { await load() }
+        .onChange(of: fieldFocused) { _, focused in
+            guard focused, let onFocus else { return }
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(350))
+                onFocus()
+            }
+        }
     }
 
     private var header: some View {
@@ -152,6 +163,7 @@ struct CommentsView: View {
                     .background(Palette.raised)
                     .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
                     .overlay(RoundedRectangle(cornerRadius: 13, style: .continuous).stroke(Palette.line, lineWidth: 1))
+                    .focused($fieldFocused)
                     .accessibilityIdentifier("comment-field")
                     .accessibilityLabel("Write a comment")
                     .onChange(of: draft) { _, value in

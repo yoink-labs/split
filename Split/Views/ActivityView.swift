@@ -93,6 +93,7 @@ struct ActivityFeedView: View {
                 LazyVStack(alignment: .leading, spacing: 18) {
                     header
                     statusLine
+                    if !filteredEntries.isEmpty { statRail }
                     filterChips
                     if let error = store.error { InlineError(text: error) }
                     if sections.isEmpty {
@@ -143,6 +144,40 @@ struct ActivityFeedView: View {
             .accessibilityLabel("Search everything")
             filterMenu
         }
+    }
+
+    /// A compact count rail. Counts are currency-free so mixed groups stay honest.
+    private var statRail: some View {
+        let expenses = filteredEntries.filter { !$0.isSettlement }.count
+        let payments = filteredEntries.count - expenses
+        let comments = filteredEntries.reduce(0) { $0 + ($1.commentCount ?? 0) }
+        let open = filteredEntries.compactMap(\.bill).reduce(0) { $0 + $1.openCount }
+        return HStack(spacing: 0) {
+            stat("\(expenses)", expenses == 1 ? "expense" : "expenses")
+            divider
+            stat("\(payments)", payments == 1 ? "payment" : "payments")
+            divider
+            stat("\(comments)", comments == 1 ? "comment" : "comments")
+            if open > 0 {
+                divider
+                stat("\(open)", "open items", tint: Palette.amber)
+            }
+        }
+        .padding(.vertical, 10)
+        .glassSurface(cornerRadius: 16, tint: Palette.card.opacity(0.45))
+        .accessibilityElement(children: .combine)
+    }
+
+    private var divider: some View {
+        Rectangle().fill(Palette.line).frame(width: 1, height: 26)
+    }
+
+    private func stat(_ value: String, _ label: String, tint: Color = Palette.ink) -> some View {
+        VStack(spacing: 1) {
+            Text(value).font(.splitAmount(18, weight: .bold)).foregroundStyle(tint).contentTransition(.numericText())
+            Text(label).font(.caption2).foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.8)
+        }
+        .frame(maxWidth: .infinity)
     }
 
     private var statusLine: some View {
@@ -274,7 +309,7 @@ struct ActivityFeedView: View {
                 )
                 .padding(.horizontal, 14)
                 .padding(.top, 12)
-                .padding(.bottom, 4)
+                .padding(.bottom, 2)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -304,17 +339,13 @@ struct ActivityFeedView: View {
                 }
 
                 Spacer(minLength: 0)
-
-                Image(systemName: "chevron.right")
-                    .font(.caption2.weight(.bold))
-                    .foregroundStyle(.tertiary)
-                    .padding(.trailing, 6)
-                    .accessibilityHidden(true)
             }
-            .padding(.horizontal, 10)
+            .padding(.leading, 58)
+            .padding(.trailing, 10)
+            .padding(.top, -6)
 
             if !isLast {
-                Divider().overlay(Palette.line)
+                Divider().overlay(Palette.line).padding(.leading, 66)
             }
         }
     }

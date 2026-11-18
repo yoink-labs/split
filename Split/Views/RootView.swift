@@ -39,14 +39,24 @@ struct WelcomeView: View {
                 if size == .regular {
                     VStack(alignment: .leading, spacing: 24) {
                         brand
-                        HStack(alignment: .top, spacing: 34) {
+                        HStack(alignment: .top, spacing: 28) {
                             hero
                             VStack(alignment: .leading, spacing: 18) {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("Get started").font(.title3.weight(.semibold)).foregroundStyle(Palette.ink)
+                                    Text("Sign in with your Yoink account, or look around with sample data first.")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
                                 signIn
+                                Spacer(minLength: 0)
                                 freeNote
                             }
-                            .frame(maxWidth: 370)
+                            .padding(20)
+                            .frame(maxWidth: 380, maxHeight: .infinity, alignment: .topLeading)
+                            .glassSurface(cornerRadius: 24, tint: Palette.card.opacity(0.5))
                         }
+                        .fixedSize(horizontal: false, vertical: true)
                         features
                         footer
                     }
@@ -131,7 +141,11 @@ struct WelcomeView: View {
                 ForEach(["Maya", "Jules", "Harris"], id: \.self) { name in
                     HStack(spacing: 6) {
                         Avatar(name: name, size: 24, tint: Palette.lime)
-                        Text(name).font(.caption.weight(.medium)).foregroundStyle(Palette.lime.opacity(0.85))
+                        Text(name)
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(Palette.lime.opacity(0.85))
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
                     }
                     .padding(.horizontal, 8)
                     .padding(.vertical, 5)
@@ -172,17 +186,35 @@ struct WelcomeView: View {
                 .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Palette.line, lineWidth: 1))
             }
             .foregroundStyle(Palette.ink)
-            Button("Continue with email") {
-                session.error = nil; session.awaitingCode = false; emailSheet = true
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) { emailButton; demoButton }
+                VStack(spacing: 8) { emailButton; demoButton }
             }
-            .font(.subheadline.weight(.semibold))
-            .padding(6)
             if session.working { ProgressView() }
-            Button("Take a look around") { session.demo() }
-                .font(.subheadline.weight(.medium))
-                .foregroundStyle(Palette.evergreen)
         }
         .disabled(session.working)
+    }
+
+    private var emailButton: some View {
+        Button {
+            session.error = nil; session.awaitingCode = false; emailSheet = true
+        } label: {
+            Label("Email", systemImage: "envelope")
+                .lineLimit(1)
+                .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(GhostButton())
+        .accessibilityLabel("Continue with email")
+    }
+
+    private var demoButton: some View {
+        Button { session.demo() } label: {
+            Label("Look around", systemImage: "sparkles")
+                .lineLimit(1)
+                .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(GhostButton())
+        .accessibilityLabel("Take a look around")
     }
 
     private var features: some View {
@@ -202,26 +234,28 @@ struct WelcomeView: View {
     }
 
     private var freeNote: some View {
-        Card {
-            HStack(alignment: .top, spacing: 12) {
-                Image(systemName: "heart.fill")
-                    .font(.system(size: 15, weight: .semibold))
-                    .frame(width: 34, height: 34)
-                    .background(Palette.lime.opacity(0.45))
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "heart.fill")
+                .font(.system(size: 15, weight: .semibold))
+                .frame(width: 34, height: 34)
+                .background(Palette.lime.opacity(0.45))
+                .foregroundStyle(Palette.ink)
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Free. Every feature.")
+                    .font(.subheadline.weight(.semibold))
                     .foregroundStyle(Palette.ink)
-                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Free. Every feature.")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(Palette.ink)
-                    Text("No ads, no Pro tier, no card. Split is free because the ledger should be.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                Spacer(minLength: 0)
+                Text("No ads, no Pro tier, no card. Split is free because the ledger should be.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
+            Spacer(minLength: 0)
         }
+        .padding(14)
+        .background(Palette.mint.opacity(0.45), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .accessibilityElement(children: .combine)
     }
 
     private func feature(_ symbol: String, _ title: String, _ detail: String) -> some View {

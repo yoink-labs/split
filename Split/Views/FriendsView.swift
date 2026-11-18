@@ -28,25 +28,14 @@ struct FriendsView: View {
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
-                        Spacer(minLength: 8)
-                        Button { showCreate = true } label: {
-                            Image(systemName: "person.badge.plus")
-                                .font(.system(size: 19, weight: .semibold))
-                                .frame(width: 44, height: 44)
-                                .foregroundStyle(Palette.ink)
-                                .background(Palette.raised)
-                                .clipShape(Circle())
-                                .overlay(Circle().stroke(Palette.line, lineWidth: 1))
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("Add friend")
+                        Spacer(minLength: 0)
                     }
                     .listRowInsets(EdgeInsets(top: 10, leading: 12, bottom: 8, trailing: 12))
                     .listRowSeparator(.hidden)
                     .listRowBackground(Color.clear)
                 }
                 Section {
-                    if store.isDemo { Label("Sample people · changes stay here", systemImage: "sparkles").font(.caption).foregroundStyle(.secondary) }
+                    if store.isDemo { Label("Sample people · changes stay here", systemImage: "sparkles").font(.caption).foregroundStyle(.secondary).listRowBackground(Color.clear) }
                 }
                 Section {
                     if rows.isEmpty {
@@ -55,6 +44,7 @@ struct FriendsView: View {
                             message: query.isEmpty ? "Add someone to start a one-to-one tab, or share a group." : "Try a different name.",
                             symbol: "person.2"
                         )
+                        .listRowBackground(Color.clear)
                     }
                     ForEach(rows) { person in
                         Button { selection = person.key } label: {
@@ -67,12 +57,18 @@ struct FriendsView: View {
                     }
                 }
             }
-            .listStyle(.sidebar)
+            .adaptiveSidebarListStyle()
             .scrollContentBackground(.hidden)
             .background(AppBackground())
             .navigationSplitViewColumnWidth(min: 300, ideal: 340, max: 400)
             .navigationTitle("")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { showCreate = true } label: { Label("Add friend", systemImage: "person.badge.plus") }
+                        .accessibilityLabel("Add friend")
+                }
+            }
             .searchable(text: $query, placement: .sidebar, prompt: "Search people")
             .refreshable { await store.sync() }
         } detail: {
@@ -205,9 +201,7 @@ struct FriendPlaceholder: View {
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
                 }
-                Button { showCreate = true } label: { Label("Add a friend", systemImage: "person.badge.plus") }
-                    .buttonStyle(SolidButton())
-                    .frame(maxWidth: 300)
+                SplitActionButton(title: "Add a friend", symbol: "person.badge.plus", prominent: true) { showCreate = true }
             }
             .padding(28)
             .frame(maxWidth: 500)
@@ -265,6 +259,12 @@ struct FriendDetail: View {
         .background(AppBackground())
         .navigationTitle(person.name)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            // The ink header names the person; keep the title for the back menu only.
+            ToolbarItem(placement: .principal) {
+                Color.clear.frame(width: 1, height: 1).accessibilityHidden(true)
+            }
+        }
         .refreshable { await store.sync() }
         .sheet(item: $newExpenseGroup) { group in AddExpenseView(group: group) }
         .sheet(item: $settlingGroup) { group in SettleUpView(group: group) }
@@ -273,46 +273,57 @@ struct FriendDetail: View {
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 14) {
-                Avatar(name: person.name, size: 56)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(person.name).font(.splitDisplay(26)).foregroundStyle(Palette.ink)
-                    Text("\(person.groupIDs.count) shared \(person.groupIDs.count == 1 ? "group" : "groups")")
-                        .font(.caption).foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 16) {
+                HStack(spacing: 14) {
+                    Avatar(name: person.name, size: 52, tint: Palette.lime)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(person.name)
+                            .font(.splitDisplay(24))
+                            .foregroundStyle(Palette.onHero)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityAddTraits(.isHeader)
+                        Text("\(person.groupIDs.count) shared \(person.groupIDs.count == 1 ? "group" : "groups")\(history.isEmpty ? "" : " · \(history.count) \(history.count == 1 ? "entry" : "entries")")")
+                            .font(.caption).foregroundStyle(Palette.lime.opacity(0.62))
+                    }
+                    Spacer(minLength: 0)
                 }
-                Spacer()
-            }
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
                 if person.hasBalance {
-                    ForEach(person.currencies, id: \.self) { currency in
-                        let amount = person.amount(currency)
-                        if amount != 0 {
-                            Text(Money.text(abs(amount), currency))
-                                .font(.splitAmount(22))
-                                .foregroundStyle(amount > 0 ? Palette.positive : Palette.negative)
-                            Text(amount > 0 ? "owes you" : "you owe")
-                                .font(.caption).foregroundStyle(.secondary)
-                                .padding(.trailing, 6)
+                    FlowLayout(spacing: 18, lineSpacing: 8) {
+                        ForEach(person.currencies, id: \.self) { currency in
+                            let amount = person.amount(currency)
+                            if amount != 0 {
+                                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                                    Text(Money.text(abs(amount), currency))
+                                        .font(.splitAmount(person.currencies.count > 1 ? 20 : 26, weight: .bold))
+                                        .foregroundStyle(amount > 0 ? Palette.lime : Color(red: 1, green: 0.72, blue: 0.60))
+                                        .contentTransition(.numericText())
+                                    Text(amount > 0 ? "owes you" : "you owe")
+                                        .font(.caption.weight(.medium)).foregroundStyle(Palette.onHero.opacity(0.65))
+                                }
+                                .accessibilityElement(children: .combine)
+                            }
                         }
                     }
                 } else {
                     Label("Settled up", systemImage: "checkmark.circle.fill")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(Palette.evergreen)
+                        .font(.headline)
+                        .foregroundStyle(Palette.lime)
                 }
-                Spacer()
             }
+            .padding(18)
+            .background(
+                LinearGradient(colors: [Palette.hero, Palette.hero.opacity(0.94)], startPoint: .topLeading, endPoint: .bottomTrailing),
+                in: RoundedRectangle(cornerRadius: 24, style: .continuous)
+            )
+            .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).stroke(Palette.lime.opacity(0.16), lineWidth: 1))
             HStack(spacing: 9) {
                 SplitActionButton(title: "Add expense", symbol: "plus", prominent: true) { addExpense() }
                 SplitActionButton(title: "Settle up", symbol: "arrow.left.arrow.right") { settle() }
                 Spacer(minLength: 0)
             }
         }
-        .padding(18)
-        .background(Palette.card)
-        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).stroke(Palette.line, lineWidth: 1))
     }
 
     private var historySection: some View {

@@ -7,7 +7,6 @@ enum AppTab: Hashable {
 struct MainView: View {
     @EnvironmentObject var session: SessionStore
     @EnvironmentObject var store: ExpenseStore
-    @Environment(\.horizontalSizeClass) private var size
     @State private var tab: AppTab = .home
 
     var body: some View {
@@ -29,7 +28,6 @@ struct MainView: View {
             }
         }
         .tint(Palette.evergreen)
-        .id(size)
         .onChange(of: store.joinedGroupID) { _, id in
             if id != nil { tab = .groups }
         }

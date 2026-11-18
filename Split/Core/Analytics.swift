@@ -115,11 +115,22 @@ enum Analytics {
             let groupEntries = entries.filter { $0.groupID == group.id }
             let meID = me(in: group, userID: userID)?.id
             for currency in currencies(in: group, entries: groupEntries) {
-                let balances = Ledger.balances(groupEntries, currency: currency)
+                // A person's amount is what they owe you (positive) or you owe
+                // them (negative), taken from the suggested payments that involve
+                // you. Their own group balance is not a debt to you: in a group
+                // of four, someone who owes the group may owe somebody else.
+                let values = Ledger.balances(groupEntries, currency: currency)
+                let transfers = group.simplify == false
+                    ? Ledger.directPlan(values, currency: currency)
+                    : Ledger.plan(values, currency: currency)
                 for member in group.members {
                     if member.id == meID { continue }
                     let memberKey = key(member)
-                    let amount = balances[member.id] ?? 0
+                    let amount = transfers.reduce(Int64(0)) { sum, transfer in
+                        if transfer.from == member.id && transfer.to == meID { return sum + transfer.amount }
+                        if transfer.from == meID && transfer.to == member.id { return sum - transfer.amount }
+                        return sum
+                    }
                     var row = people[memberKey] ?? PersonBalance(key: memberKey, name: member.name, memberIDs: [], groupIDs: [], amounts: [:])
                     row.name = member.name
                     if !row.memberIDs.contains(member.id) { row.memberIDs.append(member.id) }

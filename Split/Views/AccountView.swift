@@ -37,9 +37,16 @@ struct AccountView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    profile
-                    freeCard
-                    statsCard
+                    if size == .regular {
+                        HStack(alignment: .top, spacing: 18) {
+                            profile.frame(maxWidth: .infinity)
+                            freeCard.frame(maxWidth: 300, maxHeight: .infinity, alignment: .topLeading)
+                        }
+                        .fixedSize(horizontal: false, vertical: true)
+                    } else {
+                        profile
+                        freeCard
+                    }
                     if size == .regular {
                         HStack(alignment: .top, spacing: 18) {
                             VStack(alignment: .leading, spacing: 18) {
@@ -100,27 +107,40 @@ struct AccountView: View {
     }
 
     private var profile: some View {
-        Card {
+        VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 14) {
-                Avatar(name: session.displayName, size: 64)
-                VStack(alignment: .leading, spacing: 4) {
+                Avatar(name: session.displayName, size: 56, tint: Palette.lime)
+                VStack(alignment: .leading, spacing: 3) {
                     Text(session.displayName)
-                        .font(.splitDisplay(26))
-                        .foregroundStyle(Palette.ink)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.75)
-                    Text(session.isDemo ? "Sample preview" : "Your Yoink account")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                    if session.isDemo {
-                        Label("Sample data · changes stay on this device", systemImage: "sparkles")
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
-                    }
+                        .font(.splitDisplay(24))
+                        .foregroundStyle(Palette.onHero)
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.8)
+                    Text(session.isDemo ? "Sample preview · changes stay on this device" : "Your Yoink account")
+                        .font(.caption)
+                        .foregroundStyle(Palette.lime.opacity(0.62))
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                Spacer(minLength: 8)
+                Spacer(minLength: 0)
             }
+            HStack(spacing: 0) {
+                stat("\(activeGroups.count)", label: "Groups")
+                statDivider
+                stat("\(peopleCount)", label: "People")
+                statDivider
+                stat("\(entryCount)", label: "Entries")
+            }
+            .padding(.vertical, 10)
+            .background(Palette.onHero.opacity(0.06), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("\(activeGroups.count) groups, \(peopleCount) people, \(entryCount) entries")
         }
+        .padding(18)
+        .background(
+            LinearGradient(colors: [Palette.hero, Palette.hero.opacity(0.94)], startPoint: .topLeading, endPoint: .bottomTrailing),
+            in: RoundedRectangle(cornerRadius: 24, style: .continuous)
+        )
+        .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).stroke(Palette.lime.opacity(0.16), lineWidth: 1))
         .accessibilityElement(children: .combine)
     }
 
@@ -148,30 +168,17 @@ struct AccountView: View {
         .accessibilityElement(children: .combine)
     }
 
-    private var statsCard: some View {
-        Card {
-            HStack(spacing: 0) {
-                stat("\(activeGroups.count)", label: "Groups")
-                statDivider
-                stat("\(peopleCount)", label: "People")
-                statDivider
-                stat("\(entryCount)", label: "Entries")
-            }
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel("\(activeGroups.count) groups, \(peopleCount) people, \(entryCount) entries")
-        }
-    }
-
     private func stat(_ value: String, label: String) -> some View {
         VStack(spacing: 3) {
             Text(value)
-                .font(.splitDisplay(24))
-                .foregroundStyle(Palette.ink)
+                .font(.splitDisplay(22))
+                .foregroundStyle(Palette.lime)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
+                .contentTransition(.numericText())
             Text(label)
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Palette.onHero.opacity(0.6))
         }
         .frame(maxWidth: .infinity)
         .accessibilityHidden(true)
@@ -179,8 +186,8 @@ struct AccountView: View {
 
     private var statDivider: some View {
         Rectangle()
-            .fill(Palette.line)
-            .frame(width: 1, height: 36)
+            .fill(Palette.lime.opacity(0.16))
+            .frame(width: 1, height: 32)
             .accessibilityHidden(true)
     }
 

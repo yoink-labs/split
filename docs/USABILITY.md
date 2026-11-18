@@ -82,3 +82,25 @@ The simulator does not render the fold's curved division region, so fold
 avoidance for custom headers is confirmed by layout inspection rather than a
 visible curve. No physical iPhone Duo was available; pose-dependent behaviour is
 reported as simulator-verified, not device-verified.
+
+### Design pass and receipt chips
+
+The final 0.5 pass tightened every screen around the same hierarchy: one ink
+hero, glass secondary surfaces, compact intrinsic actions, and a single
+drifting background. The person-balance sign bug found in the pass is fixed:
+the Home and Friends screens now show what you owe and what you are owed from
+the same perspective as the group totals. A group that turns off "Simplify
+payments" uses the direct transfer plan instead of the minimised plan.
+
+Receipt review was exercised with a synthetic café receipt on the simulator.
+On-device Vision recognized four items, tax and tip, and the new composer chips
+were used to mark who shared an item. Saving the receipt produced three open
+items and an exact split; after saving, the Purchases section showed claimant
+chips and the Claim sheet changed the split by ARS 24,250.00, with the open
+total clearing. The invite screen builds a QR and short-code card; demo mode
+correctly shows the signed-out error instead of generating a fake link.
+
+The system TabView is kept (no `.id(size)` workaround). Folding with an open
+expense sheet preserved the sheet and the selected group in simulator checks;
+the custom navigation shell was discarded because it covered the system
+toolbar. The new suite runs 25 iOS tests, 39 Worker tests and 2 CLI tests.

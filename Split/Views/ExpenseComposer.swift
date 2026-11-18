@@ -39,6 +39,7 @@ struct AddExpenseView: View {
     @State private var addingMember = false
     @State private var error: String?
     @FocusState private var amountFocused: Bool
+    @State private var width: CGFloat = 0
 
     private var current: ExpenseGroup { store.group(group.id) ?? group }
     private var showExchange: Bool { !currency.isEmpty && currency != group.currency }
@@ -145,16 +146,38 @@ struct AddExpenseView: View {
             ScrollView {
                 Group {
                     if initialized {
-                        VStack(spacing: 16) {
-                            amountCard
-                            detailsCard
-                            if showExchange { exchangeCard }
-                            payersCard
-                            if itemized { receiptSplitCard } else { splitCard }
-                            categoryCard
-                            notesCard
-                            receiptCard
-                            if repeatAllowed { repeatCard }
+                        if width >= 820 {
+                            // Wide sheets (iPad, iPhone Duo open): money on the left,
+                            // context and the receipt review on the right.
+                            HStack(alignment: .top, spacing: 16) {
+                                VStack(spacing: 16) {
+                                    amountCard
+                                    detailsCard
+                                    if showExchange { exchangeCard }
+                                    payersCard
+                                    if itemized { receiptSplitCard } else { splitCard }
+                                }
+                                .frame(maxWidth: .infinity)
+                                VStack(spacing: 16) {
+                                    receiptCard
+                                    categoryCard
+                                    notesCard
+                                    if repeatAllowed { repeatCard }
+                                }
+                                .frame(maxWidth: .infinity)
+                            }
+                        } else {
+                            VStack(spacing: 16) {
+                                amountCard
+                                detailsCard
+                                if showExchange { exchangeCard }
+                                payersCard
+                                if itemized { receiptSplitCard } else { splitCard }
+                                categoryCard
+                                notesCard
+                                receiptCard
+                                if repeatAllowed { repeatCard }
+                            }
                         }
                     } else {
                         ProgressView("Preparing expense…")
@@ -163,10 +186,11 @@ struct AddExpenseView: View {
                     }
                 }
                 .padding(16)
-                .frame(maxWidth: 680)
+                .frame(maxWidth: 1080)
                 .frame(maxWidth: .infinity)
             }
             .scrollDismissesKeyboard(.interactively)
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
             .background(AppBackground())
             .navigationTitle(original == nil ? "New expense" : "Edit expense")
             .navigationBarTitleDisplayMode(.inline)
@@ -808,7 +832,12 @@ struct AddExpenseView: View {
                 itemized: $itemized,
                 processing: $reading,
                 existing: original?.receiptIDs?.count ?? 0,
-                mustItemize: original?.bill != nil
+                mustItemize: original?.bill != nil,
+                members: current.members,
+                payerID: previewPayerID,
+                currentUserID: session.userID,
+                currency: currency,
+                chipsEditable: !(original?.bill?.items.contains { !$0.memberIDs.isEmpty } ?? false)
             )
         }
     }
@@ -879,32 +908,40 @@ struct AddExpenseView: View {
                 InlineError(text: error)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
-            Button {
-                Task { await save(another: false) }
-            } label: {
-                HStack(spacing: 8) {
-                    if saving { ProgressView().tint(Palette.paper) }
-                    Text(saving ? "Saving…" : "Save expense")
+            HStack(spacing: 10) {
+                if original == nil {
+                    Button {
+                        Task { await save(another: true) }
+                    } label: {
+                        Label("Save + new", systemImage: "plus")
+                            .labelStyle(.titleAndIcon)
+                            .lineLimit(1)
+                    }
+                    .buttonStyle(GhostButton())
+                    .fixedSize()
+                    .disabled(!initialized || saving || reading || repeatWorking)
+                    .accessibilityIdentifier("save-expense-another")
+                    .accessibilityLabel("Save and add another")
                 }
-            }
-            .buttonStyle(SolidButton())
-            .disabled(!initialized || saving || reading || repeatWorking)
-            .accessibilityIdentifier("save-expense")
-            .accessibilityLabel(saving ? "Saving expense" : "Save expense")
-
-            if original == nil {
                 Button {
-                    Task { await save(another: true) }
+                    Task { await save(another: false) }
                 } label: {
-                    Text("Save and add another")
-                        .font(.subheadline.weight(.semibold))
-                        .frame(maxWidth: .infinity, minHeight: 44)
-                        .contentShape(Rectangle())
+                    HStack(spacing: 8) {
+                        if saving { ProgressView().tint(Palette.paper) }
+                        Text(saving ? "Saving…" : "Save expense")
+                        if !saving, let total = totalAmount {
+                            Text(Money.text(total, currency))
+                                .font(.splitAmount(14, weight: .semibold))
+                                .opacity(0.75)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.7)
+                        }
+                    }
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(Palette.evergreen)
+                .buttonStyle(SolidButton())
                 .disabled(!initialized || saving || reading || repeatWorking)
-                .accessibilityIdentifier("save-expense-another")
+                .accessibilityIdentifier("save-expense")
+                .accessibilityLabel(saving ? "Saving expense" : "Save expense")
             }
         }
         .padding(.horizontal, 16)

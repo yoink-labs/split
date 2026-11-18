@@ -6,7 +6,7 @@ struct PriceField: View {
     @Binding var cents: Int64
     @State private var input = ""
     var body: some View {
-        TextField(title, text: $input)
+        TextField("0.00", text: $input)
             .keyboardType(.decimalPad)
             .multilineTextAlignment(.trailing)
             .frame(maxWidth: 110)
@@ -26,6 +26,16 @@ struct ReceiptComposer: View {
     @Binding var processing: Bool
     var existing: Int
     var mustItemize: Bool
+    /// Group members who can be marked as sharing a line item.
+    var members: [Person] = []
+    /// The member who absorbs unassigned items (the first payer).
+    var payerID: String = ""
+    var currentUserID: String? = nil
+    var currency: String = ""
+    /// A saved receipt with claims is read-only here; claims are adjusted on
+    /// the saved expense so the Worker's stale-claim check cannot reject a
+    /// price or item edit.
+    var chipsEditable: Bool = true
     @State private var picks: [PhotosPickerItem] = []
     @State private var camera = false
     @State private var message: String?
@@ -74,18 +84,26 @@ struct ReceiptComposer: View {
                     HStack(spacing: 8) {
                         ForEach(photos) { photo in
                             if let image = UIImage(data: photo.data) {
-                                VStack(spacing: 4) {
-                                    Image(uiImage: image)
-                                        .resizable()
-                                        .scaledToFill()
-                                        .frame(width: 68, height: 82)
-                                        .clipped()
-                                        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-                                    Button("Remove") { photos.removeAll { $0.id == photo.id } }
-                                        .font(.caption2)
+                                Image(uiImage: image)
+                                    .resizable()
+                                    .scaledToFill()
+                                    .frame(width: 68, height: 82)
+                                    .clipped()
+                                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                    .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Palette.line, lineWidth: 1))
+                                    .overlay(alignment: .topTrailing) {
+                                        Button { photos.removeAll { $0.id == photo.id } } label: {
+                                            Image(systemName: "xmark.circle.fill")
+                                                .font(.system(size: 20))
+                                                .symbolRenderingMode(.palette)
+                                                .foregroundStyle(.white, .black.opacity(0.55))
+                                                .frame(width: 44, height: 44, alignment: .topTrailing)
+                                                .padding(2)
+                                                .contentShape(Rectangle())
+                                        }
                                         .buttonStyle(.plain)
-                                        .foregroundStyle(Palette.negative)
-                                }
+                                        .accessibilityLabel("Remove receipt photo")
+                                    }
                             }
                         }
                     }
@@ -113,55 +131,156 @@ struct ReceiptComposer: View {
             .ignoresSafeArea()
         }
         if itemized {
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 12) {
                 Rectangle().fill(Palette.line).frame(height: 1)
-                Text("Line items").font(.subheadline.weight(.semibold)).foregroundStyle(Palette.ink)
-                ForEach($bill.items) { $item in
-                    HStack(spacing: 8) {
-                        TextField("Item name", text: $item.title)
-                            .textFieldStyle(.plain)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 8)
-                            .background(Palette.raised)
-                            .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-                            .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).stroke(Palette.line, lineWidth: 1))
-                        PriceField(title: "Item price", cents: $item.amount)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 8)
-                            .background(Palette.raised)
-                            .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-                            .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).stroke(Palette.line, lineWidth: 1))
-                        Button { bill.items.removeAll { $0.id == item.id } } label: {
-                            Image(systemName: "minus.circle")
-                                .frame(width: 36, height: 36)
+                HStack(alignment: .firstTextBaseline) {
+                    Text("Who had what").font(.subheadline.weight(.semibold)).foregroundStyle(Palette.ink)
+                    Spacer(minLength: 8)
+                    if chipsEditable, !members.isEmpty, !bill.items.isEmpty {
+                        Menu {
+                            Button("Everyone shares every item") { assignAll(members.map(\.id)) }
+                            Button("Clear all assignments", role: .destructive) { assignAll([]) }
+                        } label: {
+                            Label("Assign", systemImage: "person.2.badge.gearshape")
+                                .font(.caption.weight(.semibold))
+                                .frame(minHeight: 44)
                         }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(Palette.negative)
-                        .accessibilityLabel("Remove " + item.title)
+                        .foregroundStyle(Palette.evergreen)
+                        .accessibilityIdentifier("receipt-assign-menu")
                     }
+                }
+                if !chipsEditable {
+                    Text("Claims have already been made. Adjust who had an item from the saved expense.")
+                        .font(.caption)
+                        .foregroundStyle(Palette.amber)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if !bill.items.isEmpty {
+                    ReceiptSummaryRail(bill: bill, currency: currency)
+                }
+                ForEach($bill.items) { $item in
+                    lineItem($item)
                 }
                 if bill.items.count < 50 {
                     Button { bill.items.append(Purchase(title: "", amount: 0)) } label: {
                         Label("Add line item", systemImage: "plus")
                     }
                     .buttonStyle(GhostButton())
+                    .fixedSize()
                 }
-                HStack {
-                    Text("Tax").font(.subheadline)
-                    Spacer()
-                    PriceField(title: "Tax amount", cents: $bill.tax)
+                HStack(spacing: 10) {
+                    extraField("Tax", cents: $bill.tax)
+                    extraField("Tip", cents: $bill.tip)
                 }
-                HStack {
-                    Text("Tip").font(.subheadline)
-                    Spacer()
-                    PriceField(title: "Tip amount", cents: $bill.tip)
-                }
-                Text("Check the prices before saving. Tax and tip follow each item’s price. People can claim purchases after you save.")
+                Text("Tax and tip follow each item’s price. Tap people to mark who shared an item. Unassigned items stay with \(payerLabel). People can still claim items after you save.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
+    }
+
+    private var payerLabel: String {
+        guard let payer = members.first(where: { $0.id == payerID }) else { return "the payer" }
+        return payer.userID != nil && payer.userID == currentUserID ? "you" : payer.name
+    }
+
+    private func label(_ person: Person) -> String {
+        person.userID != nil && person.userID == currentUserID ? "You" : person.name
+    }
+
+    private func assignAll(_ ids: [String]) {
+        for index in bill.items.indices {
+            bill.items[index].memberIDs = ids
+            bill.items[index].roundingSeats = nil
+        }
+    }
+
+    private func toggle(_ id: String, in item: Binding<Purchase>) {
+        var ids = item.wrappedValue.memberIDs
+        if let index = ids.firstIndex(of: id) { ids.remove(at: index) } else { ids.append(id) }
+        // Keep the group's member order so the chips and saved claims are stable.
+        let order = members.map(\.id)
+        item.wrappedValue.memberIDs = ids.sorted { (order.firstIndex(of: $0) ?? .max) < (order.firstIndex(of: $1) ?? .max) }
+        item.wrappedValue.roundingSeats = nil
+    }
+
+    @ViewBuilder private func lineItem(_ item: Binding<Purchase>) -> some View {
+        let value = item.wrappedValue
+        let assigned = !value.memberIDs.isEmpty
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: assigned ? "checkmark.circle.fill" : "circle.dashed")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(assigned ? Palette.evergreen : Palette.amber)
+                    .frame(width: 22)
+                    .accessibilityHidden(true)
+                TextField("Item name", text: item.title)
+                    .font(.subheadline.weight(.semibold))
+                    .textFieldStyle(.plain)
+                    .frame(minHeight: 36)
+                PriceField(title: "Item price", cents: item.amount)
+                    .font(.splitAmount(15))
+                    .padding(.horizontal, 8)
+                    .frame(minHeight: 36)
+                    .background(Palette.raised, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                Button { bill.items.removeAll { $0.id == value.id } } label: {
+                    Image(systemName: "xmark")
+                        .font(.caption.weight(.bold))
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .accessibilityLabel("Remove " + (value.title.isEmpty ? "line item" : value.title))
+            }
+            if !members.isEmpty {
+                FlowLayout(spacing: 6, lineSpacing: 0) {
+                    ForEach(members) { person in
+                        PersonChip(
+                            name: person.name,
+                            label: label(person),
+                            selected: value.memberIDs.contains(person.id),
+                            compact: true,
+                            action: chipsEditable ? { toggle(person.id, in: item) } : nil
+                        )
+                    }
+                }
+                .padding(.leading, 30)
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel("People sharing \(value.title.isEmpty ? "this item" : value.title)")
+                if !assigned {
+                    Text("Unassigned · goes to \(payerLabel)")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(Palette.amber)
+                        .padding(.leading, 30)
+                } else if value.memberIDs.count > 1 {
+                    Text("Split \(value.memberIDs.count) ways")
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(.secondary)
+                        .padding(.leading, 30)
+                }
+            }
+        }
+        .padding(10)
+        .background(Palette.card.opacity(0.55), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(assigned ? Palette.line : Palette.amber.opacity(0.35), lineWidth: 1)
+        )
+    }
+
+    private func extraField(_ title: String, cents: Binding<Int64>) -> some View {
+        HStack(spacing: 6) {
+            Text(title).font(.subheadline.weight(.medium)).foregroundStyle(.secondary)
+            Spacer(minLength: 4)
+            PriceField(title: "\(title) amount", cents: cents)
+                .font(.splitAmount(15))
+        }
+        .padding(.horizontal, 12)
+        .frame(minHeight: 44)
+        .background(Palette.raised.opacity(0.7), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .frame(maxWidth: .infinity)
     }
 
     private func append(_ data: Data) async throws {

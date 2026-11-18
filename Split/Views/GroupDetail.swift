@@ -72,106 +72,133 @@ struct GroupDetail: View {
         }
         .navigationTitle(group?.name ?? "Group")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            // The ink header names the group; keep the title for the back menu only.
+            ToolbarItem(placement: .principal) {
+                Color.clear.frame(width: 1, height: 1).accessibilityHidden(true)
+            }
+        }
     }
 
     private func header(_ group: ExpenseGroup) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .top, spacing: 12) {
-                Image(systemName: group.symbol)
-                    .font(.system(size: 22, weight: .semibold))
-                    .frame(width: 52, height: 52)
-                    .background(Palette.lime.opacity(0.55))
-                    .foregroundStyle(Palette.ink)
-                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(group.name)
-                        .font(.splitDisplay(25))
-                        .foregroundStyle(Palette.ink)
-                        .lineLimit(2)
-                    Text("\(group.members.count) \(group.members.count == 1 ? "person" : "people") · \(group.kind == "trip" ? "Trip" : group.kind == "home" ? "Home" : "Group") · \(group.currency)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer(minLength: 8)
-                if size == .regular {
-                    HStack(spacing: -8) {
-                        ForEach(group.members.prefix(3)) { member in
-                            Avatar(name: member.userID == store.currentUserID ? "You" : member.name, size: 30)
-                                .overlay(Circle().stroke(Palette.card, lineWidth: 2))
-                        }
-                        if group.members.count > 3 {
-                            Text("+\(group.members.count - 3)")
-                                .font(.caption2.weight(.bold))
-                                .frame(width: 30, height: 30)
-                                .background(Palette.raised)
-                                .foregroundStyle(Palette.ink)
-                                .clipShape(Circle())
-                                .overlay(Circle().stroke(Palette.card, lineWidth: 2))
-                        }
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 16) {
+                HStack(alignment: .center, spacing: 12) {
+                    Image(systemName: group.symbol)
+                        .font(.system(size: 20, weight: .semibold))
+                        .frame(width: 48, height: 48)
+                        .background(Palette.lime, in: RoundedRectangle(cornerRadius: 15, style: .continuous))
+                        .foregroundStyle(Palette.hero)
+                        .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(group.name)
+                            .font(.splitDisplay(24))
+                            .foregroundStyle(Palette.onHero)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityAddTraits(.isHeader)
+                        Text("\(group.members.count) \(group.members.count == 1 ? "person" : "people") · \(group.kind == "trip" ? "Trip" : group.kind == "home" ? "Home" : "Group") · \(group.currency)")
+                            .font(.caption)
+                            .foregroundStyle(Palette.lime.opacity(0.62))
                     }
-                    .accessibilityHidden(true)
-                }
-            }
-            if let summary {
-                ViewThatFits(in: .horizontal) {
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        netSummary(summary)
-                        Spacer()
-                        if size == .regular, let total = summary.totalSpend[group.currency], total > 0 {
-                            VStack(alignment: .trailing, spacing: 1) {
-                                Text("Total spent").font(.caption2).foregroundStyle(.secondary)
-                                Text(Money.text(total, group.currency)).font(.splitAmount(14)).foregroundStyle(Palette.ink)
+                    Spacer(minLength: 8)
+                    if size == .regular {
+                        HStack(spacing: -8) {
+                            ForEach(group.members.prefix(4)) { member in
+                                Avatar(name: member.userID == store.currentUserID ? "You" : member.name, size: 30, tint: Palette.lime)
+                                    .background(Palette.hero, in: Circle())
+                                    .overlay(Circle().stroke(Palette.hero, lineWidth: 2))
+                            }
+                            if group.members.count > 4 {
+                                Text("+\(group.members.count - 4)")
+                                    .font(.caption2.weight(.bold))
+                                    .frame(width: 30, height: 30)
+                                    .background(Palette.onHero.opacity(0.12), in: Circle())
+                                    .foregroundStyle(Palette.onHero)
+                                    .overlay(Circle().stroke(Palette.hero, lineWidth: 2))
                             }
                         }
+                        .accessibilityHidden(true)
                     }
-                    VStack(alignment: .leading, spacing: 2) { netSummary(summary) }
+                }
+                if let summary {
+                    ViewThatFits(in: .horizontal) {
+                        HStack(alignment: .bottom, spacing: 16) {
+                            VStack(alignment: .leading, spacing: 2) { netSummary(summary) }
+                            Spacer(minLength: 8)
+                            totalSpent(summary, group: group, alignment: .trailing)
+                        }
+                        VStack(alignment: .leading, spacing: 10) {
+                            VStack(alignment: .leading, spacing: 2) { netSummary(summary) }
+                            totalSpent(summary, group: group, alignment: .leading)
+                        }
+                    }
                 }
             }
+            .padding(18)
+            .background(
+                LinearGradient(colors: [Palette.hero, Palette.hero.opacity(0.94)], startPoint: .topLeading, endPoint: .bottomTrailing),
+                in: RoundedRectangle(cornerRadius: 24, style: .continuous)
+            )
+            .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).stroke(Palette.lime.opacity(0.16), lineWidth: 1))
+
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 9) {
                     SplitActionButton(title: "Add expense", symbol: "plus", prominent: true) { adding = true }
+                        .accessibilityIdentifier("group-add-expense")
                     SplitActionButton(title: "Settle up", symbol: "arrow.left.arrow.right") { settling = true }
-                    if openCount > 0 {
-                        SplitActionButton(title: openOnly ? "Showing open" : "\(openCount) open", symbol: "basket") { openOnly.toggle() }
-                    }
                     Spacer(minLength: 0)
                 }
-                VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 9) {
                     SplitActionButton(title: "Add expense", symbol: "plus", prominent: true) { adding = true }
-                    HStack(spacing: 9) {
-                        SplitActionButton(title: "Settle up", symbol: "arrow.left.arrow.right") { settling = true }
-                        if openCount > 0 {
-                            SplitActionButton(title: openOnly ? "Showing open" : "\(openCount) open", symbol: "basket") { openOnly.toggle() }
-                        }
-                        Spacer(minLength: 0)
-                    }
+                        .accessibilityIdentifier("group-add-expense")
+                    SplitIconAction(title: "Settle up", symbol: "arrow.left.arrow.right") { settling = true }
+                    Spacer(minLength: 0)
                 }
             }
         }
-        .padding(18)
-        .background(Palette.card)
-        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).stroke(Palette.line, lineWidth: 1))
+    }
+
+    @ViewBuilder private func totalSpent(_ summary: GroupSummary, group: ExpenseGroup, alignment: HorizontalAlignment) -> some View {
+        let totals = summary.currencies.compactMap { currency -> (String, Int64)? in
+            guard let value = summary.totalSpend[currency], value > 0 else { return nil }
+            return (currency, value)
+        }
+        if !totals.isEmpty {
+            VStack(alignment: alignment, spacing: 2) {
+                Text("Total spent").font(.caption2.weight(.semibold)).foregroundStyle(Palette.lime.opacity(0.55))
+                ForEach(totals, id: \.0) { currency, value in
+                    Text(Money.text(value, currency))
+                        .font(.splitAmount(15))
+                        .foregroundStyle(Palette.onHero.opacity(0.9))
+                        .lineLimit(1)
+                }
+            }
+            .accessibilityElement(children: .combine)
+        }
     }
 
     @ViewBuilder private func netSummary(_ summary: GroupSummary) -> some View {
         if summary.isSettled {
             Label("Settled up", systemImage: "checkmark.circle.fill")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(Palette.evergreen)
+                .font(.headline)
+                .foregroundStyle(Palette.lime)
         } else {
             ForEach(summary.currencies, id: \.self) { currency in
                 let amount = summary.mine[currency] ?? 0
                 if amount != 0 {
-                    Text(Money.text(abs(amount), currency))
-                        .font(.splitAmount(22))
-                        .foregroundStyle(amount > 0 ? Palette.positive : Palette.negative)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.7)
-                    Text(amount > 0 ? "you’re owed" : "you owe")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .padding(.trailing, 6)
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text(Money.text(abs(amount), currency))
+                            .font(.splitAmount(summary.currencies.count > 1 ? 20 : 26, weight: .bold))
+                            .foregroundStyle(amount > 0 ? Palette.lime : Color(red: 1, green: 0.72, blue: 0.60))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.7)
+                            .contentTransition(.numericText())
+                        Text(amount > 0 ? "you’re owed" : "you owe")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(Palette.onHero.opacity(0.65))
+                    }
+                    .accessibilityElement(children: .combine)
                 }
             }
         }
@@ -179,7 +206,21 @@ struct GroupDetail: View {
 
     private func expensesSection(_ group: ExpenseGroup) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            SectionHeader(title: "Expenses", subtitle: openOnly ? "Showing open purchases" : "\(entries.count) \(entries.count == 1 ? "entry" : "entries")")
+            HStack(alignment: .center) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Expenses").font(.headline).foregroundStyle(Palette.ink)
+                    Text(openOnly ? "Showing open purchases" : "\(entries.count) \(entries.count == 1 ? "entry" : "entries")")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 8)
+                if openCount > 0 || openOnly {
+                    Chip(title: openOnly ? "Open only" : "\(openCount) open", symbol: "basket", selected: openOnly) {
+                        withAnimation(.snappy) { openOnly.toggle() }
+                    }
+                    .frame(minHeight: 44)
+                    .accessibilityLabel(openOnly ? "Show all expenses" : "Show \(openCount) open purchases")
+                }
+            }
             if months.isEmpty {
                 Card {
                     EmptyPanel(
@@ -274,7 +315,9 @@ struct GroupBalancesView: View {
             let value = values[member.id] ?? 0
             return value == 0 ? nil : (member, value)
         }.sorted { abs($0.1) > abs($1.1) }
-        let transfers = Ledger.plan(values, currency: currency)
+        let transfers = group.simplify == false
+            ? Ledger.directPlan(values, currency: currency)
+            : Ledger.plan(values, currency: currency)
         return VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline) {
                 Text(currency).font(.headline)
@@ -364,7 +407,12 @@ struct SettleUpView: View {
     private var currentGroup: ExpenseGroup { store.group(group.id) ?? group }
     private var currencies: [String] { Analytics.currencies(in: currentGroup, entries: entries) }
     private var suggestions: [Transfer] {
-        currencies.flatMap { Ledger.plan(Ledger.balances(entries, currency: $0), currency: $0) }
+        currencies.flatMap { currency in
+            let values = Ledger.balances(entries, currency: currency)
+            return currentGroup.simplify == false
+                ? Ledger.directPlan(values, currency: currency)
+                : Ledger.plan(values, currency: currency)
+        }
     }
     private var me: Person? { Analytics.me(in: currentGroup, userID: session.userID) }
     private var recipient: Person? { currentGroup.members.first { $0.id == to } }

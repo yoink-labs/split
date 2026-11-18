@@ -51,28 +51,7 @@ struct GroupsView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
-                    Spacer(minLength: 8)
-                    Menu {
-                        Button { showCreate = true } label: { Label("New group", systemImage: "plus") }
-                        Button { joining = true } label: { Label("Join group", systemImage: "link") }
-                        Toggle(isOn: $showArchived) { Label("Show archived", systemImage: "archivebox") }
-                        if let first = summaries.first {
-                            NavigationLink {
-                                InsightsView(group: first.group)
-                            } label: {
-                                Label("Insights", systemImage: "chart.bar.xaxis")
-                            }
-                        }
-                    } label: {
-                        Image(systemName: "ellipsis.circle")
-                            .font(.system(size: 22, weight: .semibold))
-                            .frame(width: 44, height: 44)
-                            .foregroundStyle(Palette.ink)
-                            .background(Palette.raised)
-                            .clipShape(Circle())
-                            .overlay(Circle().stroke(Palette.line, lineWidth: 1))
-                    }
-                    .accessibilityLabel("Group actions")
+                    Spacer(minLength: 0)
                 }
                 .listRowInsets(EdgeInsets(top: 10, leading: 12, bottom: 8, trailing: 12))
                 .listRowSeparator(.hidden)
@@ -82,6 +61,7 @@ struct GroupsView: View {
                 if store.isDemo {
                     Label("Sample groups · changes stay here", systemImage: "sparkles")
                         .font(.caption).foregroundStyle(.secondary)
+                        .listRowBackground(Color.clear)
                 }
                 if store.pending > 0 || !store.online {
                     Label(store.online ? "\(store.pending) changes waiting to sync" : "Offline · new expenses are saved here", systemImage: store.online ? "arrow.triangle.2.circlepath" : "wifi.slash")
@@ -96,7 +76,8 @@ struct GroupsView: View {
             }
             Section {
                 if summaries.isEmpty {
-                    EmptyPanel(title: query.isEmpty ? "No groups yet" : "No matches", message: query.isEmpty ? "Create a trip, a home, or join a group with a code." : "Try a different name.", symbol: "person.3")
+                    EmptyPanel(title: query.isEmpty ? "No groups yet" : "No matches", message: query.isEmpty ? "Create a trip, a home, or join a group with a code." : "Try a different name.", symbol: "person.3", actionTitle: query.isEmpty ? "New group" : nil) { showCreate = true }
+                        .listRowBackground(Color.clear)
                 }
                 ForEach(summaries) { summary in
                     Button { selection = summary.group.id } label: {
@@ -128,12 +109,36 @@ struct GroupsView: View {
                 }
             }
         }
-        .listStyle(.sidebar)
+        .adaptiveSidebarListStyle()
         .scrollContentBackground(.hidden)
         .background(AppBackground())
         .navigationSplitViewColumnWidth(min: 300, ideal: 340, max: 400)
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                Menu {
+                    Toggle(isOn: $showArchived) { Label("Show archived", systemImage: "archivebox") }
+                    if let first = summaries.first {
+                        NavigationLink {
+                            InsightsView(group: first.group)
+                        } label: {
+                            Label("Insights", systemImage: "chart.bar.xaxis")
+                        }
+                    }
+                } label: {
+                    Label("More", systemImage: "ellipsis")
+                }
+                .accessibilityLabel("Group options")
+                Menu {
+                    Button { showCreate = true } label: { Label("New group", systemImage: "plus") }
+                    Button { joining = true } label: { Label("Join with a code", systemImage: "link") }
+                } label: {
+                    Label("Add group", systemImage: "plus")
+                }
+                .accessibilityLabel("Group actions")
+            }
+        }
         .searchable(text: $query, placement: .sidebar, prompt: "Search groups")
         .refreshable { await store.sync() }
     }

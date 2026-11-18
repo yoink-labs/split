@@ -78,6 +78,7 @@ struct EntryDetails: View {
 
     var body: some View {
         NavigationStack {
+            ScrollViewReader { proxy in
             ScrollView {
                 VStack(spacing: 16) {
                     hero
@@ -88,7 +89,12 @@ struct EntryDetails: View {
                     splitCard
                     if let notes = entry.notes, !notes.isEmpty { notesCard(notes) }
                     reactionsCard
-                    Card { CommentsView(entryID: entry.id) }
+                    Card {
+                        CommentsView(entryID: entry.id) {
+                            withAnimation(.snappy) { proxy.scrollTo("comments", anchor: .bottom) }
+                        }
+                    }
+                    .id("comments")
                     if editable { actionsCard }
                     if let error { InlineError(text: error) }
                 }
@@ -97,6 +103,7 @@ struct EntryDetails: View {
                 .frame(maxWidth: .infinity)
             }
             .scrollDismissesKeyboard(.interactively)
+            }
             .background(AppBackground())
             .navigationTitle(entry.kind == "settlement" ? "Payment" : "Expense")
             .navigationBarTitleDisplayMode(.inline)
@@ -390,6 +397,7 @@ struct EntryDetails: View {
         Card {
             VStack(alignment: .leading, spacing: 10) {
                 SectionHeader(title: "This entry", subtitle: "Only the person who recorded it can change it.")
+                FlowLayout(spacing: 8) {
                 if canEdit {
                     Button { editing = true } label: {
                         Label("Edit expense", systemImage: "pencil")
@@ -415,10 +423,9 @@ struct EntryDetails: View {
                                 }
                             }
                         } label: {
-                            HStack {
+                            HStack(spacing: 6) {
                                 Label("Repeat", systemImage: "repeat")
-                                Spacer()
-                                Text((entry.recurrence ?? "off").capitalized)
+                                Text((entry.recurrence ?? "off").capitalized).foregroundStyle(.secondary)
                                 Image(systemName: "chevron.up.chevron.down")
                                     .font(.caption2.weight(.bold))
                             }
@@ -449,6 +456,7 @@ struct EntryDetails: View {
                 .disabled(working)
                 .accessibilityIdentifier("entry-delete")
                 .accessibilityLabel("Delete this entry")
+                }
             }
         }
     }

@@ -40,6 +40,26 @@ final class AnalyticsTests: XCTestCase {
         XCTAssertTrue(totals.owe.allSatisfy { $0.amount > 0 })
         let all = Analytics.allPeople(groups: snapshot.groups, entries: snapshot.entries, userID: userId)
         XCTAssertGreaterThanOrEqual(all.count, people.count)
+        // The people totals must match the sum of your own group balances.
+        let summaries = Analytics.groupSummaries(groups: snapshot.groups, entries: snapshot.entries, userID: userId)
+        var mine: [String: Int64] = [:]
+        for summary in summaries { for (currency, value) in summary.mine { mine[currency, default: 0] += value } }
+        for total in totals.net { XCTAssertEqual(total.amount, mine[total.currency], total.currency) }
+    }
+
+    func testPersonAmountIsWhatTheyOweYou() {
+        let group = ExpenseGroup(id: "g", name: "Trip", kind: "trip", currency: "USD", members: [
+            Person(id: "me", groupID: "g", userID: "u", name: "Me"),
+            Person(id: "h", groupID: "g", name: "Harris"),
+            Person(id: "m", groupID: "g", name: "Maya"),
+        ])
+        // Harris paid 90 for everyone; Maya paid nothing.
+        let entry = LedgerEntry(groupID: "g", title: "Dinner", amount: 9000, currency: "USD", paidBy: "h",
+                                splits: [Portion(memberID: "me", amount: 3000), Portion(memberID: "h", amount: 3000), Portion(memberID: "m", amount: 3000)])
+        let people = Analytics.allPeople(groups: [group], entries: [entry], userID: "u")
+        XCTAssertEqual(people.first { $0.name == "Harris" }?.amount("USD"), -3000)
+        XCTAssertEqual(people.first { $0.name == "Maya" }?.amount("USD"), 0)
+        XCTAssertEqual(Analytics.totals(people).owe, [CurrencyTotal(currency: "USD", amount: 3000)])
     }
 
     func testGroupSummariesAndSearch() {

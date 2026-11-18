@@ -33,7 +33,14 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
   const social=await socialRoute(request,env,userID);
   if(social) return social;
   if(path==='/v1/snapshot' && request.method==='GET') {
-    const groups=(await env.DB.prepare('SELECT g.id,g.name,g.kind,g.currency,g.simplify,g.archived_at AS archivedAt,(SELECT weights FROM group_splits WHERE group_id=g.id) AS weights,g.created_at AS createdAt FROM groups g JOIN members m ON g.id=m.group_id WHERE m.user_id=? ORDER BY g.created_at DESC LIMIT 101').bind(userID).all<{id:string;name:string;kind:string;currency:string;simplify:number;archivedAt:string|null;weights:string|null;createdAt:string}>()).results;
+    type SnapshotGroup={id:string;name:string;kind:string;currency:string;simplify?:number;archivedAt?:string|null;weights:string|null;createdAt:string};
+    let groups: SnapshotGroup[];
+    try {
+      groups=(await env.DB.prepare('SELECT g.id,g.name,g.kind,g.currency,g.simplify,g.archived_at AS archivedAt,(SELECT weights FROM group_splits WHERE group_id=g.id) AS weights,g.created_at AS createdAt FROM groups g JOIN members m ON g.id=m.group_id WHERE m.user_id=? ORDER BY g.created_at DESC LIMIT 101').bind(userID).all<SnapshotGroup>()).results;
+    } catch {
+      // 0013 may not be applied yet; keep the existing ledger readable.
+      groups=(await env.DB.prepare('SELECT g.id,g.name,g.kind,g.currency,1 AS simplify,NULL AS archivedAt,(SELECT weights FROM group_splits WHERE group_id=g.id) AS weights,g.created_at AS createdAt FROM groups g JOIN members m ON g.id=m.group_id WHERE m.user_id=? ORDER BY g.created_at DESC LIMIT 101').bind(userID).all<SnapshotGroup>()).results;
+    }
     if(groups.length>100) throw new HTTPError(409,'This beta supports up to 100 groups.');
     const aliases = new Map((await env.DB.prepare(`SELECT a.member_id, a.canonical_id FROM member_aliases a
       JOIN members m ON m.id=a.canonical_id JOIN members viewer ON viewer.group_id=m.group_id WHERE viewer.user_id=?`)
@@ -47,14 +54,25 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
       }
       return {...g,simplify:Boolean(simplify),archived:Boolean(archivedAt),defaultWeights:defaults,members:visible.filter(m=>m.groupID===g.id && !aliases.has(m.id)).map(({payment,...m})=>({...m,payment:JSON.parse(payment??'{}')}))};
     });
-    const entries=(await env.DB.prepare(`SELECT e.payload,e.author,(SELECT cadence FROM recurring WHERE entry_id=e.id) AS recurrence,
-      (SELECT json_group_array(id) FROM receipts WHERE entry_id=e.id) AS photos,
-      (SELECT count(*) FROM entry_comments c WHERE c.entry_id=e.id) AS commentCount,
-      (SELECT count(*) FROM entry_reactions r WHERE r.entry_id=e.id) AS likeCount,
-      EXISTS(SELECT 1 FROM entry_reactions v WHERE v.entry_id=e.id AND v.user_id=?) AS likedByMe
-      FROM entries e JOIN members m ON m.group_id=e.group_id
-      WHERE m.user_id=? AND e.id NOT IN (SELECT entry_id FROM deleted_entries) ORDER BY e.created_at DESC LIMIT 5001`)
-      .bind(userID,userID).all<{payload:string;author:string;recurrence:string|null;photos:string;commentCount:number;likeCount:number;likedByMe:number}>()).results;
+    type SnapshotEntryRow={payload:string;author:string;recurrence:string|null;photos:string;commentCount:number;likeCount:number;likedByMe:number};
+    let entries: SnapshotEntryRow[];
+    try {
+      entries=(await env.DB.prepare(`SELECT e.payload,e.author,(SELECT cadence FROM recurring WHERE entry_id=e.id) AS recurrence,
+        (SELECT json_group_array(id) FROM receipts WHERE entry_id=e.id) AS photos,
+        (SELECT count(*) FROM entry_comments c WHERE c.entry_id=e.id) AS commentCount,
+        (SELECT count(*) FROM entry_reactions r WHERE r.entry_id=e.id) AS likeCount,
+        EXISTS(SELECT 1 FROM entry_reactions v WHERE v.entry_id=e.id AND v.user_id=?) AS likedByMe
+        FROM entries e JOIN members m ON m.group_id=e.group_id
+        WHERE m.user_id=? AND e.id NOT IN (SELECT entry_id FROM deleted_entries) ORDER BY e.created_at DESC LIMIT 5001`)
+        .bind(userID,userID).all<SnapshotEntryRow>()).results;
+    } catch {
+      entries=(await env.DB.prepare(`SELECT e.payload,e.author,(SELECT cadence FROM recurring WHERE entry_id=e.id) AS recurrence,
+        (SELECT json_group_array(id) FROM receipts WHERE entry_id=e.id) AS photos,
+        0 AS commentCount,0 AS likeCount,0 AS likedByMe
+        FROM entries e JOIN members m ON m.group_id=e.group_id
+        WHERE m.user_id=? AND e.id NOT IN (SELECT entry_id FROM deleted_entries) ORDER BY e.created_at DESC LIMIT 5001`)
+        .bind(userID).all<SnapshotEntryRow>()).results;
+    }
     if(entries.length>5000)throw new HTTPError(409,'This beta supports up to 5,000 entries. Export support is coming.');
     return json({userID,groups:all,entries:entries.map(e=>({...resolveEntry(JSON.parse(e.payload),aliases), recurrence:e.recurrence,receiptIDs:JSON.parse(e.photos),editable:e.author===userID,
       commentCount:Number(e.commentCount),likeCount:Number(e.likeCount),likedByMe:Boolean(e.likedByMe)}))});

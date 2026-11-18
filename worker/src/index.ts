@@ -1,3 +1,4 @@
+import {groupTools,generateRecurring} from './groupTools';
 import { purchaseRoute, attachments } from './receipts';
 import { claimSeat, lookup, refreshIdentity, resolveEntry } from './people';
 import { HTTPError, json, body } from './http';
@@ -6,7 +7,7 @@ import { cliRoute } from './cli/routes';
 import { createRemoteJWKSet, jwtVerify } from 'jose';
 import { currencies, InputError, validID, validateEntry } from './ledger';
 const jwks = createRemoteJWKSet(new URL('https://clerk.yoinklabs.dev/.well-known/jwks.json'));
-interface Member {id:string; groupID:string; userID:string|null; name:string; email?:string; phone?:string}
+interface Member {id:string; groupID:string; userID:string|null; name:string; email?:string; phone?:string;payment?:string}
 function contactInfo(emailInput:unknown,phoneInput:unknown) {
     const email=typeof emailInput==='string' ? emailInput.trim().toLowerCase() : '';
     const phone=typeof phoneInput==='string' ? phoneInput.trim() : '';
@@ -21,20 +22,28 @@ async function members(env:Env,groupID:string):Promise<Member[]> {return (await 
 const hash=async(token:string)=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(token)))).map(x=>x.toString(16).padStart(2,'0')).join('');
 export async function handle(request:Request,env:Env,userID:string):Promise<Response> {
   const url=new URL(request.url), path=url.pathname;
+  const extra=await groupTools(request,env,userID);
+  if(extra) return extra;
   const purchase=await purchaseRoute(request,env,userID);
   if(purchase) return purchase;
   if(path==='/v1/snapshot' && request.method==='GET') {
-    const groups=(await env.DB.prepare('SELECT g.id,g.name,g.kind,g.currency,g.created_at AS createdAt FROM groups g JOIN members m ON g.id=m.group_id WHERE m.user_id=? ORDER BY g.created_at DESC LIMIT 101').bind(userID).all()).results;
+    const groups=(await env.DB.prepare('SELECT g.id,g.name,g.kind,g.currency,(SELECT weights FROM group_splits WHERE group_id=g.id) AS weights,g.created_at AS createdAt FROM groups g JOIN members m ON g.id=m.group_id WHERE m.user_id=? ORDER BY g.created_at DESC LIMIT 101').bind(userID).all()).results;
     if(groups.length>100) throw new HTTPError(409,'This beta supports up to 100 groups.');
     const aliases = new Map((await env.DB.prepare(`SELECT a.member_id, a.canonical_id FROM member_aliases a
       JOIN members m ON m.id=a.canonical_id JOIN members viewer ON viewer.group_id=m.group_id WHERE viewer.user_id=?`)
       .bind(userID).all<{member_id:string;canonical_id:string}>()).results.map(a=>[a.member_id,a.canonical_id]));
-    const visible=(await env.DB.prepare(`SELECT m.id,m.group_id AS groupID,m.user_id AS userID,m.name FROM members m
+    const visible=(await env.DB.prepare(`SELECT m.id,m.group_id AS groupID,m.user_id AS userID,m.name,(SELECT details FROM payment_profiles WHERE member_id=m.id) AS payment FROM members m
       JOIN members viewer ON viewer.group_id=m.group_id WHERE viewer.user_id=? ORDER BY m.rowid`).bind(userID).all<Member>()).results;
-    const all=groups.map(g=>({...g,members:visible.filter(m=>m.groupID===g.id && !aliases.has(m.id))}));
-    const entries=(await env.DB.prepare('SELECT e.payload,e.author,(SELECT json_group_array(id) FROM receipts WHERE entry_id=e.id) AS photos FROM entries e JOIN members m ON m.group_id=e.group_id WHERE m.user_id=? AND e.id NOT IN (SELECT entry_id FROM deleted_entries) ORDER BY e.created_at DESC LIMIT 5001').bind(userID).all<{payload:string;author:string;photos:string}>()).results;
+    const all=groups.map(({weights,...g})=>{
+      const defaults:Record<string,number>={};
+      for(const [id,w] of Object.entries(JSON.parse(String(weights??'{}')) as Record<string,number>)) {
+        const key=aliases.get(id)??id;defaults[key]=(defaults[key]??0)+w;
+      }
+      return {...g,defaultWeights:defaults,members:visible.filter(m=>m.groupID===g.id && !aliases.has(m.id)).map(({payment,...m})=>({...m,payment:JSON.parse(payment??'{}')}))};
+    });
+    const entries=(await env.DB.prepare('SELECT e.payload,e.author,(SELECT cadence FROM recurring WHERE entry_id=e.id) AS recurrence,(SELECT json_group_array(id) FROM receipts WHERE entry_id=e.id) AS photos FROM entries e JOIN members m ON m.group_id=e.group_id WHERE m.user_id=? AND e.id NOT IN (SELECT entry_id FROM deleted_entries) ORDER BY e.created_at DESC LIMIT 5001').bind(userID).all<{payload:string;author:string;recurrence:string|null;photos:string}>()).results;
     if(entries.length>5000)throw new HTTPError(409,'This beta supports up to 5,000 entries. Export support is coming.');
-    return json({groups:all,entries:entries.map(e=>({...resolveEntry(JSON.parse(e.payload),aliases), receiptIDs:JSON.parse(e.photos),editable:e.author===userID}))});
+    return json({groups:all,entries:entries.map(e=>({...resolveEntry(JSON.parse(e.payload),aliases), recurrence:e.recurrence,receiptIDs:JSON.parse(e.photos),editable:e.author===userID}))});
   }
   if(path==='/v1/groups' && request.method==='POST') {
     const b=await body(request);
@@ -64,6 +73,7 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
     await member(env,b.groupID,userID);
     const e=validateEntry(b,(await members(env,b.groupID)).map(m=>m.id)), payload=JSON.stringify(e);
     if(e.bill?.closed) throw new InputError('New receipts start open.');
+    if(e.exchange && e.exchange.target!==await env.DB.prepare('SELECT currency FROM groups WHERE id=?').bind(e.groupID).first('currency')) throw new InputError('Use the group settlement currency.');
     // DO NOTHING is safe under concurrent retries; compare after insertion.
     await env.DB.batch([env.DB.prepare('INSERT INTO entries VALUES (?,?,?,?,?) ON CONFLICT(id) DO NOTHING').bind(e.id,e.groupID,userID,payload,new Date().toISOString()), ...attachments(env.DB,e,userID,payload,b.photos)]);
     const saved=await env.DB.prepare('SELECT author,payload FROM entries WHERE id=?').bind(e.id).first<{author:string;payload:string}>();
@@ -95,6 +105,8 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
       const updated=validateEntry(b.entry,ids,canonical.bill);
       if(updated.id!==revise[1] || updated.groupID!==saved.group_id || updated.createdAt!==old.createdAt || updated.kind!==old.kind)
         throw new InputError('Invalid edit.');
+      if(updated.exchange && updated.exchange.target!==await env.DB.prepare('SELECT currency FROM groups WHERE id=?').bind(saved.group_id).first('currency')) throw new InputError('Use the group settlement currency.');
+      if((updated.exchange || updated.bill) && await env.DB.prepare('SELECT 1 FROM recurring WHERE entry_id=?').bind(updated.id).first()) throw new InputError('Stop the recurring schedule before itemizing or converting this expense.');
       payload=JSON.stringify(updated);
       if(updated.bill?.closed && !old.bill?.closed) throw new InputError('Use the payer close action.');
       if(old.bill?.closed && (updated.paidBy!==canonical.paidBy || JSON.stringify(updated.bill)!==JSON.stringify(canonical.bill))) throw new InputError('This receipt is closed.');
@@ -174,6 +186,7 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
   throw new HTTPError(404,'Not found.');
 }
 export default {
+ async scheduled(event,env) { await generateRecurring(env.DB,new Date(event.scheduledTime).toISOString().slice(0,10)); },
  async fetch(request,env):Promise<Response> {
   try {
    const url=new URL(request.url);

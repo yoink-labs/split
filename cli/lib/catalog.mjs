@@ -9,6 +9,7 @@ const member = id('Member ID from members list.');
 const currency = enumeration('Three-letter currency. Defaults to the group currency.', ['USD','ARS','EUR','GBP','BRL','CAD','AUD','MXN']);
 const list = (description, items) => ({ type: 'array', description, items, minItems: 1, maxItems: 50, uniqueItems: true });
 const allocation = {
+  rate: { ...text('Manual rate, group currency units per one expense currency.'), pattern:'^[0-9]{1,8}([.][0-9]{1,8})?$' },
   category: text('Spending category.',50), title: text('Expense description.'), amount: money, payer: member, currency,
   mode: enumeration('How to allocate the expense.', ['equal','exact','percent','shares']),
   participants: list('Member IDs, in rounding order. Equal split defaults to all members.', member),
@@ -26,6 +27,9 @@ function op(name, description, properties = {}, required = [], readOnly = false,
     annotations: { readOnlyHint: readOnly, destructiveHint: destructive, openWorldHint: false } };
 }
 export const tools = [
+  op('groups_default_split','Set default weights in member order. Supply empty arrays to restore equal splits.',{group,participants:{type:'array',items:member,maxItems:50,uniqueItems:true},weights:{type:'array',items:{type:'integer',minimum:1,maximum:1000},maxItems:50}},['group','participants','weights']),
+  op('members_payment','Replace your own payment profile for a group. Omitted handles are cleared.',{group,paypal:text('PayPal.Me username',40),venmo:text('Venmo username',40),mercado:text('Mercado Pago payment link'),alias:text('Argentine alias or CVU',22)},['group']),
+  op('expenses_repeat','Set or cancel the schedule for your fixed-currency expense.',{group,expense,cadence:enumeration('UTC schedule.',['off','daily','weekly','monthly','yearly'])},['group','expense','cadence']),
   op('groups_breakdown','Spending, categories, months, paid, shares, balances and suggested transfers by currency. Provide a member ID for their expense detail.',{group,member},['group'],true),
   op('items_open','List open purchases with tax and tip included in each gross amount.',{group},['group'],true),
   op('items_claim','Add or remove a claimant on a purchase. Defaults to yourself.',{group,expense,item:id('Receipt item ID.'),member,action:enumeration('Defaults to add.',['add','remove'])},['group','expense','item']),

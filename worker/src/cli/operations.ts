@@ -1,3 +1,4 @@
+import {settlementEntry} from '../exchange';
 import { breakdown, grossItems } from '../items';
 import { tools } from '../../../cli/lib/catalog.mjs';
 import { CfWorkerJsonSchemaValidator } from '@modelcontextprotocol/sdk/validation/cfworker';
@@ -6,14 +7,14 @@ import { HTTPError } from '../http';
 import { allocate, balances, Entry, InputError, simplify, validateEntry } from '../ledger';
 
 interface Args {
-  group: string; expense: string; member: string; name: string; self: string; placeholders?: string[];
+  cadence:string; weights:number[];rate?:string; group: string; expense: string; member: string; name: string; self: string; placeholders?: string[];
   query: string; user?: string; email?: string; phone?: string;
   invite: string; kind?: string; title?: string; amount?: string; payer?: string; currency?: string;
   from: string; to: string; category?:string; item:string; photo:string; action?:string; mode?: 'equal'|'exact'|'percent'|'shares'; participants?: string[]; values?: string[];
   yes?: boolean; revision?: string;
 }
 interface Member { id: string; userID: string|null; name: string }
-interface Group { id: string; name: string; currency: string; members: Member[] }
+interface Group { defaultWeights?:Record<string,number>; id: string; name: string; currency: string; members: Member[] }
 export type LedgerHandler = (r: Request, env: Env, user: string) => Promise<Response>;
 const provider = new CfWorkerJsonSchemaValidator();
 const validators = new Map(tools.map(tool => [tool.name, provider.getValidator<Args>(tool.inputSchema as JsonSchemaType)]));
@@ -27,25 +28,31 @@ function makeExpense(a: Args, group: Group, old?: Entry): Entry {
   const amount = a.amount === undefined ? old?.amount : minor(a.amount);
   if (!amount) throw new InputError('Enter a positive expense amount.');
   let splits = old?.splits;
-  const mode = a.mode ?? old?.splitMode ?? 'equal';
+  const defaults=!old && !a.mode && !a.values && !a.participants ? group.defaultWeights : undefined;
+  const weighted=defaults && Object.keys(defaults).length>0;
+  const mode = a.mode ?? old?.splitMode ?? (weighted ? 'shares' : 'equal');
   if (!old || a.mode || a.participants || a.values || amount !== old.amount) {
-    const participants = a.participants ?? old?.splits.map(s => s.memberID) ?? ids;
+    const participants = a.participants ?? old?.splits.map(s => s.memberID) ?? (weighted ? ids.filter(id=>defaults[id]>0) : ids);
     if (a.values && a.values.length !== participants.length) throw new InputError('Supply one value per participant.');
     let portions: number[];
     if (mode === 'equal') {
       if (a.values) throw new InputError('Equal splits use participants only.');
       portions = allocate(amount, participants.map(() => 1));
     } else {
-      if (!a.values) throw new InputError('Supply one allocation value per participant.');
-      const values = a.values.map(minor);
+      const inputs=a.values ?? (weighted ? participants.map(id=>String(defaults[id])) : undefined);
+      if (!inputs) throw new InputError('Supply one allocation value per participant.');
+      const values = inputs.map(minor);
       if (mode === 'percent' && values.reduce((n,v) => n+v,0) !== 10000) throw new InputError('Percentages must sum to 100.');
       portions = mode === 'exact' ? values : allocate(amount, values);
     }
     splits = participants.map((memberID,i) => ({ memberID, amount: portions[i] }));
   }
+  const createdAt=old?.createdAt ?? timestamp();
+  if(old?.exchange && a.currency && a.currency!==old.currency && !a.rate) throw new InputError('Supply a new rate when changing a converted currency.');
+  const exchange=a.rate ? {target:group.currency,rateE8:Math.round(Number(a.rate)*1e8),source:'Manual',date:createdAt.slice(0,10)} : old?.exchange;
   return validateEntry({ id: old?.id ?? crypto.randomUUID(), groupID: group.id, title: a.title ?? old?.title,
     amount, currency: a.currency ?? old?.currency ?? group.currency, paidBy: a.payer ?? old?.paidBy,
-    bill:old?.bill, category:a.category??old?.category, splits, kind: 'expense', splitMode: mode, createdAt: old?.createdAt ?? timestamp() }, ids,old?.bill);
+    exchange, bill:old?.bill, category:a.category??old?.category, splits, kind: 'expense', splitMode: mode, createdAt }, ids,old?.bill);
 }
 
 export async function operate(name: string, input: unknown, env: Env, user: string, handle: LedgerHandler) {
@@ -88,6 +95,12 @@ export async function operate(name: string, input: unknown, env: Env, user: stri
   const group = snapshot.groups.find(g => g.id === a.group);
   if (!group) throw new HTTPError(404, 'Group not found.');
   const { members } = group;
+  if(name==='groups_default_split') {
+    if(a.weights.length!==a.participants?.length) throw new InputError('Supply one weight per member.');
+    return ledger('/v1/groups/'+group.id+'/default-split',{weights:Object.fromEntries(a.participants.map((id,i)=>[id,a.weights[i]]))});
+  }
+  if(name==='members_payment') return ledger('/v1/groups/'+group.id+'/payment-profile',a);
+  if(name==='expenses_repeat') return ledger('/v1/groups/'+group.id+'/repeat',{entryID:a.expense,cadence:a.cadence});
   if (name === 'groups_show') return group;
   if (name === 'members_list') return members;
   if (name === 'members_add') {
@@ -120,9 +133,9 @@ export async function operate(name: string, input: unknown, env: Env, user: stri
   const entries = snapshot.entries.filter(e => e.groupID === group.id);
   if(name==='groups_breakdown') {
     if(a.member && !members.some(m=>m.id===a.member)) throw new InputError('Choose a group member.');
-    return [...new Set([group.currency,...entries.map(e=>e.currency)])].map(currency=>{
-      const report=breakdown(entries,members,currency);
-      return a.member ? {...report,members:report.members.filter(m=>m.id===a.member),expenses:entries.filter(e=>e.currency===currency && e.kind==='expense' && (e.paidBy===a.member || e.splits.some(s=>s.memberID===a.member)))} : report;
+    return [...new Set([group.currency,...entries.map(e=>e.exchange?.target??e.currency)])].map(currency=>{
+      const report=breakdown(entries.map(settlementEntry),members,currency);
+      return a.member ? {...report,members:report.members.filter(m=>m.id===a.member),expenses:entries.filter(e=>(e.exchange?.target??e.currency)===currency && e.kind==='expense' && (e.paidBy===a.member || e.splits.some(s=>s.memberID===a.member)))} : report;
     });
   }
   if(name==='items_open') return entries.filter(e=>e.bill).flatMap(e=>grossItems(e.bill!).filter(i=>!i.memberIDs.length).map(i=>({expense:e.id,expenseTitle:e.title,currency:e.currency,...i})));
@@ -143,11 +156,11 @@ export async function operate(name: string, input: unknown, env: Env, user: stri
     if(!item) throw new HTTPError(404,'Item not found.');
     const claimant=a.member??members.find(m=>m.userID===user)!.id;
     const ids=a.action==='remove' ? item.memberIDs.filter(id=>id!==claimant) : [...new Set([...item.memberIDs,claimant])];
-    return ledger(path+'/claim',{itemID:item.id,original:item.memberIDs,memberIDs:ids});
+    return ledger(path+'/claim',{itemID:item.id,original:item.memberIDs,memberIDs:ids,mergeEdits:true});
   }
   if (name === 'expenses_list') return entries.filter(e => e.kind === 'expense');
   if (name === 'activity') return entries;
-  if (name === 'balances') return [...new Set([group.currency, ...entries.map(e => e.currency)])].map(currency => {
+  if (name === 'balances') return [...new Set([group.currency, ...entries.map(e=>e.exchange?.target??e.currency)])].map(currency => {
     const net = balances(entries,currency);
     return { currency, net, settlements: simplify(net) };
   });

@@ -1,8 +1,9 @@
+import { Exchange, readExchange, settlementEntry } from './exchange';
 import { Bill, itemSplit, readBill } from './items';
 export const currencies = ['USD', 'ARS', 'EUR', 'GBP', 'BRL', 'CAD', 'AUD', 'MXN'] as const;
 export type SplitMode = 'equal' | 'exact' | 'percent' | 'shares';
 export interface Portion { memberID: string; amount: number }
-export interface Entry { bill?:Bill; category?:string; receiptIDs?:string[]; id: string; groupID: string; title: string; amount: number; currency: string; paidBy: string; splits: Portion[]; kind: 'expense' | 'settlement'; splitMode: SplitMode; createdAt: string }
+export interface Entry { exchange?:Exchange; bill?:Bill; category?:string; receiptIDs?:string[]; id: string; groupID: string; title: string; amount: number; currency: string; paidBy: string; splits: Portion[]; kind: 'expense' | 'settlement'; splitMode: SplitMode; createdAt: string }
 export class InputError extends Error {}
 export function allocate(total: number, weights: number[]): number[] {
   if (!Number.isSafeInteger(total) || total <= 0 || total > 100_000_000_000 || !weights.length || weights.length > 50 || weights.some(w => !Number.isSafeInteger(w) || w < 0 || w > 100_000_000_000) || weights.every(w => w === 0)) throw new InputError('Enter valid amounts and at least one participant.');
@@ -19,6 +20,7 @@ export function validateEntry(value: unknown, memberIDs: string[], previous?:Bil
   if (!Array.isArray(e.splits) || !e.splits.length || e.splits.length > memberIDs.length || new Set(e.splits.map(s=>s.memberID)).size !== e.splits.length || e.splits.some(s=>!memberIDs.includes(s.memberID) || !Number.isSafeInteger(s.amount) || s.amount < 0) || e.splits.reduce((n,s)=>n+s.amount,0) !== e.amount) throw new InputError('The split must match the total exactly.');
   if (e.kind === 'settlement' && (e.splits.length !== 1 || e.splits[0].memberID === e.paidBy)) throw new InputError('Choose two different people.');
   const extras:Partial<Entry>={};
+  if(e.exchange!=null) extras.exchange=readExchange(e);
   if(e.category!=null) {
     if(e.kind!=='expense' || typeof e.category!=='string' || !e.category.trim() || e.category.length>50) throw new InputError('Choose a valid category.');
     extras.category=e.category.trim();
@@ -35,16 +37,10 @@ export function validateEntry(value: unknown, memberIDs: string[], previous?:Bil
 export function validID(id: unknown): id is string { return typeof id === 'string' && /^[a-zA-Z0-9_-]{8,80}$/.test(id); }
 export function balances(entries: Entry[], currency: string): Record<string,number> {
   const result: Record<string,number> = {};
-  for (const e of entries.filter(e=>e.currency===currency)) {
+  for (const e of entries.map(settlementEntry).filter(e=>e.currency===currency)) {
     result[e.paidBy]=(result[e.paidBy]??0)+e.amount;
     for (const s of e.splits) result[s.memberID]=(result[s.memberID]??0)-s.amount;
   }
   return result;
 }
-export function simplify(balance: Record<string,number>): {from:string;to:string;amount:number}[] {
-  const debtors=Object.entries(balance).filter(([,v])=>v<0).map(([id,v])=>({id,left:-v}));
-  const creditors=Object.entries(balance).filter(([,v])=>v>0).map(([id,v])=>({id,left:v}));
-  const result=[];
-  for (const d of debtors) for (const c of creditors) { const amount=Math.min(d.left,c.left); if(amount>0){result.push({from:d.id,to:c.id,amount});d.left-=amount;c.left-=amount;} }
-  return result;
-}
+export { transferPlan as simplify } from './settle';

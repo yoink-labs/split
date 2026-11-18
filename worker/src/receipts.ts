@@ -47,9 +47,16 @@ export async function purchaseRoute(req:Request,env:Env,user:string):Promise<Res
   } else {
     const item=bill.items.find(i=>i.id===b.itemID);
     if(!item) throw new HTTPError(404,'Item not found.');
-    if(!Array.isArray(b.original) || JSON.stringify(item.memberIDs)!==JSON.stringify(b.original)) throw new HTTPError(409,'The claims changed. Refresh and try again.');
-    if(JSON.stringify(item.memberIDs)!==JSON.stringify(ids)) delete item.roundingSeats;
-    item.memberIDs=ids;
+    if(!Array.isArray(b.original)) throw new InputError('Include the original claimants.');
+    let next=ids;
+    if(b.mergeEdits===true) {
+      const original=b.original;
+      if(original.length>50 || original.some(id=>typeof id!=='string' || !seats.some(s=>s.id===id && !s.canonical_id))) throw new InputError('Refresh the group members.');
+      const removed=new Set(original.filter(id=>!ids.includes(id)));
+      next=[...new Set([...item.memberIDs.filter(id=>!removed.has(id)),...ids.filter(id=>!original.includes(id))])];
+    } else if(JSON.stringify(item.memberIDs)!==JSON.stringify(b.original)) throw new HTTPError(409,'The claims changed. Refresh and try again.');
+    if(JSON.stringify(item.memberIDs)!==JSON.stringify(next)) delete item.roundingSeats;
+    item.memberIDs=next;
   }
   entry.splits=itemSplit(bill,entry.paidBy);
   const saved=await env.DB.prepare('UPDATE entries SET payload=? WHERE id=? AND payload=? AND id NOT IN (SELECT entry_id FROM deleted_entries)').bind(JSON.stringify(entry),id,row.payload).run();

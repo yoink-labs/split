@@ -75,3 +75,9 @@ it('retains both historical shares and rounding order when a placeholder merges 
   await call('maya',base+'/claim',{original:[other,payer],itemID:shared.items[0].id,memberIDs:[other]});
   expect((await snapshot()).bill?.items[0].roundingSeats).toBeUndefined();
 });
+it('merges a claimant draft onto a different member’s saved edit',async()=>{
+  await call('alex','/v1/entries',e);
+  await call('maya',base+'/claim',{itemID:'line-toast',original:[],memberIDs:[other],mergeEdits:true});
+  await call('alex',base+'/claim',{itemID:'line-toast',original:[],memberIDs:[guest],mergeEdits:true});
+  expect((await snapshot()).bill?.items[1].memberIDs).toEqual([other,guest]);
+});

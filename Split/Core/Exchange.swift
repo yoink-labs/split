@@ -34,17 +34,10 @@ struct Exchange:Codable,Equatable {
         return output
     }
     static func fetch(base:String,target:String,date:String) async throws -> Exchange {
-        let bcra=[base,target].contains("ARS")
-        var url=URLComponents(string:"https://api.frankfurter.dev/v2/rate/\(base)/\(target)")!
-        url.queryItems=[URLQueryItem(name:"date",value:date)]
-        if bcra { url.queryItems?.append(URLQueryItem(name:"providers",value:"bcra")) }
-        struct Quote:Decodable { var base:String;var quote:String;var date:String;var rate:Decimal }
-        let (data,res)=try await URLSession.shared.data(from:url.url!)
-        guard (res as? HTTPURLResponse)?.statusCode==200,let q=try? JSONDecoder().decode(Quote.self,from:data),
-              q.base==base,q.quote==target,q.date<=date,q.rate>0,q.rate<=10_000_000 else { throw LedgerError.invalid("No published rate for this date. Enter a manual rate.") }
-        var scaled=q.rate*100_000_000, rounded=Decimal()
-        NSDecimalRound(&rounded,&scaled,0,.plain)
-        return Exchange(target:target,rateE8:NSDecimalNumber(decimal:rounded).int64Value,date:q.date,source:bcra ? "BCRA" : "Frankfurter")
+        let (data,res)=try await URLSession.shared.data(from:FXQuote.url(base:base,quote:target,date:date))
+        guard (res as? HTTPURLResponse)?.statusCode==200,
+              let q=FXQuote.decode(data,base:base,quote:target,requested:date,source:FXQuote.source(base:base,quote:target)) else { throw LedgerError.invalid("No published rate for this date. Enter a manual rate.") }
+        return q.exchange
     }
 }
 extension LedgerEntry {

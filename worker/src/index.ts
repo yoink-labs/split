@@ -7,6 +7,7 @@ import { deviceRoute, deviceIdentity, manageDevices } from './cli/devices';
 import { cliRoute } from './cli/routes';
 import { createRemoteJWKSet, jwtVerify } from 'jose';
 import { currencies, InputError, validID, validateEntry } from './ledger';
+import { importSplitwise } from './splitwiseImport';
 const jwks = createRemoteJWKSet(new URL('https://clerk.yoinklabs.dev/.well-known/jwks.json'));
 interface Member {id:string; groupID:string; userID:string|null; name:string; email?:string; phone?:string;payment?:string}
 export function validParty(azp: unknown, webOrigin: string) {
@@ -77,6 +78,7 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
     return json({userID,groups:all,entries:entries.map(e=>({...resolveEntry(JSON.parse(e.payload),aliases), recurrence:e.recurrence,receiptIDs:JSON.parse(e.photos),editable:e.author===userID,
       commentCount:Number(e.commentCount),likeCount:Number(e.likeCount),likedByMe:Boolean(e.likedByMe)}))});
   }
+  if(path==='/v1/import/splitwise' && request.method==='POST') return importSplitwise(env.DB,userID,await body(request,2_000_000));
   if(path==='/v1/groups' && request.method==='POST') {
     const b=await body(request);
     const m=b.members as Member[];

@@ -1,0 +1,13 @@
+Date,Description,Category,Cost,Currency,Harris,Maya,Alex,Sam
+
+2026-11-12,Uber EZE to Palermo,Taxi,30000.00,ARS,22500.00,-7500.00,-7500.00,-7500.00
+2026-11-13,"Parrilla dinner, Don Julio",Dining out,184000.50,ARS,-46000.13,138000.38,-46000.13,-46000.12
+2026-11-14,Hotel deposit,Hotel,480.00,USD,-120.00,-120.00,360.00,-120.00
+2026-11-15,"Wine tasting ""Malbec flight""",Entertainment,52000.00,ARS,-17333.33,-17333.33,0.00,34666.66
+2026-11-16,Groceries for the asado,Groceries,41250.00,ARS,14687.50,-10312.50,5937.50,-10312.50
+2026-11-17,Harris paid Alex,Payment,100.00,USD,100.00,0.00,-100.00,0.00
+2026-11-17,Maya paid Sam,Payment,10000.00,ARS,0.00,10000.00,0.00,-10000.00
+2026-11-18,Souvenirs (Maya only),General,5000.00,ARS,0.00,0.00,0.00,0.00
+
+2026-11-18,Total balance, , ,ARS,-26145.96,112854.55,-47562.63,-39145.96
+2026-11-18,Total balance, , ,USD,-20.00,-120.00,250.00,-110.00

@@ -1,11 +1,12 @@
 // Swift adaptation of ManaWG's expense import parsers. See THIRD_PARTY_NOTICES.md.
 import Foundation
 
-struct CSVShare:Codable { var name:String; var amount:Int64 }
-struct CSVExpense:Codable {
+struct CSVShare:Codable,Equatable { var name:String; var amount:Int64 }
+struct CSVExpense:Codable,Equatable {
     var title:String; var day:String; var payer:String; var amount:Int64
     var currency:String; var category:String?; var payment:Bool; var splits:[CSVShare]
     var sourceID:String?; var sourceGroup:String?; var exchange:Exchange?
+    var payers:[CSVShare]? = nil
 }
 enum LedgerCSV {
     static func table(_ raw:String)throws->[[String]] {

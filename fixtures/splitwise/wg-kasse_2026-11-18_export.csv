@@ -1,0 +1,8 @@
+Datum,Beschreibung,Kategorie,Kosten,Währung,Person1,Person2,Person3
+
+2026-10-26,Wasser,Wasser,3.00,EUR,-3.00,3.00,0.00
+2026-10-31,Schweppes,Allgemein,1.79,EUR,-0.59,-0.60,1.19
+2026-11-02,"Seife, Putzmittel",Reinigung,1.50,EUR,-0.50,1.00,-0.50
+2026-11-04,Person1 zahlte Person2,Zahlung,3.60,EUR,3.60,-3.60,0.00
+
+2026-11-04,Gesamtbilanz, , ,EUR,-0.49,-0.20,0.69

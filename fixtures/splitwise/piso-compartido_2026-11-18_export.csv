@@ -1,0 +1,8 @@
+Date,Description,Category,Cost,Currency,José Núñez,Zoë Brontë,Ana-María,Søren
+
+2026-11-01,"Rent, December",Rent,1800.00,EUR,1350.00,-450.00,-450.00,-450.00
+2026-11-03,"""Big"" shop at Mercadoña, Calle Mayor",Groceries,87.43,EUR,-21.86,65.57,-21.86,-21.85
+2026-11-05,Café ☕ & churros,Dining out,12.50,EUR,-6.25,0.00,6.25,0.00
+2026-11-09,Søren paid José Núñez,Payment,450.00,EUR,-450.00,0.00,0.00,450.00
+
+2026-11-09,Total balance, , ,EUR,871.89,-384.43,-465.61,-21.85

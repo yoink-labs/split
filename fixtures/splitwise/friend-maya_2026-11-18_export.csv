@@ -1,0 +1,9 @@
+Note: does not include group expenses
+
+Date,Description,Category,Cost,Currency,Alex,Maya
+
+2026-11-02,Birthday dinner,Dining out,150.00,USD,-50.00,50.00
+2026-11-06,Alex paid Maya,Payment,50.00,USD,50.00,-50.00
+2026-11-10,Concert tickets,Entertainment,120.00,USD,60.00,-60.00
+
+2026-11-10,Total balance, , ,USD,60.00,-60.00

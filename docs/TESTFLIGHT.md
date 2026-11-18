@@ -8,9 +8,9 @@
 
 ## Distribution
 
-Build 2 (`275fcbca-0bd5-45b6-bdd0-f156d67c6c85`) was submitted at 2026-11-17 22:56 UTC. Apple reports `WAITING_FOR_BETA_REVIEW` externally and `READY_FOR_BETA_TESTING` internally; automatic notifications are enabled. Both groups are confirmed attached.
+Build 2 (`275fcbca-0bd5-45b6-bdd0-f156d67c6c85`) was submitted at 2026-11-17 22:56 UTC. Approval was confirmed at 2026-11-18 23:59 UTC: Apple reports `APPROVED` for beta review and `IN_BETA_TESTING` for both external and internal distribution. Automatic notifications are enabled, and both groups are confirmed attached. The public TestFlight page now identifies Split by Yoink Labs and offers **View in TestFlight**; public enrollment is available. Physical-device installation has not been verified.
 
-Harris approved external beta review on 2026-11-17. Public Beta (`29476472-8917-4cd6-b916-d0d695dcc90e`) has its public link enabled, limit 1,000, and harris@undrift.dev added. Beta description, feedback email, privacy/marketing URLs and review contacts are configured. Public installation requires Apple's beta review approval.
+Harris approved external beta review on 2026-11-17. Public Beta (`29476472-8917-4cd6-b916-d0d695dcc90e`) has its public link enabled, limit 1,000, and harris@undrift.dev added. Beta description, feedback email, privacy/marketing URLs and review contacts are configured. Apple's beta review approval is complete and the public invitation is live.
 
 Yoink Internal (`6949ab6e-b7d2-4245-9a72-8a095832113f`) was created with automatic access to all builds. Builds 1 and 2 processed successfully and are available internally. Apple rejected harris@undrift.dev as an internal tester because it is not an App Store Connect team user. Harris's existing account-holder email differs; no team roles or email addresses were changed. The requested address is added to Public Beta instead.
 

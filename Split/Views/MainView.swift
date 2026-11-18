@@ -112,7 +112,7 @@ struct AccountView: View {
     }
     var body: some View { NavigationStack { Form {
         Section { HStack(spacing:9) { Avatar(name:session.displayName,size:56); VStack(alignment:.leading) { Text(session.displayName).font(.title2.bold()); Text(session.isDemo ? "Sample preview" : "Your Yoink account").foregroundStyle(.secondary) } } }
-        Section("Made for everyone") { Label("Free. Every feature.",systemImage:"heart"); Text("Split is a Yoink Labs app. No subscription, no Pro tier. Just a simpler way to share.").foregroundStyle(.secondary); Link("Visit Yoink Labs",destination:URL(string:"https://yoinklabs.dev")!) }
+        Section("Made for everyone") { Label("Free. Every feature.",systemImage:"heart"); Text("Split is a Yoink Labs app. No subscription, no Pro tier. Just a simpler way to share.").foregroundStyle(.secondary); Link("Visit Yoink Labs",destination:URL(string:"https://yoinklabs.dev")!); Link("Open source on GitHub",destination:URL(string:"https://github.com/yoink-labs/split")!) }
         NavigationLink("Third-party notices") {
             List {
                 ForEach(["manawg","sharetab","spliit","split-pro"],id:\.self) { project in

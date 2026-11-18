@@ -20,7 +20,8 @@ function usage(tool) {
 const help = ['Split by Yoink Labs', 'Usage: split [--json] COMMAND [flags]', '',
   'split login [--name NAME] [--no-open]', 'split auth status', 'split logout [--yes]', 'split mcp',
   ...tools.map(usage), '', 'Use split COMMAND --help for argument details. JSON arrays must be shell-quoted.',
-  'SPLIT_API_URL selects a server. SPLIT_TOKEN supplies a device credential.'].join('\n');
+  'SPLIT_API_URL selects a server. SPLIT_TOKEN supplies a device credential.', '',
+  'Source, issues and contributing: https://github.com/yoink-labs/split'].join('\n');
 const print = (value, compact) => console.log(JSON.stringify(value, null, compact ? undefined : 2));
 
 async function login(c, options) {

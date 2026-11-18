@@ -4,7 +4,7 @@
 
 Split is a free iPhone and iPad app for tracking shared expenses. Start a trip, household, or two-person tab, record who paid, and see who owes whom. Groups can settle in one currency using historical or manual rates. Open source under MIT.
 
-[Join the TestFlight beta](https://testflight.apple.com/join/YX8W6bCx) · [Release and signing](docs/TESTFLIGHT.md) · [Simulator audit](docs/USABILITY.md) · [Screenshot gallery](screenshots/README.md)
+[Join the TestFlight beta](https://testflight.apple.com/join/YX8W6bCx) · [Contribute](#contributing) · [Roadmap](ROADMAP.md) · [Changelog](CHANGELOG.md) · [Release and signing](docs/TESTFLIGHT.md) · [Simulator audit](docs/USABILITY.md) · [Screenshot gallery](screenshots/README.md)
 
 <p>
   <img src="screenshots/light/groups.png" width="225" alt="Split groups in light appearance">
@@ -123,12 +123,39 @@ Remote MCP clients can use Streamable HTTP at `https://split-api.yoinklabs.dev/m
 
 The Worker and its scheduled jobs use the existing free-tier Split D1 database. Frankfurter needs no API key. Source attributions and retained license texts are in [third-party notices](THIRD_PARTY_NOTICES.md).
 
+## Contributing
+
+Split is open source and built in the open. Contributions of every size are welcome: start with a [good first issue](https://github.com/yoink-labs/split/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22good%20first%20issue%22), browse [help wanted](https://github.com/yoink-labs/split/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22help%20wanted%22), check the [roadmap](ROADMAP.md), or ask in [Discussions](https://github.com/yoink-labs/split/discussions). Read [CONTRIBUTING.md](CONTRIBUTING.md) and the [Code of Conduct](CODE_OF_CONDUCT.md) before your first PR.
+
+### Local setup without our keys
+
+You need a Mac with Xcode, [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`) and Node 22. No Yoink Labs account, Cloudflare account or API key is required.
+
+1. **Install and generate the project.**
+   ```sh
+   git clone https://github.com/yoink-labs/split.git && cd split
+   npm ci --prefix worker
+   xcodegen generate
+   ```
+2. **Run the app with sample data.** Open `Split.xcodeproj`, run the **Split** scheme on a simulator and tap **Take a look around**. The sample preview runs entirely on the device with fictional data, so most UI work needs no backend.
+3. **Run the Worker locally.** `wrangler dev` runs the API on your machine against a local D1 database (SQLite under `worker/.wrangler/`, gitignored). Nothing touches production.
+   ```sh
+   cp worker/.env.example worker/.dev.vars   # leave CLERK_SECRET_KEY empty
+   npm run db:local --prefix worker
+   npm run dev --prefix worker -- --local --port 8787
+   ```
+   Add `-splitLocalAPI` to the **Debug simulator** launch arguments to point the app at `localhost:8787`. Without `CLERK_SECRET_KEY` the Worker still verifies sign-ins with Clerk's public keys; only claiming placeholders by verified email is skipped.
+4. **Point the CLI at your Worker.** `SPLIT_API_URL=http://localhost:8787 cli/bin/split --help` (see `cli/.env.example`).
+5. **Run the checks.** These are the same checks CI runs on every pull request, including PRs from forks, without any secrets.
+   ```sh
+   npm run typecheck --prefix worker
+   npm test --prefix worker      # isolated D1 and a stubbed identity service
+   node --test cli/test/*.test.mjs
+   ```
+
+Never commit `.dev.vars`, `.env` files or keys. Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
+
 ## Roadmap
 
-- A richer activity feed, push reminders and monthly statements.
-- A web/PWA companion for joining, claiming and settling without an iPhone.
-- Extend the existing offline queue to edits, claims and other shared changes.
-- A balance dashboard across groups.
-- Search, negative expenses for refunds, and archiving settled groups.
-- Spanish localization.
-- Bank import.
+See [ROADMAP.md](ROADMAP.md) for what is shipped, in progress and planned, and [CHANGELOG.md](CHANGELOG.md) for each release.
+

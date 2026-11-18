@@ -281,17 +281,17 @@ struct BalanceHero: View {
                     .frame(width: 300, alignment: .leading)
                 }
             } else {
-                VStack(alignment: .leading, spacing: 18) {
+                VStack(alignment: .leading, spacing: 14) {
                     netStack(compact: true)
                     HStack(spacing: 0) {
                         heroStat("You owe", value: owe, tint: Color(red: 1, green: 0.74, blue: 0.64))
-                        Rectangle().fill(Palette.lime.opacity(0.18)).frame(width: 1, height: 34)
+                        Rectangle().fill(Palette.lime.opacity(0.18)).frame(width: 1, height: 30)
                         heroStat("You’re owed", value: owed, tint: Palette.lime)
                     }
                 }
             }
         }
-        .padding(size == .regular ? 24 : 20)
+        .padding(size == .regular ? 24 : 18)
         .background(
             LinearGradient(colors: [Palette.hero, Palette.hero.opacity(0.94)], startPoint: .topLeading, endPoint: .bottomTrailing)
         )
@@ -321,15 +321,12 @@ struct BalanceHero: View {
             } else {
                 ForEach(net) { total in
                     Text(Money.text(total.amount, total.currency, signed: true))
-                        .font(.splitDisplay(compact ? (net.count > 1 ? 28 : 34) : (net.count > 1 ? 32 : 40), weight: .bold))
+                        .font(.splitDisplay(compact ? (net.count > 1 ? 25 : 32) : (net.count > 1 ? 30 : 38), weight: .bold))
                         .foregroundStyle(total.amount < 0 ? Color(red: 1, green: 0.72, blue: 0.60) : Palette.lime)
                         .lineLimit(1)
                         .minimumScaleFactor(0.6)
                         .contentTransition(.numericText())
                 }
-            }
-            if compact {
-                Spacer(minLength: 12)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

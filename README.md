@@ -1,6 +1,16 @@
 # Split by Yoink Labs
 
-Split is a free iPhone and iPad app for tracking shared expenses. Start a trip, household, or two-person tab, record who paid, and see who owes whom. Groups can settle in one currency using historical or manual rates.
+Split is a free iPhone, iPad and iPhone Duo app for tracking shared expenses. It
+is a complete, no-paywall take on the Splitwise experience: a dashboard across
+every group, friends and one-to-one tabs, itemized receipts, comments and likes,
+search, charts, multi-currency settlement and a full activity feed. Every
+feature Splitwise puts behind Pro is free here.
+
+The app is native SwiftUI, not an Ionic or web-wrapper project. It builds against
+the iOS 27.2 SDK with an iOS 18 deployment target and adopts the iPhone Duo
+layouts through standard SwiftUI containers: a system tab bar that moves to the
+vertical axis on the inner display, `NavigationSplitView` list/detail screens,
+and adaptive grids that grow from one to two columns with the available width.
 
 [Join the TestFlight beta](https://testflight.apple.com/join/YX8W6bCx) · [Release and signing](docs/TESTFLIGHT.md) · [Simulator audit](docs/USABILITY.md) · [Screenshot gallery](screenshots/README.md)
 
@@ -8,6 +18,29 @@ Split is a free iPhone and iPad app for tracking shared expenses. Start a trip, 
   <img src="screenshots/light/groups.png" width="225" alt="Split groups in light appearance">
   <img src="screenshots/dark/receipt.png" width="225" alt="Receipt photos and open purchases in dark appearance">
 </p>
+
+## What’s new in 0.5
+
+- **Home dashboard.** Per-currency totals for what you owe and are owed, every
+  open balance by person, group cards, recent activity and a shareable balance
+  reminder. Nothing is hidden behind an upgrade screen.
+- **Groups and friends.** Groups use a list/detail layout on iPad and iPhone Duo
+  and collapse to a stack on a folded phone. Friends combine balances from every
+  shared group and can start a one-to-one tab without creating a visible group.
+- **A complete expense composer.** Multiple payers, notes, categories, the date,
+  receipt photos and itemized claims, plus five split modes: equally, exact
+  amounts, percentages, shares and equal-with-adjustments.
+- **Social ledger.** Comments and likes on every expense, with author-only
+  deletion, month-grouped activity, group and type filters.
+- **Free Pro features.** Global search across groups, people and expenses, and
+  Insights charts for month, category and person.
+- **iPhone Duo.** The tab bar moves to the 84 pt vertical bar on the inner
+  display, group and friend lists become two-pane, and the dashboard uses an
+  adaptive grid across folds, Split View and every orientation.
+- **A living surface.** Warm paper and evergreen ink, a slowly drifting aurora
+  background, Liquid Glass cards and controls on iOS 26+, and compact action
+  clusters instead of full-width buttons. Light, dark, Dynamic Type and Reduce
+  Motion are all first-class.
 
 ## Using Split
 
@@ -123,10 +156,8 @@ The Worker and its scheduled jobs use the existing free-tier Split D1 database. 
 
 ## Roadmap
 
-- A richer activity feed, push reminders and monthly statements.
+- Push reminders and monthly statements.
 - A web/PWA companion for joining, claiming and settling without an iPhone.
 - Extend the existing offline queue to edits, claims and other shared changes.
-- A balance dashboard across groups.
-- Search, negative expenses for refunds, and archiving settled groups.
+- Negative expenses for refunds and bank import.
 - Spanish localization.
-- Bank import.

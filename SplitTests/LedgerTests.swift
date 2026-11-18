@@ -15,9 +15,11 @@ final class LedgerTests: XCTestCase {
         let row=try XCTUnwrap(LedgerCSV.parse(csv,defaultCurrency:"ARS").first)
         XCTAssertEqual(row.title,"Lunch, downtown");XCTAssertEqual(row.payer,"Alex");XCTAssertEqual(row.splits.map(\.amount),[700,300])
         XCTAssertThrowsError(try LedgerCSV.parse(csv.replacingOccurrences(of:"-3.00",with:"2.00"),defaultCurrency:"ARS"))
-        let group=Fixtures.snapshot().groups[0]
-        let exported=LedgerCSV.export(Fixtures.snapshot().entries,group:group)
-        XCTAssertEqual(try LedgerCSV.parse(exported,defaultCurrency:"ARS").count,3)
+        let snapshot=Fixtures.snapshot()
+        let group=snapshot.groups[0]
+        let groupEntries=snapshot.entries.filter{$0.groupID==group.id}
+        let exported=LedgerCSV.export(groupEntries,group:group)
+        XCTAssertEqual(try LedgerCSV.parse(exported,defaultCurrency:"ARS").count,groupEntries.count)
         let splid="Date;Description;Amount;Paid by;Participants\n2025-02-01;Ride;10.01;Alex;Alex,Maya"
         XCTAssertEqual(try LedgerCSV.parse(splid,defaultCurrency:"USD")[0].splits.map(\.amount),[501,500])
     }

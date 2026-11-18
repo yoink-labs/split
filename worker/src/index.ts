@@ -1,5 +1,6 @@
 import {groupTools,generateRecurring} from './groupTools';
 import { purchaseRoute, attachments } from './receipts';
+import { socialRoute } from './social';
 import { claimSeat, lookup, refreshIdentity, resolveEntry } from './people';
 import { HTTPError, json, body } from './http';
 import { deviceRoute, deviceIdentity, manageDevices } from './cli/devices';
@@ -26,24 +27,34 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
   if(extra) return extra;
   const purchase=await purchaseRoute(request,env,userID);
   if(purchase) return purchase;
+  const social=await socialRoute(request,env,userID);
+  if(social) return social;
   if(path==='/v1/snapshot' && request.method==='GET') {
-    const groups=(await env.DB.prepare('SELECT g.id,g.name,g.kind,g.currency,(SELECT weights FROM group_splits WHERE group_id=g.id) AS weights,g.created_at AS createdAt FROM groups g JOIN members m ON g.id=m.group_id WHERE m.user_id=? ORDER BY g.created_at DESC LIMIT 101').bind(userID).all()).results;
+    const groups=(await env.DB.prepare('SELECT g.id,g.name,g.kind,g.currency,g.simplify,g.archived_at AS archivedAt,(SELECT weights FROM group_splits WHERE group_id=g.id) AS weights,g.created_at AS createdAt FROM groups g JOIN members m ON g.id=m.group_id WHERE m.user_id=? ORDER BY g.created_at DESC LIMIT 101').bind(userID).all<{id:string;name:string;kind:string;currency:string;simplify:number;archivedAt:string|null;weights:string|null;createdAt:string}>()).results;
     if(groups.length>100) throw new HTTPError(409,'This beta supports up to 100 groups.');
     const aliases = new Map((await env.DB.prepare(`SELECT a.member_id, a.canonical_id FROM member_aliases a
       JOIN members m ON m.id=a.canonical_id JOIN members viewer ON viewer.group_id=m.group_id WHERE viewer.user_id=?`)
       .bind(userID).all<{member_id:string;canonical_id:string}>()).results.map(a=>[a.member_id,a.canonical_id]));
     const visible=(await env.DB.prepare(`SELECT m.id,m.group_id AS groupID,m.user_id AS userID,m.name,(SELECT details FROM payment_profiles WHERE member_id=m.id) AS payment FROM members m
       JOIN members viewer ON viewer.group_id=m.group_id WHERE viewer.user_id=? ORDER BY m.rowid`).bind(userID).all<Member>()).results;
-    const all=groups.map(({weights,...g})=>{
+    const all=groups.map(({weights,simplify,archivedAt,...g})=>{
       const defaults:Record<string,number>={};
       for(const [id,w] of Object.entries(JSON.parse(String(weights??'{}')) as Record<string,number>)) {
         const key=aliases.get(id)??id;defaults[key]=(defaults[key]??0)+w;
       }
-      return {...g,defaultWeights:defaults,members:visible.filter(m=>m.groupID===g.id && !aliases.has(m.id)).map(({payment,...m})=>({...m,payment:JSON.parse(payment??'{}')}))};
+      return {...g,simplify:Boolean(simplify),archived:Boolean(archivedAt),defaultWeights:defaults,members:visible.filter(m=>m.groupID===g.id && !aliases.has(m.id)).map(({payment,...m})=>({...m,payment:JSON.parse(payment??'{}')}))};
     });
-    const entries=(await env.DB.prepare('SELECT e.payload,e.author,(SELECT cadence FROM recurring WHERE entry_id=e.id) AS recurrence,(SELECT json_group_array(id) FROM receipts WHERE entry_id=e.id) AS photos FROM entries e JOIN members m ON m.group_id=e.group_id WHERE m.user_id=? AND e.id NOT IN (SELECT entry_id FROM deleted_entries) ORDER BY e.created_at DESC LIMIT 5001').bind(userID).all<{payload:string;author:string;recurrence:string|null;photos:string}>()).results;
+    const entries=(await env.DB.prepare(`SELECT e.payload,e.author,(SELECT cadence FROM recurring WHERE entry_id=e.id) AS recurrence,
+      (SELECT json_group_array(id) FROM receipts WHERE entry_id=e.id) AS photos,
+      (SELECT count(*) FROM entry_comments c WHERE c.entry_id=e.id) AS commentCount,
+      (SELECT count(*) FROM entry_reactions r WHERE r.entry_id=e.id) AS likeCount,
+      EXISTS(SELECT 1 FROM entry_reactions v WHERE v.entry_id=e.id AND v.user_id=?) AS likedByMe
+      FROM entries e JOIN members m ON m.group_id=e.group_id
+      WHERE m.user_id=? AND e.id NOT IN (SELECT entry_id FROM deleted_entries) ORDER BY e.created_at DESC LIMIT 5001`)
+      .bind(userID,userID).all<{payload:string;author:string;recurrence:string|null;photos:string;commentCount:number;likeCount:number;likedByMe:number}>()).results;
     if(entries.length>5000)throw new HTTPError(409,'This beta supports up to 5,000 entries. Export support is coming.');
-    return json({groups:all,entries:entries.map(e=>({...resolveEntry(JSON.parse(e.payload),aliases), recurrence:e.recurrence,receiptIDs:JSON.parse(e.photos),editable:e.author===userID}))});
+    return json({groups:all,entries:entries.map(e=>({...resolveEntry(JSON.parse(e.payload),aliases), recurrence:e.recurrence,receiptIDs:JSON.parse(e.photos),editable:e.author===userID,
+      commentCount:Number(e.commentCount),likeCount:Number(e.likeCount),likedByMe:Boolean(e.likedByMe)}))});
   }
   if(path==='/v1/groups' && request.method==='POST') {
     const b=await body(request);
@@ -52,7 +63,7 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
     const existing=await env.DB.prepare('SELECT creator FROM groups WHERE id=?').bind(b.id).first<{creator:string}>();
     if(existing){ if(existing.creator!==userID)throw new HTTPError(409,'Group ID already used.'); return json({ok:true}); }
     const count=await env.DB.prepare('SELECT count(*) AS n FROM members WHERE user_id=?').bind(userID).first<{n:number}>();if((count?.n??0)>=100)throw new HTTPError(409,'Group limit reached.');
-    const inserts=[env.DB.prepare('INSERT INTO groups VALUES (?,?,?,?,?,?)').bind(b.id,b.name.trim(),b.kind,b.currency,userID,new Date().toISOString())];
+    const inserts=[env.DB.prepare('INSERT INTO groups(id,name,kind,currency,creator,created_at) VALUES (?,?,?,?,?,?)').bind(b.id,b.name.trim(),b.kind,b.currency,userID,new Date().toISOString())];
     for (const person of m) {
       let name=person.name.trim();
       if (person.userID && person.userID!==userID) {

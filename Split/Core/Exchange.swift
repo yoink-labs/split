@@ -26,6 +26,10 @@ struct Exchange:Codable,Equatable {
         output.amount=NSDecimalNumber(decimal:rounded).int64Value
         let shares=try Ledger.allocate(total:output.amount,weights:e.splits.map(\.amount))
         output.splits=zip(e.splits,shares).map{Portion(memberID:$0.memberID,amount:$1)}
+        if let payers=e.payers {
+            let converted=try Ledger.allocate(total:output.amount,weights:payers.map(\.amount))
+            output.payers=zip(payers,converted).map{Payer(memberID:$0.memberID,amount:$1)}
+        }
         output.exchange=nil;output.currency=target
         return output
     }

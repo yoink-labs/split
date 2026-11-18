@@ -32,6 +32,8 @@ struct DeviceAccessView: View {
 
     var body: some View {
         Form {
+            // Device access is a live-account screen; the background matches the rest of the app.
+
             Section("Connect a computer") {
                 Text("Run split login on your computer and enter its code here.")
                 TextField("Device code", text: $code)
@@ -73,6 +75,8 @@ struct DeviceAccessView: View {
                 }
             }
         }
+        .scrollContentBackground(.hidden)
+        .background(AppBackground())
         .disabled(busy)
         .navigationTitle("Connected computers")
         .task { do { try await refresh() } catch { message = error.localizedDescription } }

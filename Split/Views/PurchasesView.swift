@@ -7,29 +7,77 @@ struct PurchasesSection:View {
     @EnvironmentObject var store:ExpenseStore
     @EnvironmentObject var session:SessionStore
     var assign:(Purchase?)->Void
-    var body: some View {
-        Section {
-            ForEach(bill.items) { item in
-                Button { assign(item) } label: {
-                    LabeledContent {
-                        Text(Money.text(item.amount,entry.currency)).monospacedDigit()
-                    } label: {
-                        Text(item.title).foregroundStyle(.primary)
-                        Text(item.memberIDs.isEmpty ? "Open · claim purchase" : item.memberIDs.compactMap { id in group.members.first{$0.id==id}?.name }.joined(separator:", "))
-                            .font(.caption).foregroundStyle(item.memberIDs.isEmpty ? Palette.green : .secondary)
-                    }
-                }.disabled(bill.closed)
-            }
-            if bill.tax>0 { LabeledContent("Tax",value:Money.text(bill.tax,entry.currency)) }
-            if bill.tip>0 { LabeledContent("Tip",value:Money.text(bill.tip,entry.currency)) }
-            if bill.openCount>0 { LabeledContent("Open total",value:Money.text(bill.openTotal,entry.currency)).fontWeight(.semibold) }
-            let payer=group.members.first { $0.id==entry.paidBy }
-            if !bill.closed && (payer?.userID==session.userID || (payer?.userID==nil && (store.isDemo || entry.editable==true))) {
-                Button("Close receipt") { assign(nil) }
-            }
-        } header: { Text(bill.closed ? "Purchases · closed" : "Purchases") }
-        footer: { if bill.openCount>0 { Text("Open purchases stay with the payer until claimed. The open total includes proportional tax and tip.") } }
 
+    private func claimers(_ item: Purchase) -> String {
+        item.memberIDs.compactMap { id in group.members.first { $0.id == id }?.name }.joined(separator: ", ")
+    }
+    private var canClose: Bool {
+        let payer = group.members.first { $0.id == entry.paidBy }
+        return !bill.closed && (payer?.userID == session.userID || (payer?.userID == nil && (store.isDemo || entry.editable == true)))
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionHeader(title: bill.closed ? "Purchases · closed" : "Purchases", subtitle: bill.closed ? "Claims are locked" : "Tap a line to claim it")
+            VStack(spacing: 0) {
+                ForEach(Array(bill.items.enumerated()), id: \.element.id) { index, item in
+                    Button { assign(item) } label: {
+                        HStack(spacing: 10) {
+                            Image(systemName: item.memberIDs.isEmpty ? "circle.dashed" : "checkmark.circle.fill")
+                                .font(.system(size: 18, weight: .semibold))
+                                .foregroundStyle(item.memberIDs.isEmpty ? Palette.amber : Palette.evergreen)
+                                .frame(width: 24)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(item.title)
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(Palette.ink)
+                                Text(item.memberIDs.isEmpty ? "Open · claim purchase" : claimers(item))
+                                    .font(.caption)
+                                    .foregroundStyle(item.memberIDs.isEmpty ? Palette.amber : .secondary)
+                                    .lineLimit(2)
+                            }
+                            Spacer(minLength: 8)
+                            Text(Money.text(item.amount, entry.currency))
+                                .font(.splitAmount(14))
+                                .foregroundStyle(Palette.ink)
+                            Image(systemName: "chevron.right")
+                                .font(.caption2.weight(.bold))
+                                .foregroundStyle(.tertiary)
+                        }
+                        .frame(minHeight: 48)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(bill.closed)
+                    if index < bill.items.count - 1 { Divider().overlay(Palette.line).padding(.leading, 34) }
+                }
+            }
+            if bill.tax > 0 || bill.tip > 0 || bill.openCount > 0 {
+                Rectangle().fill(Palette.line).frame(height: 1)
+            }
+            if bill.tax > 0 { totalRow("Tax", value: Money.text(bill.tax, entry.currency)) }
+            if bill.tip > 0 { totalRow("Tip", value: Money.text(bill.tip, entry.currency)) }
+            if bill.openCount > 0 {
+                totalRow("Open total", value: Money.text(bill.openTotal, entry.currency), strong: true)
+                Text("Open purchases stay with the payer until claimed. The open total includes proportional tax and tip.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if canClose {
+                Button { assign(nil) } label: {
+                    Label("Close receipt", systemImage: "lock")
+                }
+                .buttonStyle(GhostButton())
+            }
+        }
+    }
+    private func totalRow(_ title: String, value: String, strong: Bool = false) -> some View {
+        HStack {
+            Text(title).font(.subheadline.weight(strong ? .bold : .medium)).foregroundStyle(strong ? Palette.ink : .secondary)
+            Spacer()
+            Text(value).font(.splitAmount(14, weight: strong ? .bold : .medium)).foregroundStyle(Palette.ink)
+        }
     }
 }
 struct ClaimSheet:View {
@@ -74,25 +122,40 @@ struct ReceiptGallery:View {
     @State private var failed=Set<String>()
     @State private var attempt=0
     var body:some View {
-        Section("Receipts") {
-            ScrollView(.horizontal) { HStack {
-                ForEach(Array(ids.enumerated()),id:\.element) { index,id in
-                    Button { if loaded[id] != nil { viewPhoto(ReceiptPresentation(images:ids.compactMap { loaded[$0] },index:ids.prefix(index).filter { loaded[$0] != nil }.count)) } else { attempt+=1 } } label: {
-                        Group {
-                            if let image=loaded[id] { Image(uiImage:image).resizable().scaledToFill() }
-                            else if failed.contains(id) { Image(systemName:"arrow.clockwise") }
-                            else { ProgressView() }
-                        }.frame(width:68,height:82).clipped().clipShape(RoundedRectangle(cornerRadius:7))
-                    }.buttonStyle(.plain).accessibilityLabel("View receipt photo \(index+1)").task(id:attempt) {
-                        guard loaded[id]==nil else { return }
-                        do {
-                            let data=try await store.image(entry:entry,id:id)
-                            guard let image=UIImage(data:data) else { throw LedgerError.invalid("Invalid photo.") }
-                            loaded[id]=image
-                        } catch { failed.insert(id) }
+        VStack(alignment: .leading, spacing: 10) {
+            SectionHeader(title: "Receipts", subtitle: "\(ids.count) \(ids.count == 1 ? "photo" : "photos")")
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(Array(ids.enumerated()), id: \.element) { index, id in
+                        Button {
+                            if loaded[id] != nil {
+                                viewPhoto(ReceiptPresentation(images: ids.compactMap { loaded[$0] }, index: ids.prefix(index).filter { loaded[$0] != nil }.count))
+                            } else { attempt += 1 }
+                        } label: {
+                            Group {
+                                if let image = loaded[id] { Image(uiImage: image).resizable().scaledToFill() }
+                                else if failed.contains(id) { Image(systemName: "arrow.clockwise") }
+                                else { ProgressView() }
+                            }
+                            .frame(width: 72, height: 88)
+                            .background(Palette.raised)
+                            .clipped()
+                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Palette.line, lineWidth: 1))
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("View receipt photo \(index + 1)")
+                        .task(id: attempt) {
+                            guard loaded[id] == nil else { return }
+                            do {
+                                let data = try await store.image(entry: entry, id: id)
+                                guard let image = UIImage(data: data) else { throw LedgerError.invalid("Invalid photo.") }
+                                loaded[id] = image
+                            } catch { failed.insert(id) }
+                        }
                     }
                 }
-            } }
+            }
         }
     }
 }

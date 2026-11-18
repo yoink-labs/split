@@ -50,9 +50,12 @@ function makeExpense(a: Args, group: Group, old?: Entry): Entry {
   const createdAt=old?.createdAt ?? timestamp();
   if(old?.exchange && a.currency && a.currency!==old.currency && !a.rate) throw new InputError('Supply a new rate when changing a converted currency.');
   const exchange=a.rate ? {target:group.currency,rateE8:Math.round(Number(a.rate)*1e8),source:'Manual',date:createdAt.slice(0,10)} : old?.exchange;
+  const payers=old?.payers?.length ? (amount===old.amount ? old.payers
+    : allocate(amount,old.payers.map(p=>p.amount)).map((value,i)=>({memberID:old.payers![i].memberID,amount:value}))) : undefined;
   return validateEntry({ id: old?.id ?? crypto.randomUUID(), groupID: group.id, title: a.title ?? old?.title,
     amount, currency: a.currency ?? old?.currency ?? group.currency, paidBy: a.payer ?? old?.paidBy,
-    exchange, bill:old?.bill, category:a.category??old?.category, splits, kind: 'expense', splitMode: mode, createdAt }, ids,old?.bill);
+    exchange, bill:old?.bill, category:a.category??old?.category, splits, kind: 'expense', splitMode: mode, createdAt,
+    payers, notes: old?.notes }, ids,old?.bill);
 }
 
 export async function operate(name: string, input: unknown, env: Env, user: string, handle: LedgerHandler) {

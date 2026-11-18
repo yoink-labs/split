@@ -1,4 +1,4 @@
-import { allocate, Entry, InputError, validID, balances, simplify } from './ledger';
+import { allocate, Entry, InputError, validID, balances, entryPayers, simplify } from './ledger';
 
 export interface Item { id:string; title:string; amount:number; memberIDs:string[]; roundingSeats?:string[] }
 export interface Bill { items:Item[]; tax:number; tip:number; closed:boolean }
@@ -42,7 +42,7 @@ export function breakdown(entries:Entry[],members:{id:string;name:string}[],curr
     months[month]=(months[month]??0)+e.amount;
   }
   return {currency,total:expenses.reduce((sum,e)=>sum+e.amount,0),categories,months,settlements:simplify(net),
-    members:members.map(m=>({...m,paid:expenses.reduce((s,e)=>s+(e.paidBy===m.id?e.amount:0),0),
+    members:members.map(m=>({...m,paid:expenses.reduce((s,e)=>s+entryPayers(e).filter(p=>p.memberID===m.id).reduce((n,p)=>n+p.amount,0),0),
       share:expenses.reduce((s,e)=>s+(e.splits.find(p=>p.memberID===m.id)?.amount??0),0),net:net[m.id]??0,
-      expenses:expenses.filter(e=>e.paidBy===m.id || e.splits.some(p=>p.memberID===m.id)).map(e=>e.id)}))};
+      expenses:expenses.filter(e=>entryPayers(e).some(p=>p.memberID===m.id) || e.splits.some(p=>p.memberID===m.id)).map(e=>e.id)}))};
 }

@@ -24,6 +24,12 @@ export function resolveEntry(entry: Entry, aliases: Map<string,string>): Entry {
     const id = aliases.get(split.memberID) ?? split.memberID;
     amounts.set(id, (amounts.get(id) ?? 0) + split.amount);
   }
+  const payerAmounts = new Map<string, number>();
+  for (const payer of entry.payers ?? []) {
+    const id = aliases.get(payer.memberID) ?? payer.memberID;
+    payerAmounts.set(id, (payerAmounts.get(id) ?? 0) + payer.amount);
+  }
+  const payers = entry.payers?.length ? Array.from(payerAmounts, ([memberID, amount]) => ({memberID, amount})) : undefined;
   if(entry.bill) {
     const bill={...entry.bill,items:entry.bill.items.map(i=>{
       const seats=(i.roundingSeats??i.memberIDs).map(id=>aliases.get(id)??id);
@@ -31,9 +37,9 @@ export function resolveEntry(entry: Entry, aliases: Map<string,string>): Entry {
       return {...i,memberIDs,...(seats.length>memberIDs.length?{roundingSeats:seats}:{})};
     })};
     const paidBy=aliases.get(entry.paidBy)??entry.paidBy;
-    return {...entry,bill,paidBy,splits:itemSplit(bill,paidBy)};
+    return {...entry,bill,paidBy,splits:itemSplit(bill,paidBy),...(payers?{payers}:{})};
   }
-  return {...entry, paidBy: aliases.get(entry.paidBy) ?? entry.paidBy,
+  return {...entry, paidBy: aliases.get(entry.paidBy) ?? entry.paidBy, ...(payers?{payers}:{}),
     splits: Array.from(amounts, ([memberID, amount]) => ({memberID, amount}))};
 }
 

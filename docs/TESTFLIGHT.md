@@ -1,6 +1,6 @@
 # TestFlight
 
-Split is listed under Undrift LLC in App Store Connect. The bundle is `com.yoinklabs.split`, team `64PUT29XZ8`, App Store Connect app `6836072005`. The 0.4 release uses build 5. It follows the receipts and insights release, 0.3.0 (4), with historical exchange rates, group defaults, payment links, recurring expenses and CSV transfers.
+Split is listed under Undrift LLC in App Store Connect. The bundle is `com.yoinklabs.split`, team `64PUT29XZ8`, App Store Connect app `6836072005`. The 0.5 release uses build 6. It follows the receipts and insights release, 0.3.0 (4), and adds the Splitwise-parity dashboard, friends, comments and likes, search, insights charts, Liquid Glass surfaces and the iPhone Duo list/detail layouts.
 
 [Public Beta](https://testflight.apple.com/join/YX8W6bCx) · [Live build and beta review status](https://appstoreconnect.apple.com/apps/6836072005/testflight/ios)
 
@@ -25,7 +25,7 @@ The packaging script verifies the profile’s bundle ID, team and expiry, applie
 Upload after the release PR lands and verify the build’s processing state. The distribution groups are Yoink Internal (`6949ab6e-b7d2-4245-9a72-8a095832113f`) and Public Beta (`29476472-8917-4cd6-b916-d0d695dcc90e`).
 
 ```sh
-asc --profile default publish testflight --app 6836072005 --ipa .ade/build/Split-0.4.0-5.ipa --group 29476472-8917-4cd6-b916-d0d695dcc90e --test-notes "Try group settings, CSV import and export, recurring expenses and a historical or manual ARS exchange rate." --locale en-US --wait --submit --confirm
+asc --profile default publish testflight --app 6836072005 --ipa .ade/build/Split-0.5.0-6.ipa --group 29476472-8917-4cd6-b916-d0d695dcc90e --test-notes "Try the new dashboard, friends, comments and likes, search, insights, Liquid Glass, and the iPhone Duo open and closed layouts." --locale en-US --wait --submit --confirm
 ```
 
 Confirm both group relationships, the internal testing state and the external review submission in App Store Connect.

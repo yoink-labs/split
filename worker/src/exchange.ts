@@ -12,5 +12,7 @@ function convertedAmount(amount:number,x:Exchange) { return Number((BigInt(amoun
 export function settlementEntry(e:Entry):Entry {
   if(!e.exchange) return e;
   const amount=convertedAmount(e.amount,e.exchange), shares=allocate(amount,e.splits.map(s=>s.amount));
-  return {...e,exchange:undefined,amount,currency:e.exchange.target,splits:e.splits.map((s,i)=>({...s,amount:shares[i]}))};
+  const payers=e.payers?.length ? allocate(amount,e.payers.map(p=>p.amount)) : undefined;
+  return {...e,exchange:undefined,amount,currency:e.exchange.target,splits:e.splits.map((s,i)=>({...s,amount:shares[i]})),
+    ...(payers?{payers:e.payers!.map((p,i)=>({memberID:p.memberID,amount:payers[i]}))}:{})};
 }

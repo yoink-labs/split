@@ -32,7 +32,10 @@ struct InviteView: View {
                     }
                 } header: { Text("People · \(current.members.count)") }
                 if let error { ErrorText(text:error) }
-            }.navigationTitle(Text(verbatim:"People & invites")).navigationBarTitleDisplayMode(.inline)
+            }
+            .scrollContentBackground(.hidden)
+            .background(AppBackground())
+            .navigationTitle(Text(verbatim:"People & invites")).navigationBarTitleDisplayMode(.inline)
                 .toolbar { ToolbarItem(placement:.confirmationAction) { Button("Done") { dismiss() } } }
                 .sheet(isPresented:$adding) {
                     MemberEditor { draft in _ = try await store.addMember(groupID:group.id,draft:draft) }

@@ -18,6 +18,11 @@ import AuthenticationServices
         // A genuine Clerk sign-in token for an isolated QA user. No API auth bypass.
         // File lives in the lane, never in source or in the released app bundle.
         let args = ProcessInfo.processInfo.arguments
+        if args.contains("-splitDemo") {
+            demo()
+            loading = false
+            return
+        }
         if let index = args.firstIndex(of: "-splitQATicketFile"), args.indices.contains(index + 1) {
             do {
                 let url = URL(fileURLWithPath: args[index + 1])

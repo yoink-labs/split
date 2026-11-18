@@ -1,6 +1,17 @@
-# Split on iPhone
+# Split on iPhone and iPhone Duo
 
-The gallery shows the 0.3 receipt release and 0.4 group tools on the lane-owned iPhone simulator. The screens use a fictional trip, tagged QA groups and a synthetic café receipt. The invitation page uses an example code.
+The gallery shows the 0.5 Splitwise-parity release on a lane-owned iPhone Duo simulator. The screens use a fictional trip, a home, a Spain trip and two one-to-one tabs. The 0.3 receipt and 0.4 group-tool screens remain in the table below.
+
+## iPhone Duo
+
+| Pose | Screens |
+| --- | --- |
+| Cover display | [Dashboard](duo/outer-dashboard.png) |
+| Open, inner display (wide) | [Dashboard](duo/open-dashboard.png) · [Groups](duo/groups.png) · [Friends](duo/friends.png) · [Activity](duo/activity.png) · [Insights](duo/insights.png) · [Account](duo/account.png) |
+| Open, inner display (tall) | [Group ledger](duo/tall-group.png) |
+| Appearance | [Welcome](duo/welcome.png) · [Dark dashboard](duo/dark-dashboard.png) |
+
+The dark gallery below shows the earlier light/dark comparison on iPhone. The Duo captures use the liquid-glass surface, the adaptive two-column dashboard and the system vertical tab bar.
 
 | Screen | Light | Dark |
 | --- | --- | --- |

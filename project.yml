@@ -15,15 +15,21 @@ targets:
   Split:
     type: application
     platform: iOS
-    sources: [Split]
+    sources:
+      - Split
+      - path: THIRD_PARTY_NOTICES.md
+        buildPhase: resources
+      - path: docs/licenses
+        type: folder
+        buildPhase: resources
     dependencies:
       - package: Clerk
         product: ClerkKit
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.yoinklabs.split
-        MARKETING_VERSION: '0.3.0'
-        CURRENT_PROJECT_VERSION: '4'
+        MARKETING_VERSION: '0.4.0'
+        CURRENT_PROJECT_VERSION: '5'
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_FILE: Split/Resources/Info.plist
         INFOPLIST_KEY_CFBundleDisplayName: Split

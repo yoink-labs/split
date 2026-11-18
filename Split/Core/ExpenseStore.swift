@@ -129,6 +129,13 @@ import ClerkKit
         return result
     }
 
+    func groupAction(_ group:String,_ action:String,_ values:[String:Any]) async throws -> Data {
+        guard !isDemo else { throw LedgerError.invalid("Sign in to change shared group settings.") }
+        let result=try await post("/v1/groups/"+group+"/"+action,JSONSerialization.data(withJSONObject:values))
+        try await waitForSync()
+        await sync()
+        return result
+    }
     func search(_ query: String) async throws -> [SplitUser] {
         if demo { return [] }
         let result = try await post("/v1/people/search", JSONEncoder().encode(["query":query]))
@@ -206,7 +213,7 @@ import ClerkKit
             try await change(entry,to:updated)
         } else {
             var data:[String:Any]=["memberIDs":people]
-            if let item { data["itemID"]=item.id; data["original"]=item.memberIDs }
+            if let item { data["itemID"]=item.id; data["original"]=item.memberIDs;data["mergeEdits"]=true }
             let action=item == nil ? "close" : "claim"
             do { _ = try await post("/v1/entries/\(entry.id)/\(action)",JSONSerialization.data(withJSONObject:data)) }
             catch { await sync(); throw error }

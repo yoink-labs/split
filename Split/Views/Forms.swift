@@ -52,6 +52,12 @@ struct AddExpenseView: View {
     @State private var photos:[ReceiptPhoto] = []
     @State private var itemized = false
     @State private var reading = false
+    @State private var rateText=""
+    @State private var manualRate=false
+    @State private var quote:Exchange?
+    @State private var rateError:String?
+    @State private var purchaseDate=Date()
+    private var quoteDate:String { original.map{String($0.createdAt.prefix(10))} ?? Exchange.localDay(purchaseDate) }
     @State private var entryID = UUID().uuidString
     @State private var entryDate = ISO8601DateFormatter().string(from:Date())
     @FocusState private var amountFocused: Bool
@@ -79,6 +85,32 @@ struct AddExpenseView: View {
             }
             TextField("Description (optional)",text:$title).accessibilityIdentifier("expense-title")
 
+        }
+        if !currency.isEmpty && currency != group.currency {
+            Section {
+                if original==nil { DatePicker("Expense date",selection:$purchaseDate,in:...Date(),displayedComponents:.date) }
+                Picker("Rate source",selection:$manualRate) { Text("Published").tag(false); Text("Manual").tag(true) }.pickerStyle(.segmented)
+                if manualRate {
+                    LabeledContent("1 "+currency+" in "+group.currency) {
+                        TextField("Rate",text:$rateText).keyboardType(.decimalPad).multilineTextAlignment(.trailing).accessibilityLabel("Exchange rate")
+                    }
+                } else if let quote { Text(quote.description(base:currency)).font(.subheadline) }
+                else if let rateError { Text(rateError).font(.caption) }
+                else { ProgressView("Looking up rate") }
+            } header: { Text("Settle in "+group.currency) } footer: { Text("Use the published rate or enter your own, including a blue-dollar rate.") }
+            .task(id:currency+quoteDate) {
+                let base=currency
+                rateText="";quote=nil;rateError=nil;manualRate=false
+                if let original,base==original.currency,let x=original.exchange {
+                    if x.source=="Manual" {manualRate=true;rateText=NSDecimalNumber(decimal:x.rate).stringValue}
+                    else {quote=x;return}
+                }
+                do {
+                    let x=try await Exchange.fetch(base:base,target:group.currency,date:quoteDate)
+                    guard !Task.isCancelled,base==currency else { return }
+                    quote=x
+                } catch { if !Task.isCancelled { rateError="Published rate unavailable. Enter a manual rate." } }
+            }
         }
         Section { Picker("Category",selection:$category) {
             Text("Uncategorized").tag("")
@@ -133,7 +165,12 @@ struct AddExpenseView: View {
                 title=original.title; amount=Money.input(original.amount)
                 mode=original.splitMode == .equal ? .equal : .exact
                 values=Dictionary(uniqueKeysWithValues:original.splits.map { ($0.memberID,Money.input($0.amount)) })
-            } else { amountFocused=true }
+            } else {
+                if let weights=current.defaultWeights,!weights.isEmpty {
+                    mode = .shares;selected=Set(weights.keys);values=weights.mapValues(String.init)
+                }
+                amountFocused=true
+            }
         }
     } }
     private func save() async {
@@ -144,7 +181,17 @@ struct AddExpenseView: View {
             guard let total=itemized ? bill.total : Money.parse(amount),total>0 else { throw LedgerError.invalid("Enter an amount greater than zero, with up to two decimal places.") }
             let splits=itemized ? try bill.split(payer:payer) : try Ledger.split(total:total,people:people,mode:mode,values:values)
             let description=title.trimmingCharacters(in:.whitespacesAndNewlines)
-            var entry=LedgerEntry(id:entryID,groupID:group.id,title:description.isEmpty ? "Shared expense" : description,amount:total,currency:currency,paidBy:payer,splits:splits,category:category.isEmpty ? nil : category,bill:itemized ? bill : nil,receiptIDs:original?.receiptIDs,splitMode:itemized ? .exact : mode,createdAt:entryDate)
+            var entry=LedgerEntry(id:entryID,groupID:group.id,title:description.isEmpty ? "Shared expense" : description,amount:total,currency:currency,paidBy:payer,splits:splits,category:category.isEmpty ? nil : category,bill:itemized ? bill : nil,receiptIDs:original?.receiptIDs,splitMode:itemized ? .exact : mode,createdAt:original?.createdAt ?? (currency != group.currency ? quoteDate+"T12:00:00Z" : entryDate))
+            if currency != group.currency {
+                if manualRate {
+                    guard let units=Exchange.units(rateText) else { throw LedgerError.invalid("Enter a positive manual rate with up to eight decimal places.") }
+                    entry.exchange=Exchange(target:group.currency,rateE8:units,date:quoteDate,source:"Manual")
+                } else {
+                    guard let quote else { throw LedgerError.invalid("Choose Manual to enter a rate, or wait for the published rate.") }
+                    entry.exchange=quote
+                }
+                _ = try entry.exchange?.converting(entry)
+            }
             if let original {
                 entry.id=original.id; entry.createdAt=original.createdAt; entry.editable=original.editable
                 if !itemized && entry.splits==original.splits { entry.splitMode=original.splitMode }

@@ -1,6 +1,26 @@
 import XCTest
 @testable import Split
 final class LedgerTests: XCTestCase {
+    func testSettlementOptimizationAndFrozenRate() throws {
+        let balance:[String:Int64]=["a":-8,"b":-7,"c":-5,"d":5,"e":7,"f":8]
+        XCTAssertEqual(Ledger.plan(balance,currency:"ARS").count,3)
+        let fx=Exchange(target:"ARS",rateE8:103950000000,date:"2025-01-10",source:"BCRA")
+        let e=LedgerEntry(groupID:"g",title:"Food",amount:101,currency:"USD",paidBy:"a",splits:[Portion(memberID:"a",amount:51),Portion(memberID:"b",amount:50)],exchange:fx)
+        XCTAssertEqual(try fx.converting(e).amount,104990)
+        XCTAssertEqual(e.settling.splits.map(\.amount).reduce(0,+),104990)
+        XCTAssertEqual(e.settling.settling,e.settling)
+    }
+    func testCSVImportAndExport() throws {
+        let csv="Date,Description,Category,Cost,Currency,Alex,Maya\r\n2025-01-10,\"Lunch, downtown\",Dining,10.00,USD,3.00,-3.00"
+        let row=try XCTUnwrap(LedgerCSV.parse(csv,defaultCurrency:"ARS").first)
+        XCTAssertEqual(row.title,"Lunch, downtown");XCTAssertEqual(row.payer,"Alex");XCTAssertEqual(row.splits.map(\.amount),[700,300])
+        XCTAssertThrowsError(try LedgerCSV.parse(csv.replacingOccurrences(of:"-3.00",with:"2.00"),defaultCurrency:"ARS"))
+        let group=Fixtures.snapshot().groups[0]
+        let exported=LedgerCSV.export(Fixtures.snapshot().entries,group:group)
+        XCTAssertEqual(try LedgerCSV.parse(exported,defaultCurrency:"ARS").count,3)
+        let splid="Date;Description;Amount;Paid by;Participants\n2025-02-01;Ride;10.01;Alex;Alex,Maya"
+        XCTAssertEqual(try LedgerCSV.parse(splid,defaultCurrency:"USD")[0].splits.map(\.amount),[501,500])
+    }
     func testReceiptSuggestionsAndGrossClaims() throws {
         let bill=ReceiptReader.suggest(["Coffee 5.01","Toast 9.99","SUBTOTAL 15.00","Tax 1.01","Tip 2.00","Total 18.01"])
         XCTAssertEqual(bill.items.map(\.title),["Coffee","Toast"])

@@ -22,6 +22,12 @@ struct EntryDetails: View {
                     Text(Money.text(entry.amount,entry.currency)).font(.title2.bold())
                     LabeledContent("Paid by",value:name(entry.paidBy))
                 }
+                if let fx=entry.exchange {
+                    Section("Settlement value") {
+                        LabeledContent(fx.target,value:Money.text(entry.settling.amount,fx.target))
+                        Text(fx.description(base:entry.currency)).font(.caption)
+                    }
+                }
                 if let category=entry.category { LabeledContent("Category",value:category) }
                 if let ids=entry.receiptIDs, !ids.isEmpty { ReceiptGallery(entry:entry.id,ids:ids) { gallery=$0 } }
                 if let bill=entry.bill { PurchasesSection(entry:entry,group:group,bill:bill) { assignment=Assignment(item:$0) } }
@@ -33,6 +39,14 @@ struct EntryDetails: View {
                 if entry.editable == true || store.isDemo {
                     Section {
                         if entry.kind == "expense" && entry.bill?.closed != true { Button("Edit expense") { editing=true } }
+                        if entry.kind=="expense" && entry.bill==nil && entry.exchange==nil && !store.isDemo {
+                            Menu("Repeat · "+(entry.recurrence ?? "off").capitalized) {
+                                ForEach(["off","daily","weekly","monthly","yearly"],id:\.self) { cadence in Button(cadence.capitalized){ Task {
+                                    do { _ = try await store.groupAction(group.id,"repeat",["entryID":entry.id,"cadence":cadence]) }
+                                    catch { self.error=error.localizedDescription }
+                                } } }
+                            }
+                        }
                         Button("Delete entry",role:.destructive) { deleting=true }
                     }
                 }

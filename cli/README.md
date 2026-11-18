@@ -57,6 +57,17 @@ split expenses delete --group "$GROUP" --expense "$EXPENSE"
 split expenses delete --group "$GROUP" --expense "$EXPENSE" --yes --revision "$REVISION"
 ```
 
+## Shared group settings
+
+```sh
+split groups default split --group GROUP_ID --participants '["MEMBER_A","MEMBER_B"]' --weights '[2,1]'
+split members payment --group GROUP_ID --alias your.bank.alias
+split expenses repeat --group GROUP_ID --expense EXPENSE_ID --cadence monthly
+split expenses add --group GROUP_ID --title Lunch --amount 12.00 --payer MEMBER_ID --currency USD --rate 1039.5
+```
+
+The rate is in group currency units per one expense currency unit. Omit it to keep the original currency in CLI records. The iOS composer also looks up historical rates. Setting your payment profile replaces its previous values for this group. The matching MCP tools use underscores in place of spaces.
+
 ## Receipts, claims and spending
 
 The current checkout includes the receipt commands below. Use `./cli/bin/split` from the repository root with Node 22.18+ to run the updated client. Connected MCP clients discover the same tools from the production Worker, including through an existing stdio bridge.

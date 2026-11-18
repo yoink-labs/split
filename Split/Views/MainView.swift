@@ -99,6 +99,11 @@ struct AccountView: View {
     @EnvironmentObject var session: SessionStore
     @EnvironmentObject var store: ExpenseStore
     @State private var confirmSignOut = false
+    private static func license(_ project:String)->String {
+        guard let url=Bundle.main.url(forResource:project,withExtension:"txt",subdirectory:"licenses"),
+              let text=try? String(contentsOf:url,encoding:.utf8) else {return "License unavailable."}
+        return text
+    }
     private var version: String {
         let info = Bundle.main.infoDictionary
         let version = info?["CFBundleShortVersionString"] as? String ?? ""
@@ -108,6 +113,15 @@ struct AccountView: View {
     var body: some View { NavigationStack { Form {
         Section { HStack(spacing:9) { Avatar(name:session.displayName,size:56); VStack(alignment:.leading) { Text(session.displayName).font(.title2.bold()); Text(session.isDemo ? "Sample preview" : "Your Yoink account").foregroundStyle(.secondary) } } }
         Section("Made for everyone") { Label("Free. Every feature.",systemImage:"heart"); Text("Split is a Yoink Labs app. No subscription, no Pro tier. Just a simpler way to share.").foregroundStyle(.secondary); Link("Visit Yoink Labs",destination:URL(string:"https://yoinklabs.dev")!) }
+        NavigationLink("Third-party notices") {
+            List {
+                ForEach(["manawg","sharetab","spliit","split-pro"],id:\.self) { project in
+                    NavigationLink(project) {
+                        ScrollView { Text(verbatim:Self.license(project)).font(.footnote).textSelection(.enabled).padding() }.navigationTitle(project)
+                    }
+                }
+            }.navigationTitle("Third-party notices")
+        }
         if !session.isDemo {
             NavigationLink("Connected computers") { DeviceAccessView() }
         }

@@ -1,6 +1,6 @@
 # Split on iPhone
 
-The gallery shows the 0.3.0 app on the lane-owned iPhone simulator. The app screens use the fictional Buenos Aires preview and a synthetic café receipt. The invitation page uses an example code.
+The gallery shows the 0.3 receipt release and 0.4 group tools on the lane-owned iPhone simulator. The screens use a fictional trip, tagged QA groups and a synthetic café receipt. The invitation page uses an example code.
 
 | Screen | Light | Dark |
 | --- | --- | --- |
@@ -13,5 +13,8 @@ The gallery shows the 0.3.0 app on the lane-owned iPhone simulator. The app scre
 | Receipt photo and recognized items | [Light](light/receipt.png) | [Dark](dark/receipt.png) |
 | Choosing shared claimants | [Light](light/claim.png) | [Dark](dark/claim.png) |
 | Full-screen receipt | [Light](light/viewer.png) | [Dark](dark/viewer.png) |
+| Group defaults and payment details | [Light](light/group-settings.png) | [Dark](dark/group-settings.png) |
+| Historical exchange rate | [Light](light/exchange.png) | [Dark](dark/exchange.png) |
+| CSV import preview | [Light](light/csv-import.png) | [Dark](dark/csv-import.png) |
 
 [Web invitation landing page](web-fallback.png) · [Baseline audit and production flow checks](../docs/USABILITY.md)

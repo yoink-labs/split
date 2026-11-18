@@ -35,3 +35,9 @@ On the revised simulator build, Alex joined Maya’s previously solo group by co
 | Shared receipts needed cross-account verification. | Two signed-in QA accounts used the production Worker. The second account retrieved the same private JPEG bytes and shared a claim with a placeholder. The payer refreshed the ledger and closed the remaining item. Tests also exercise membership checks, per-expense limits, rollback and deletion. |
 
 The simulator exercises the photo library. The physical camera path uses the system camera picker and requires a device with a camera.
+
+## Group tools in 0.4
+
+On the simulator, a signed-in QA account opened group settings, changed a default weight, exported a three-entry CSV through Files, and selected that file for import. The preview matched its existing members. Confirmation reported zero inserted entries and three duplicates. A USD expense in an ARS group displayed the BCRA source and observation date. Entering a manual rate of 1,200 on a USD 12.00 expense produced an ARS 14,400.00 settlement amount and retained the original USD amount.
+
+Authenticated production checks covered saved payment details, shared weights, schedule creation/cancellation, and repeat import. Worker tests cover concurrent cron invocations, month-end dates, historical conversion, membership permissions, atomic import rollback, claim merging and deterministic transfer ordering. No money was sent. [Screenshots](../screenshots/README.md)

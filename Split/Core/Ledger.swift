@@ -7,6 +7,7 @@ struct Person: Codable, Identifiable, Equatable {
     var name: String
     var email: String?
     var phone: String?
+    var payment:[String:String]?
 }
 struct ExpenseGroup: Codable, Identifiable, Equatable {
     var id: String = UUID().uuidString
@@ -14,6 +15,7 @@ struct ExpenseGroup: Codable, Identifiable, Equatable {
     var kind: String
     var currency: String
     var createdAt: String = ISO8601DateFormatter().string(from: Date())
+    var defaultWeights:[String:Int]?
     var members: [Person]
     var symbol: String { kind == "trip" ? "airplane" : kind == "home" ? "house.fill" : "person.2.fill" }
 }
@@ -30,11 +32,13 @@ struct LedgerEntry: Codable, Identifiable, Equatable {
     var currency: String
     var paidBy: String
     var splits: [Portion]
+    var exchange:Exchange?
     var category: String?
     var bill: ReceiptBill?
     var receiptIDs: [String]?
     var kind: String = "expense"
     var editable: Bool?
+    var recurrence:String?
     var splitMode: SplitMode = .equal
     var createdAt: String = ISO8601DateFormatter().string(from: Date())
 }
@@ -109,21 +113,13 @@ enum Ledger {
     }
     static func balances(_ entries: [LedgerEntry], currency: String) -> [String:Int64] {
         var values: [String:Int64] = [:]
-        for e in entries where e.currency == currency {
+        for e in entries.map(\.settling) where e.currency == currency {
             values[e.paidBy, default: 0] += e.amount
             for s in e.splits { values[s.memberID, default: 0] -= s.amount }
         }
         return values
     }
     static func simplify(_ entries: [LedgerEntry], currency: String) -> [Transfer] {
-        let values = balances(entries, currency: currency)
-        var debt = values.filter { $0.value < 0 }.sorted { $0.key < $1.key }.map { (id: $0.key, amount: -$0.value) }
-        var credit = values.filter { $0.value > 0 }.sorted { $0.key < $1.key }.map { (id: $0.key, amount: $0.value) }
-        var result: [Transfer] = []
-        for d in debt.indices { for c in credit.indices {
-            let amount = min(debt[d].amount, credit[c].amount)
-            if amount > 0 { result.append(Transfer(from: debt[d].id, to: credit[c].id, amount: amount, currency: currency)); debt[d].amount -= amount; credit[c].amount -= amount }
-        } }
-        return result
+        plan(balances(entries,currency:currency),currency:currency)
     }
 }

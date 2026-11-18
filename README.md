@@ -1,6 +1,6 @@
 # Split by Yoink Labs
 
-Split is a free iPhone and iPad app for tracking shared expenses. Start a trip, household, or two-person tab, record who paid, and see who owes whom. Each currency has its own balance.
+Split is a free iPhone and iPad app for tracking shared expenses. Start a trip, household, or two-person tab, record who paid, and see who owes whom. Groups can settle in one currency using historical or manual rates.
 
 [Join the TestFlight beta](https://testflight.apple.com/join/YX8W6bCx) · [Release and signing](docs/TESTFLIGHT.md) · [Simulator audit](docs/USABILITY.md) · [Screenshot gallery](screenshots/README.md)
 
@@ -18,7 +18,7 @@ Split is a free iPhone and iPad app for tracking shared expenses. Start a trip, 
 - **Read a receipt.** Add up to four photos from the library or camera. Vision suggests editable names, prices, tax and tip on the device. Review the suggestions, correct them or add items by hand. You can also keep photos on a regular split. Group members can tap a thumbnail to open the full-size receipt.
 - **Claim purchases.** Open an item and select one person or several, including placeholders. The item’s price and proportional tax and tip are shared evenly. Unclaimed costs stay with the payer and appear in the open total. Tap the open-purchases filter in the group to find them. Pull to refresh for other people’s claims. The payer can close a receipt, distributing all remaining items to everyone or selected people. If the payer is a placeholder, the person who recorded the expense can close it.
 - **Explore group spending.** Open **Balances** for totals in each currency, expand a category or month, or tap a person for expenses they paid or shared. Paid and share measure spending. Net includes recorded payments.
-- **Settle up.** Balances suggest payments within each currency. Record a full or partial payment after money changes hands. Split records payments and does not transfer funds.
+- **Settle up.** Balances suggest payments in the settlement currency or the original currency for entries without a conversion. Record a full or partial payment after money changes hands. Split records payments and does not transfer funds.
 - **Use another device.** A Clerk session syncs your groups. **You → Connected computers** approves and revokes CLI/MCP access. The signed-out preview uses fictional data on the device.
 
 Supported currencies are USD, ARS, EUR, GBP, BRL, CAD, AUD, and MXN. Amounts use integer minor units. Largest-remainder allocation preserves every cent.
@@ -108,3 +108,25 @@ args = ["mcp"]
 ```
 
 Remote MCP clients can use Streamable HTTP at `https://split-api.yoinklabs.dev/mcp` with a device bearer token. See the [CLI and MCP guide](cli/README.md) for receipt photos, open purchases, spending breakdowns, expense splits, placeholder invitations, lookup, confirmation previews and remote client configuration.
+
+## Group tools in 0.4
+
+- **Settle in the group currency.** Choose a currency when creating the group. For a foreign-currency expense, Split looks up the purchase date with Frankfurter v2, using BCRA for ARS. You can enter an agreed manual rate, including a blue-dollar rate. Split freezes the effective date, source and rate on that expense. Open it to see both values. Historical expenses without a recorded rate retain their original currency. [Frankfurter API](https://frankfurter.dev/)
+- **Simplify payments.** Settlements use integer cents and stable member ordering. Split matches opposite balances and finds the minimum for up to 16 remaining nonzero balances. Larger groups get an immediate suggestion. On iOS, **Find minimum transfers** runs the exact search separately and can be canceled.
+- **Import and export.** Open the group’s settings in the top right. Import Splitwise net-balance CSV, Splid participant lists, Settle Up participant/amount lists, or Tricount member-share columns. Use ISO dates, supported currencies, and up to 80 rows per file. Preview the entries and new placeholder names before confirming. Split rejects ambiguous payers or unbalanced amounts. Reimporting the same data skips earlier entries. Export includes original amounts, settlement rates and member net amounts. Receipt images stay in the group.
+- **Repeat an expense.** Open an ordinary saved expense you recorded and choose **Repeat**. Daily, weekly, monthly and yearly schedules use UTC. Month-end schedules return to their original day after shorter months. The Worker checks due schedules every 15 minutes. Choose **Off** or delete the original to stop future entries. Foreign-currency conversions and itemized receipts are entered individually.
+- **Pay and record.** Add your own PayPal.Me or Venmo username, Mercado Pago link, or Argentine alias/CVU in group settings. On **Settle up**, open the recipient’s link or copy their alias, check the amount, and record the payment after it completes.
+- **Default shares.** Set each person’s relative weight in group settings. A zero excludes them. The next expense starts with these weights and the author can change them.
+- **Concurrent receipt claims.** Changes to different people’s selections merge by member ID. Placeholder claims keep their historical rounding when accounts merge.
+
+The Worker and its scheduled jobs use the existing free-tier Split D1 database. Frankfurter needs no API key. Source attributions and retained license texts are in [third-party notices](THIRD_PARTY_NOTICES.md).
+
+## Roadmap
+
+- A richer activity feed, push reminders and monthly statements.
+- A web/PWA companion for joining, claiming and settling without an iPhone.
+- Extend the existing offline queue to edits, claims and other shared changes.
+- A balance dashboard across groups.
+- Search, negative expenses for refunds, and archiving settled groups.
+- Spanish localization.
+- Bank import.

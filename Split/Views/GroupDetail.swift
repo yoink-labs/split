@@ -3,6 +3,7 @@ struct GroupDetail: View {
     var groupID: String
     @EnvironmentObject var store: ExpenseStore
     @EnvironmentObject var session: SessionStore
+    @State private var tools=false
     @State private var adding = false
     @State private var inviting = false
     @State private var inspecting: LedgerEntry?
@@ -39,6 +40,8 @@ struct GroupDetail: View {
                         } else { balances(group) }
                     }.padding(16).frame(maxWidth:680)
                 }.frame(maxWidth:.infinity).background(Palette.background).safeAreaInset(edge:.bottom) { Button { adding=true } label: { Label("Add an expense",systemImage:"plus") }.buttonStyle(SolidButton()).padding(.horizontal,16).padding(.vertical,6).background(.ultraThinMaterial) }
+                .toolbar {ToolbarItem(placement:.topBarTrailing){Button("Group settings",systemImage:"slider.horizontal.3"){tools=true}}}
+                .sheet(isPresented:$tools){GroupTools(group:group)}
                 .sheet(isPresented:$adding) { AddExpenseView(group:group) }
                 .sheet(isPresented:$inviting) { InviteView(group:group) }
                 .sheet(item:$inspecting) { entry in EntryDetails(entry:entry,group:group) }
@@ -48,24 +51,48 @@ struct GroupDetail: View {
         }.navigationTitle(Text(verbatim:store.group(groupID)?.name ?? "Group")).navigationBarTitleDisplayMode(.inline)
     }
     @ViewBuilder private func balances(_ group: ExpenseGroup) -> some View {
-        let entries = store.entries(in:group)
+        let entries = store.entries(in:group).map(\.settling)
         let currencies = Set([group.currency]+entries.map(\.currency)).sorted()
         if currencies.isEmpty { ContentUnavailableView("All clear",systemImage:"checkmark.circle",description:Text("Balances appear after your first expense.")) }
         ForEach(currencies,id:\.self) { currency in
-            let transfers = Ledger.simplify(entries,currency:currency)
             SpendingCard(entries:entries,group:group,currency:currency)
-            Card {
-                VStack(alignment:.leading,spacing:10) {
-                    Text(transfers.isEmpty ? "Everyone’s square." : "Suggested payments").font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
-                    ForEach(transfers) { transfer in
-                        Button { settlement=transfer } label: { HStack { VStack(alignment:.leading,spacing:4) { Text("\(name(transfer.from,group)) → \(name(transfer.to,group))").font(.subheadline.weight(.medium)); Text(Money.text(transfer.amount,currency)).font(.caption).foregroundStyle(.secondary) }; Spacer(); Text("Settle up").font(.caption.weight(.semibold)) } }.accessibilityLabel("Settle \(name(transfer.from,group)) to \(name(transfer.to,group)) \(Money.text(transfer.amount,currency))")
-                    }
-                }
-            }
+            SettlementSuggestions(group:group,currency:currency,values:Ledger.balances(entries,currency:currency)) { settlement=$0 }
+
         }
         Text("Balances are simplified within this group, separately for each currency. Recording a payment doesn’t move money.").font(.caption).foregroundStyle(.secondary)
     }
-    private func name(_ id:String,_ g:ExpenseGroup)->String { g.members.first { $0.id == id }?.name ?? "Someone" }
+}
+private struct SettlementSuggestions:View {
+    let group:ExpenseGroup
+    let currency:String
+    let values:[String:Int64]
+    let select:(Transfer)->Void
+    @State private var checking=false
+    @State private var verified:[Transfer]?
+    private func name(_ id:String)->String { group.members.first{$0.id==id}?.name ?? "Member" }
+    var body:some View {
+        let transfers=verified ?? Ledger.plan(values,currency:currency)
+            Card {
+                VStack(alignment:.leading,spacing:10) {
+                    Text(transfers.isEmpty ? "Everyone’s square." : "Suggested payments").font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                    if values.filter({$0.value != 0}).count>16 && !transfers.isEmpty {
+                        if verified != nil { Text("Minimum transfer count verified").font(.caption) }
+                        else { Button(checking ? "Cancel minimum search" : "Find minimum transfers") { checking.toggle() }.font(.caption) }
+                    }
+                    ForEach(transfers) { transfer in
+                        Button { select(transfer) } label: { HStack { VStack(alignment:.leading,spacing:4) { Text("\(name(transfer.from)) → \(name(transfer.to))").font(.subheadline.weight(.medium)); Text(Money.text(transfer.amount,currency)).font(.caption).foregroundStyle(.secondary) }; Spacer(); Text("Settle up").font(.caption.weight(.semibold)) } }.accessibilityLabel("Settle \(name(transfer.from)) to \(name(transfer.to)) \(Money.text(transfer.amount,currency))")
+                    }
+                }
+            }
+            .onChange(of:values) { verified=nil;checking=false }
+            .task(id:checking) {
+                guard checking else{return}
+                let inputs=values,code=currency
+                let job=Task.detached(priority:.utility){try Ledger.minimumPlan(inputs,currency:code)}
+                let result=await withTaskCancellationHandler {try? await job.value} onCancel: {job.cancel()}
+                if !Task.isCancelled {verified=result;checking=false}
+            }
+    }
 }
 struct SettlementView: View {
     var group: ExpenseGroup; var transfer: Transfer
@@ -77,6 +104,7 @@ struct SettlementView: View {
         Section { Text("\(group.members.first{$0.id==transfer.from}?.name ?? "Someone") pays \(group.members.first{$0.id==transfer.to}?.name ?? "Someone")").font(.title3.weight(.semibold)); Text("Record a payment you’ve already made. Split won’t transfer money.").foregroundStyle(.secondary) }
         Section(transfer.currency) { TextField("Amount",text:$amount).keyboardType(.decimalPad); Text("Suggested: \(Money.text(transfer.amount,transfer.currency))").font(.caption).foregroundStyle(.secondary) }
         if let error { ErrorText(text:error) }
+        if let recipient=group.members.first(where:{$0.id==transfer.to}) {PaymentActions(member:recipient,currency:transfer.currency,amount:amount)}
         Section { Button("Record payment") {
             guard let value=Money.parse(amount),value>0,value<=transfer.amount else { error="Enter an amount up to the outstanding balance.";return }
             do { try store.add(LedgerEntry(groupID:group.id,title:"Settle-up payment",amount:value,currency:transfer.currency,paidBy:transfer.from,splits:[Portion(memberID:transfer.to,amount:value)],kind:"settlement",splitMode:.exact)); dismiss() } catch { self.error=error.localizedDescription }

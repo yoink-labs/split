@@ -21,14 +21,14 @@ if [ -d "$APP/Frameworks" ]; then
   echo 'Embedded frameworks need signing support before packaging.' >&2
   exit 1
 fi
-codesign --force --sign "$IDENTITY" --entitlements .ade/tmp/release-entitlements.plist "$APP"
+codesign --force --strip-disallowed-xattrs --sign "$IDENTITY" --entitlements .ade/tmp/release-entitlements.plist "$APP"
 codesign --verify --deep --strict "$APP"
 VERSION=$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$APP/Info.plist")
 BUILD=$(/usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$APP/Info.plist")
 STAGING=$(mktemp -d .ade/build/ipa-stage.XXXXXX)
 trap 'rm -rf "$STAGING"' EXIT
 mkdir -p "$STAGING/Payload"
-cp -R "$APP" "$STAGING/Payload/"
+COPYFILE_DISABLE=1 cp -R "$APP" "$STAGING/Payload/"
 xattr -cr "$STAGING/Payload"
 codesign --verify --deep --strict "$STAGING/Payload/Split.app"
 OUTPUT="$PWD/.ade/build/Split-$VERSION-$BUILD.ipa"

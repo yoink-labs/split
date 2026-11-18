@@ -1,6 +1,8 @@
 # Split by Yoink Labs
 
-Split is a free iPhone and iPad app for tracking shared expenses. Start a trip, household, or two-person tab, record who paid, and see who owes whom. Groups can settle in one currency using historical or manual rates.
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
+Split is a free iPhone and iPad app for tracking shared expenses. Start a trip, household, or two-person tab, record who paid, and see who owes whom. Groups can settle in one currency using historical or manual rates. Open source under MIT.
 
 [Join the TestFlight beta](https://testflight.apple.com/join/YX8W6bCx) · [Release and signing](docs/TESTFLIGHT.md) · [Simulator audit](docs/USABILITY.md) · [Screenshot gallery](screenshots/README.md)
 
@@ -55,7 +57,7 @@ npm run db:local --prefix worker
 ade secrets exec --env CLERK_SECRET_KEY -- /opt/homebrew/bin/node worker/node_modules/wrangler/bin/wrangler.js dev --local --config worker/wrangler.jsonc --port 8787
 ```
 
-Use the absolute path to your Node executable if it differs. Add `-splitLocalAPI` to the **Debug simulator** launch arguments to use loopback port 8787. Local ledger storage has its own cache and outbox. The local Worker verifies real Clerk sessions. The automated Worker tests use isolated D1 test data and a stubbed identity response.
+Without ADE, copy `worker/.env.example` to `worker/.dev.vars`, fill in your own Clerk secret key and run `npm run dev --prefix worker -- --local --port 8787`. Use the absolute path to your Node executable if it differs. Add `-splitLocalAPI` to the **Debug simulator** launch arguments to use loopback port 8787. Local ledger storage has its own cache and outbox. The local Worker verifies real Clerk sessions. The automated Worker tests use isolated D1 test data and a stubbed identity response.
 
 On macOS file-provider volumes, Xcode may reject Finder metadata when signing a simulator bundle. Run `xcodebuild` with the same project, scheme and destination and the build setting `OTHER_CODE_SIGN_FLAGS=--strip-disallowed-xattrs`. This preserves normal signing and applies to dependency bundles as well.
 
@@ -79,7 +81,7 @@ ade secrets exec --env CLOUDFLARE_API_TOKEN --env CLOUDFLARE_ACCOUNT_ID -- /opt/
 
 ## License
 
-This repository has no published open-source license. Contact Yoink Labs for reuse permission. Third-party dependencies retain their own licenses.
+Open source under MIT. See [LICENSE](LICENSE). Adapted third-party code and its retained license texts are listed in [third-party notices](THIRD_PARTY_NOTICES.md); dependencies keep their own licenses. Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request and report vulnerabilities as described in [SECURITY.md](SECURITY.md).
 
 ## CLI and MCP
 

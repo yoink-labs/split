@@ -23,16 +23,16 @@ struct InviteView: View {
                     Button { adding=true } label: { Label("Add person",systemImage:"person.badge.plus") }
                     ForEach(current.members) { member in
                         VStack(alignment:.leading,spacing:6) {
-                            HStack { Avatar(name:member.name,size:30); VStack(alignment:.leading) {
+                            NavigationLink(value:LedgerRoute.member(group:current.id,seat:member.id)) { HStack { Avatar(name:member.name,size:30); VStack(alignment:.leading) {
                                 Text(member.name).font(.headline)
                                 Text(member.userID == nil ? "Placeholder" : "Joined").font(.caption).foregroundStyle(.secondary)
-                            } }
+                            } } }
                             if member.userID == nil { invitation(member:member) }
                         }.padding(.vertical,4)
                     }
                 } header: { Text("People · \(current.members.count)") }
                 if let error { ErrorText(text:error) }
-            }.navigationTitle(Text(verbatim:"People & invites")).navigationBarTitleDisplayMode(.inline)
+            }.ledgerDestinations().navigationTitle(Text(verbatim:"People & invites")).navigationBarTitleDisplayMode(.inline)
                 .toolbar { ToolbarItem(placement:.confirmationAction) { Button("Done") { dismiss() } } }
                 .sheet(isPresented:$adding) {
                     MemberEditor { draft in _ = try await store.addMember(groupID:group.id,draft:draft) }

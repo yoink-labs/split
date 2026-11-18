@@ -18,7 +18,7 @@ struct GroupsView: View {
     @EnvironmentObject var store: ExpenseStore
     @State private var showCreate = false
     @State private var joining = false
-    @State private var path: [String] = []
+    @State private var path: [LedgerRoute] = []
     private var groups: [ExpenseGroup] { store.groups.filter { friends ? $0.kind == "friend" : $0.kind != "friend" } }
     private var totals: [(String,Int64)] {
         Money.currencies.compactMap { currency in
@@ -47,9 +47,9 @@ struct GroupsView: View {
                     if groups.isEmpty {
                         ContentUnavailableView(friends ? "No friends yet" : "No groups yet",systemImage:friends ? "person.2" : "person.3",description:Text(friends ? "Add a friend to start a shared tab." : "Create a group or join one with an invite code."))
                     }
-                    ForEach(groups) { group in NavigationLink(value:group.id) { GroupCard(group:group) }.buttonStyle(.plain) }
+                    ForEach(groups) { group in NavigationLink(value:LedgerRoute.group(group.id)) { GroupCard(group:group) }.buttonStyle(.plain) }
                 }.padding(16).frame(maxWidth:680)
-            }.frame(maxWidth:.infinity).background(Palette.background).toolbar(.hidden,for:.navigationBar).refreshable { await store.sync() }.onChange(of:store.joinedGroupID,initial:true) { _,id in if !friends, let id { path=[id]; store.joinedGroupID=nil } }.navigationDestination(for:String.self) { GroupDetail(groupID:$0) }.sheet(isPresented:$joining) { JoinGroupView { id in path.append(id) } }.sheet(isPresented:$showCreate) { CreateGroupView(friend:friends) }
+            }.frame(maxWidth:.infinity).background(Palette.background).toolbar(.hidden,for:.navigationBar).refreshable { await store.sync() }.onChange(of:store.joinedGroupID,initial:true) { _,id in if !friends, let id { path=[.group(id)]; store.joinedGroupID=nil } }.ledgerDestinations().sheet(isPresented:$joining) { JoinGroupView { id in path.append(.group(id)) } }.sheet(isPresented:$showCreate) { CreateGroupView(friend:friends) }
         }
     }
     @ViewBuilder private var groupActions: some View {
@@ -83,7 +83,7 @@ struct GroupCard: View {
 }
 struct ActivityView: View {
     @EnvironmentObject var store: ExpenseStore
-    var body: some View { NavigationStack { ScrollView { LazyVStack(spacing:12) { if store.entries.isEmpty { ContentUnavailableView("Nothing to catch up on",systemImage:"clock",description:Text("Expenses and settle-ups appear here.")) }; ForEach(store.entries) { e in if let g=store.group(e.groupID) { Card { EntryRow(entry:e,group:g,showGroup:true) } } } }.padding(16).frame(maxWidth:680) }.frame(maxWidth:.infinity).background(Palette.background).navigationTitle("Activity").navigationBarTitleDisplayMode(.inline).refreshable { await store.sync() } } }
+    var body: some View { NavigationStack { ScrollView { LazyVStack(spacing:12) { if store.entries.isEmpty { ContentUnavailableView("Nothing to catch up on",systemImage:"clock",description:Text("Expenses and settle-ups appear here.")) }; ForEach(store.entries) { e in if let g=store.group(e.groupID) { NavigationLink(value:LedgerRoute.entry(group:g.id,id:e.id)) { Card { EntryRow(entry:e,group:g,showGroup:true) } }.buttonStyle(.plain) } } }.padding(16).frame(maxWidth:680) }.frame(maxWidth:.infinity).background(Palette.background).ledgerDestinations().navigationTitle("Activity").navigationBarTitleDisplayMode(.inline).refreshable { await store.sync() } } }
 }
 struct EntryRow: View {
     var entry: LedgerEntry; var group: ExpenseGroup; var showGroup = false
@@ -111,7 +111,7 @@ struct AccountView: View {
         return "Split \(version) (\(build))"
     }
     var body: some View { NavigationStack { Form {
-        Section { HStack(spacing:9) { Avatar(name:session.displayName,size:56); VStack(alignment:.leading) { Text(session.displayName).font(.title2.bold()); Text(session.isDemo ? "Sample preview" : "Your Yoink account").foregroundStyle(.secondary) } } }
+        Section { NavigationLink(value:LedgerRoute.account(session.userID ?? "")) { HStack(spacing:9) { Avatar(name:session.displayName,size:40); VStack(alignment:.leading) { Text(session.displayName).font(.headline); Text("Your charges by group").font(.subheadline).foregroundStyle(.secondary) } } } }
         Section("Made for everyone") { Label("Free. Every feature.",systemImage:"heart"); Text("Split is a Yoink Labs app. No subscription, no Pro tier. Just a simpler way to share.").foregroundStyle(.secondary); Link("Visit Yoink Labs",destination:URL(string:"https://yoinklabs.dev")!) }
         NavigationLink("Third-party notices") {
             List {
@@ -127,5 +127,5 @@ struct AccountView: View {
         }
         Section("Sync") { Text(session.isDemo ? "Sample data stays on this device." : store.pending == 0 ? "No pending changes" : "\(store.pending) changes saved on this device"); if !session.isDemo { Button("Sync now") { Task { await store.sync() } } }; if let error=store.error { ErrorText(text:error) } }
         Section { Button(session.isDemo ? "Leave preview & sign in" : "Sign out",role:.destructive) { confirmSignOut=true }; if let error=session.error { ErrorText(text:error) }; Text(version).font(.caption).foregroundStyle(.secondary) }
-    }.navigationTitle("You").navigationBarTitleDisplayMode(.inline).confirmationDialog("Sign out?",isPresented:$confirmSignOut,titleVisibility:.visible) { Button("Sign out",role:.destructive) { Task { await session.signOut() } } } message: { Text(store.pending > 0 ? "\(store.pending) unsynced changes will stay on this device for this account. Sign back in to upload them." : "Your shared expenses will be here when you return.") } } }
+    }.ledgerDestinations().navigationTitle("You").navigationBarTitleDisplayMode(.inline).confirmationDialog("Sign out?",isPresented:$confirmSignOut,titleVisibility:.visible) { Button("Sign out",role:.destructive) { Task { await session.signOut() } } } message: { Text(store.pending > 0 ? "\(store.pending) unsynced changes will stay on this device for this account. Sign back in to upload them." : "Your shared expenses will be here when you return.") } } }
 }

@@ -6,7 +6,6 @@ struct GroupDetail: View {
     @State private var tools=false
     @State private var adding = false
     @State private var inviting = false
-    @State private var inspecting: LedgerEntry?
     @State private var openOnly = false
     @State private var section = 0
     @State private var settlement: Transfer?
@@ -35,7 +34,7 @@ struct GroupDetail: View {
                             }
                             if openOnly && openCount==0 { Text("All purchases have been claimed.").font(.subheadline).foregroundStyle(.secondary) }
                             ForEach(entries.filter { !openOnly || ($0.bill?.openCount ?? 0)>0 }) { e in
-                                Button { inspecting=e } label: { Card { EntryRow(entry:e,group:group) } }.buttonStyle(.plain)
+                                NavigationLink(value:LedgerRoute.entry(group:group.id,id:e.id))  { Card { EntryRow(entry:e,group:group) } }.buttonStyle(.plain)
                             }
                         } else { balances(group) }
                     }.padding(16).frame(maxWidth:680)
@@ -44,7 +43,6 @@ struct GroupDetail: View {
                 .sheet(isPresented:$tools){GroupTools(group:group)}
                 .sheet(isPresented:$adding) { AddExpenseView(group:group) }
                 .sheet(isPresented:$inviting) { InviteView(group:group) }
-                .sheet(item:$inspecting) { entry in EntryDetails(entry:entry,group:group) }
                 .sheet(item:$settlement) { transfer in SettlementView(group:group,transfer:transfer) }
                 .refreshable { await store.sync() }
             } else { ContentUnavailableView("Group unavailable",systemImage:"person.2.slash") }

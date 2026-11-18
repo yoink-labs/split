@@ -72,6 +72,23 @@ final class LedgerTests: XCTestCase {
         XCTAssertTrue(Ledger.simplify([e,usd,payment],currency:"ARS").isEmpty)
         XCTAssertEqual(Ledger.balances([e,usd,payment],currency:"USD")["a"],-10000)
     }
+    func testMemberActivityUsesCanonicalSeatsAcrossSharedGroups() {
+        var snapshot = Fixtures.snapshot()
+        let group = snapshot.groups[0]
+        let me = group.members[0]
+        let guest = group.members[1]
+        snapshot.groups[1].members[1].name = guest.name
+        XCTAssertEqual(snapshot.memberships(user: me.userID, groupID: group.id, seatID: me.id).count, 2)
+        XCTAssertEqual(snapshot.memberships(user: nil, groupID: group.id, seatID: guest.id).map { $0.0.id }, [group.id])
+        let payerOnly = LedgerEntry(groupID: group.id, title: "Gift", amount: 800, currency: "USD",
+                                    paidBy: guest.id, splits: [Portion(memberID: me.id, amount: 800)])
+        snapshot.entries.append(payerOnly)
+        let charges = snapshot.charges(group: group.id, seat: guest.id)
+        XCTAssertTrue(charges.contains(payerOnly))
+        XCTAssertTrue(charges.contains { $0.bill != nil })
+        XCTAssertTrue(snapshot.charges(group: snapshot.groups[1].id, seat: guest.id).isEmpty)
+    }
+
     func testOfflineStateRoundTrip() throws {
         let state=DiskState(snapshot:Fixtures.snapshot(),outbox:[OutboxItem(id:"retry-id",path:"/v1/entries",body:Data("entry".utf8))])
         let loaded=try JSONDecoder().decode(DiskState.self,from:JSONEncoder().encode(state))

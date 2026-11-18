@@ -1,0 +1,46 @@
+name: Bug report
+description: Something in Split doesn't work the way it should.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this. **Security problems go through [private vulnerability reporting](https://github.com/yoink-labs/split/security/advisories/new), not here.** Please don't include real names, emails or amounts you'd rather keep private.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Where did it happen?
+      options: [iOS app, Web, CLI or MCP, Worker API, Other]
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what you saw instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Create a group with two people
+        2. Add an expense of 10.00 split by shares
+        3. ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: App version and build (You → bottom of the screen), `split --version`, or a commit.
+  - type: input
+    id: device
+    attributes:
+      label: Device and OS
+      placeholder: iPhone 16, iOS 26.1
+  - type: textarea
+    id: extra
+    attributes:
+      label: Screenshots or logs

@@ -112,6 +112,7 @@ struct ActivityFeedView: View {
             .background(AppBackground())
             .refreshable { await store.sync() }
             .toolbar(.hidden, for: .navigationBar)
+            .ledgerDestinations()
             .sheet(isPresented: $showSearch) {
                 NavigationStack { SearchView() }
             }

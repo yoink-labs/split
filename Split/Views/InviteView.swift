@@ -37,6 +37,7 @@ struct InviteView: View {
                 .frame(maxWidth: .infinity)
             }
             .background(AppBackground())
+            .ledgerDestinations()
             .navigationTitle(Text(verbatim: "People & invites"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
@@ -144,11 +145,15 @@ struct InviteView: View {
                     Text("Joined").font(.splitEyebrow).foregroundStyle(.secondary)
                     FlowLayout(spacing: 6) {
                         ForEach(joined) { member in
-                            PersonChip(
-                                name: member.name,
-                                label: member.userID == session.userID ? "You" : member.name,
-                                compact: true
-                            )
+                            NavigationLink(value: LedgerRoute.member(group: current.id, seat: member.id)) {
+                                PersonChip(
+                                    name: member.name,
+                                    label: member.userID == session.userID ? "You" : member.name,
+                                    compact: true
+                                )
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityHint("Opens \(member.name)'s charges")
                         }
                     }
                 }
@@ -169,6 +174,14 @@ struct InviteView: View {
                     Text("Placeholder · not joined yet").font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 8)
+                NavigationLink(value: LedgerRoute.member(group: current.id, seat: member.id)) {
+                    Image(systemName: "clock.arrow.circlepath")
+                        .font(.system(size: 15, weight: .semibold))
+                        .frame(width: 44, height: 44)
+                        .foregroundStyle(Palette.ink)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("View \(member.name)'s charges")
                 if links[member.id] == nil {
                     createButton(key: member.id, member: member, title: "Invite", onHero: false)
                 }

@@ -1,4 +1,4 @@
-# Splitwise parity plan (0.5)
+# Splitwise parity plan (0.7)
 
 Split is a native SwiftUI app, not an Ionic project. There is no Ionic runtime or
 web view in this repository. “Update Ionic” therefore maps to keeping the iOS
@@ -7,11 +7,11 @@ the iOS 27.2 SDK and keeps an iOS 18 deployment target.
 
 The reference is the signed-in Splitwise web client at `secure.splitwise.com`,
 reviewed on 17 November 2026. This document records the product surface we are
-copying, the pieces Split already has, and the contract for the 0.5 port.
+copying, the pieces Split already has, and the contract for the 0.7 port.
 
 ## Feature audit
 
-| Splitwise surface | Split before 0.5 | 0.5 |
+| Splitwise surface | Split before 0.7 | 0.7 |
 | --- | --- | --- |
 | Dashboard totals (“you owe”, “you are owed”), per-person balances | Group list only | Home dashboard with per-currency totals and per-person balances |
 | Groups list, group balances, month-grouped expense ledger | Partial | Full group list + list/detail group ledger, month sections, per-member balances |
@@ -22,7 +22,7 @@ copying, the pieces Split already has, and the contract for the 0.5 port.
 | Expense detail: breakdown, notes, comments, receipt, edit/delete/repeat | Partial | Full detail with social actions |
 | Search (a Splitwise Pro feature) | None | Free global search across groups, people and expenses |
 | Charts (a Splitwise Pro feature) | Text breakdowns | Free Insights with monthly and category charts |
-| Notifications/reminders | None | In-app balance reminders and activity badges (no push in 0.5) |
+| Notifications/reminders | None | In-app balance reminders and activity badges (no push in 0.7) |
 | CSV import/export, exchange rates, recurring expenses, default shares | Present | Preserved |
 | Account, connected computers, sign out | Present | Redesigned account screen, data export, free-everything promise |
 

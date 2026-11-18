@@ -1,0 +1,38 @@
+name: Feature request
+description: Suggest an idea or improvement for Split.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Check the [roadmap](https://github.com/yoink-labs/split/blob/main/ROADMAP.md) and open issues first. Split stays free, so we can't take features that need paid APIs or that move money.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options: [iOS app, Web, CLI or MCP, Worker API, Other]
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+      description: Describe the situation, for example "When I split a hotel bill with friends...".
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like to happen?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you've considered
+  - type: checkboxes
+    id: help
+    attributes:
+      label: Contributing
+      options:
+        - label: I'd like to work on this myself.

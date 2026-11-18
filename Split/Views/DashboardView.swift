@@ -61,6 +61,7 @@ struct DashboardView: View {
             .background(AppBackground())
             .refreshable { await store.sync() }
             .toolbar(.hidden, for: .navigationBar)
+            .ledgerDestinations()
             .sheet(item: $inspecting) { entry in EntrySheet(entry: entry) }
             .sheet(isPresented: $showNewExpense) { NewExpenseSheet() }
             .sheet(isPresented: $showNewPayment) { NewSettlementSheet() }

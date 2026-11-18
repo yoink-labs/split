@@ -42,9 +42,9 @@ On the simulator, a signed-in QA account opened group settings, changed a defaul
 
 Authenticated production checks covered saved payment details, shared weights, schedule creation/cancellation, and repeat import. Worker tests cover concurrent cron invocations, month-end dates, historical conversion, membership permissions, atomic import rollback, claim merging and deterministic transfer ordering. No money was sent. [Screenshots](../screenshots/README.md)
 
-## Splitwise parity, Liquid Glass and iPhone Duo in 0.5
+## Splitwise parity, Liquid Glass and iPhone Duo in 0.7
 
-The 0.5 baseline is the Splitwise web client at `secure.splitwise.com` as seen on
+The 0.7 baseline is the Splitwise web client at `secure.splitwise.com` as seen on
 17 November 2026, plus the iPhone Duo simulator in Xcode 27.2. The app builds
 against the iOS 27.2 SDK, keeps iOS 18 as the deployment target, and uses system
 containers only for navigation and bars.
@@ -75,7 +75,7 @@ node --test cli/test/*.test.mjs   # 2 tests
 xcodegen generate
 xcodebuild build -project Split.xcodeproj -scheme Split \
   -destination 'platform=iOS Simulator,name=iPhone 17' CODE_SIGNING_ALLOWED=NO
-ade apple test --scheme Split     # 16 tests
+ade apple test --scheme Split     # 25 tests
 ```
 
 The simulator does not render the fold's curved division region, so fold
@@ -85,7 +85,7 @@ reported as simulator-verified, not device-verified.
 
 ### Design pass and receipt chips
 
-The final 0.5 pass tightened every screen around the same hierarchy: one ink
+The final 0.7 pass tightened every screen around the same hierarchy: one ink
 hero, glass secondary surfaces, compact intrinsic actions, and a single
 drifting background. The person-balance sign bug found in the pass is fixed:
 the Home and Friends screens now show what you owe and what you are owed from
@@ -104,3 +104,6 @@ The system TabView is kept (no `.id(size)` workaround). Folding with an open
 expense sheet preserved the sheet and the selected group in simulator checks;
 the custom navigation shell was discarded because it covered the system
 toolbar. The new suite runs 25 iOS tests, 39 Worker tests and 2 CLI tests.
+## Member activity on iOS
+
+From You, Alex opened a receipt-sharing group, checked the original charge, opened its attached café receipt and selected Guest from Split with. Guest's statement showed the same charge and Guest's own share. Back returned to Guest after reopening the expense. The account group picker also exposed Alex's other shared trips at Accessibility Large.

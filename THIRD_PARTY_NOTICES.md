@@ -1,6 +1,6 @@
 # Third-party notices
 
-Split adapts the following permissively licensed work. The linked license files retain the upstream notices. Changes in Split include Swift implementations, integer-cent accounting, authenticated D1 writes, deterministic import IDs and integration with Split group identities.
+Split is licensed under the [MIT License](LICENSE). Split adapts the following permissively licensed work. The linked license files retain the upstream notices. Changes in Split include Swift implementations, integer-cent accounting, authenticated D1 writes, deterministic import IDs and integration with Split group identities.
 
 | Project and revision | Use in Split | License and copyright |
 | --- | --- | --- |
@@ -10,3 +10,5 @@ Split adapts the following permissively licensed work. The linked license files 
 | [Split Pro](https://github.com/oss-apps/split-pro/blob/7f48b6615944859869ca3bf25f4abc1671047413/src/lib/defaultSplit.ts) | Group split defaults and per-member weights informed Split’s shared defaults. | [MIT](docs/licenses/split-pro.txt), copyright 2024 OSS Apps |
 
 Historical exchange-rate data comes from [Frankfurter v2](https://frankfurter.dev/). Argentine peso lookups request the Banco Central de la República Argentina provider. Each converted expense retains its source and effective date.
+
+The web client uses React, React DOM, Scheduler and React Router under MIT licenses. Clerk hosts the MIT-licensed ClerkJS sign-in client. The browser distribution includes the applicable [web notices](web/public/NOTICE.txt).

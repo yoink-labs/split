@@ -70,6 +70,7 @@ struct GroupDetail: View {
                     .background(AppBackground())
             }
         }
+        .ledgerDestinations()
         .navigationTitle(group?.name ?? "Group")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -299,6 +300,7 @@ struct GroupBalancesView: View {
                 .frame(maxWidth: .infinity)
             }
             .background(AppBackground())
+            .ledgerDestinations()
             .navigationTitle(group?.name ?? "Balances")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
@@ -334,19 +336,26 @@ struct GroupBalancesView: View {
                 } else {
                     VStack(spacing: 0) {
                         ForEach(Array(rows.enumerated()), id: \.element.0.id) { index, row in
-                            HStack(spacing: 10) {
-                                Avatar(name: row.0.userID == store.currentUserID ? "You" : row.0.name, size: 36)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(row.0.userID == store.currentUserID ? "You" : row.0.name).font(.subheadline.weight(.semibold))
-                                    Text(row.1 > 0 ? "gets back" : "owes").font(.caption).foregroundStyle(.secondary)
+                            NavigationLink(value: LedgerRoute.member(group: group.id, seat: row.0.id)) {
+                                HStack(spacing: 10) {
+                                    Avatar(name: row.0.userID == store.currentUserID ? "You" : row.0.name, size: 36)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(row.0.userID == store.currentUserID ? "You" : row.0.name).font(.subheadline.weight(.semibold))
+                                        Text(row.1 > 0 ? "gets back" : "owes").font(.caption).foregroundStyle(.secondary)
+                                    }
+                                    Spacer()
+                                    Text(Money.text(abs(row.1), currency))
+                                        .font(.splitAmount(15))
+                                        .foregroundStyle(row.1 > 0 ? Palette.positive : Palette.negative)
+                                    Image(systemName: "chevron.right")
+                                        .font(.caption2.weight(.bold))
+                                        .foregroundStyle(.tertiary)
                                 }
-                                Spacer()
-                                Text(Money.text(abs(row.1), currency))
-                                    .font(.splitAmount(15))
-                                    .foregroundStyle(row.1 > 0 ? Palette.positive : Palette.negative)
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 11)
+                                .contentShape(Rectangle())
                             }
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 11)
+                            .buttonStyle(.plain)
                             if index < rows.count - 1 { Divider().overlay(Palette.line).padding(.leading, 62) }
                         }
                     }

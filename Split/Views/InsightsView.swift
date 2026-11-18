@@ -222,6 +222,7 @@ struct InsightsView: View {
             .frame(maxWidth: .infinity)
         }
         .background(AppBackground())
+        .ledgerDestinations()
         .navigationTitle("Insights")
         .navigationBarTitleDisplayMode(.inline)
     }

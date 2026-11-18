@@ -6,6 +6,7 @@ import SwiftUI
 struct EntryDetails: View {
     private let initial: LedgerEntry
     var group: ExpenseGroup
+    var embedded = false
 
     @EnvironmentObject private var store: ExpenseStore
     @EnvironmentObject private var session: SessionStore
@@ -27,9 +28,10 @@ struct EntryDetails: View {
     @State private var liking = false
     @State private var likeError: String?
 
-    init(entry: LedgerEntry, group: ExpenseGroup) {
+    init(entry: LedgerEntry, group: ExpenseGroup, embedded: Bool = false) {
         self.initial = entry
         self.group = group
+        self.embedded = embedded
     }
 
     private var entry: LedgerEntry {
@@ -77,8 +79,19 @@ struct EntryDetails: View {
     }
 
     var body: some View {
-        NavigationStack {
-            ScrollViewReader { proxy in
+        Group {
+            if embedded {
+                content
+            } else {
+                NavigationStack {
+                    content.ledgerDestinations()
+                }
+            }
+        }
+    }
+
+    private var content: some View {
+        ScrollViewReader { proxy in
             ScrollView {
                 VStack(spacing: 16) {
                     hero
@@ -103,40 +116,41 @@ struct EntryDetails: View {
                 .frame(maxWidth: .infinity)
             }
             .scrollDismissesKeyboard(.interactively)
-            }
-            .background(AppBackground())
-            .navigationTitle(entry.kind == "settlement" ? "Payment" : "Expense")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
+        }
+        .background(AppBackground())
+        .navigationTitle(entry.kind == "settlement" ? "Payment" : "Expense")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if !embedded {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { dismiss() }
                 }
             }
-            .refreshable { await store.sync() }
-            .sheet(item: $assignment) { value in
-                ClaimSheet(entry: entry, group: liveGroup, item: value.item)
+        }
+        .refreshable { await store.sync() }
+        .sheet(item: $assignment) { value in
+            ClaimSheet(entry: entry, group: liveGroup, item: value.item)
+        }
+        .fullScreenCover(item: $gallery) { presentation in
+            ReceiptViewer(presentation)
+        }
+        .sheet(isPresented: $editing) {
+            AddExpenseView(group: liveGroup, original: entry)
+        }
+        .confirmationDialog(
+            "Delete this entry and update balances?",
+            isPresented: $deleting,
+            titleVisibility: .visible
+        ) {
+            Button("Delete entry", role: .destructive) {
+                Task { await deleteEntry() }
             }
-            .fullScreenCover(item: $gallery) { presentation in
-                ReceiptViewer(presentation)
-            }
-            .sheet(isPresented: $editing) {
-                AddExpenseView(group: liveGroup, original: entry)
-            }
-            .confirmationDialog(
-                "Delete this entry and update balances?",
-                isPresented: $deleting,
-                titleVisibility: .visible
-            ) {
-                Button("Delete entry", role: .destructive) {
-                    Task { await deleteEntry() }
-                }
-                Button("Keep entry", role: .cancel) {}
-            } message: {
-                Text("This removes \(entry.title) for everyone in \(liveGroup.name).")
-            }
-            .onChange(of: store.state.snapshot.entries) { _, entries in
-                if !entries.contains(where: { $0.id == initial.id }) { dismiss() }
-            }
+            Button("Keep entry", role: .cancel) {}
+        } message: {
+            Text("This removes \(entry.title) for everyone in \(liveGroup.name).")
+        }
+        .onChange(of: store.state.snapshot.entries) { _, entries in
+            if !entries.contains(where: { $0.id == initial.id }) { dismiss() }
         }
     }
 
@@ -273,23 +287,31 @@ struct EntryDetails: View {
                     subtitle: entry.allPayers.count > 1 ? "Split across \(entry.allPayers.count) people" : nil
                 )
                 ForEach(entry.allPayers, id: \.memberID) { payer in
-                    HStack(spacing: 10) {
-                        Avatar(name: personName(payer.memberID), size: 34)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(displayName(payer.memberID))
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(Palette.ink)
-                            if entry.allPayers.count > 1 {
-                                Text("paid \(Money.text(payer.amount, entry.currency))")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
+                    NavigationLink(value: LedgerRoute.member(group: liveGroup.id, seat: payer.memberID)) {
+                        HStack(spacing: 10) {
+                            Avatar(name: personName(payer.memberID), size: 34)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(displayName(payer.memberID))
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(Palette.ink)
+                                if entry.allPayers.count > 1 {
+                                    Text("paid \(Money.text(payer.amount, entry.currency))")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
                             }
+                            Spacer()
+                            AmountText(minor: payer.amount, currency: entry.currency, size: 15)
+                            Image(systemName: "chevron.right")
+                                .font(.caption2.weight(.bold))
+                                .foregroundStyle(.tertiary)
                         }
-                        Spacer()
-                        AmountText(minor: payer.amount, currency: entry.currency, size: 15)
+                        .frame(minHeight: 40)
+                        .contentShape(Rectangle())
                     }
-                    .frame(minHeight: 40)
+                    .buttonStyle(.plain)
                     .accessibilityElement(children: .combine)
+                    .accessibilityHint("Opens this person's charges")
                 }
             }
         }
@@ -303,24 +325,32 @@ struct EntryDetails: View {
                     subtitle: entry.isSettlement ? nil : splitSubtitle
                 )
                 ForEach(entry.splits, id: \.memberID) { portion in
-                    HStack(spacing: 10) {
-                        Avatar(name: personName(portion.memberID), size: 32)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(displayName(portion.memberID))
-                                .font(.subheadline.weight(.medium))
-                                .foregroundStyle(Palette.ink)
-                            if entry.kind == "expense",
-                               let payer = entry.allPayers.first(where: { $0.memberID == portion.memberID }) {
-                                Text("paid \(Money.text(payer.amount, entry.currency))")
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
+                    NavigationLink(value: LedgerRoute.member(group: liveGroup.id, seat: portion.memberID)) {
+                        HStack(spacing: 10) {
+                            Avatar(name: personName(portion.memberID), size: 32)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(displayName(portion.memberID))
+                                    .font(.subheadline.weight(.medium))
+                                    .foregroundStyle(Palette.ink)
+                                if entry.kind == "expense",
+                                   let payer = entry.allPayers.first(where: { $0.memberID == portion.memberID }) {
+                                    Text("paid \(Money.text(payer.amount, entry.currency))")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
                             }
+                            Spacer()
+                            AmountText(minor: portion.amount, currency: entry.currency, size: 15)
+                            Image(systemName: "chevron.right")
+                                .font(.caption2.weight(.bold))
+                                .foregroundStyle(.tertiary)
                         }
-                        Spacer()
-                        AmountText(minor: portion.amount, currency: entry.currency, size: 15)
+                        .frame(minHeight: 40)
+                        .contentShape(Rectangle())
                     }
-                    .frame(minHeight: 40)
+                    .buttonStyle(.plain)
                     .accessibilityElement(children: .combine)
+                    .accessibilityHint("Opens this person's charges")
                 }
                 if entry.splits.isEmpty {
                     Text("No shares recorded for this entry.")

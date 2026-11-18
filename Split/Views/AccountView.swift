@@ -39,12 +39,12 @@ struct AccountView: View {
                 VStack(alignment: .leading, spacing: 20) {
                     if size == .regular {
                         HStack(alignment: .top, spacing: 18) {
-                            profile.frame(maxWidth: .infinity)
+                            profileLink.frame(maxWidth: .infinity)
                             freeCard.frame(maxWidth: 300, maxHeight: .infinity, alignment: .topLeading)
                         }
                         .fixedSize(horizontal: false, vertical: true)
                     } else {
-                        profile
+                        profileLink
                         freeCard
                     }
                     if size == .regular {
@@ -80,6 +80,7 @@ struct AccountView: View {
                 .frame(maxWidth: .infinity)
             }
             .background(AppBackground())
+            .ledgerDestinations()
             .navigationTitle("You")
             .confirmationDialog(
                 session.isDemo ? "Leave the sample preview?" : "Sign out?",
@@ -106,6 +107,12 @@ struct AccountView: View {
         }
     }
 
+    private var profileLink: some View {
+        NavigationLink(value: LedgerRoute.account(session.userID ?? "")) { profile }
+            .buttonStyle(.plain)
+            .accessibilityHint("Opens your charges by group")
+    }
+
     private var profile: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 14) {
@@ -122,6 +129,9 @@ struct AccountView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 0)
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(Palette.lime.opacity(0.5))
             }
             HStack(spacing: 0) {
                 stat("\(activeGroups.count)", label: "Groups")

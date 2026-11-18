@@ -1,26 +1,39 @@
 # Split by Yoink Labs
 
-Split is a free iPhone, iPad and iPhone Duo app for tracking shared expenses. It
-is a complete, no-paywall take on the Splitwise experience: a dashboard across
-every group, friends and one-to-one tabs, itemized receipts, comments and likes,
-search, charts, multi-currency settlement and a full activity feed. Every
-feature Splitwise puts behind Pro is free here.
+# Split by Yoink Labs
 
-The app is native SwiftUI, not an Ionic or web-wrapper project. It builds against
-the iOS 27.2 SDK with an iOS 18 deployment target and adopts the iPhone Duo
-layouts through standard SwiftUI containers: a system tab bar that moves to the
-vertical axis on the inner display, `NavigationSplitView` list/detail screens,
-and adaptive grids that grow from one to two columns with the available width.
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-[Join the TestFlight beta](https://testflight.apple.com/join/YX8W6bCx) · [Release and signing](docs/TESTFLIGHT.md) · [Simulator audit](docs/USABILITY.md) · [Screenshot gallery](screenshots/README.md)
+Split is a free web, iPhone, iPad and iPhone Duo app for tracking shared
+expenses. Start a trip, household, or two-person tab, record who paid, and see
+who owes whom. Groups can settle in one currency using historical or manual
+rates. Open source under MIT.
+
+It is also a complete, no-paywall take on the Splitwise experience: a dashboard
+across every group, friends and one-to-one tabs, itemized receipts, comments and
+likes, search, charts, multi-currency settlement, member statements and a full
+activity feed. Every feature Splitwise puts behind Pro is free here.
+
+The iOS app is native SwiftUI, not an Ionic or web-wrapper project. It builds
+against the iOS 27.2 SDK with an iOS 18 deployment target and adopts the iPhone
+Duo layouts through standard SwiftUI containers: a system tab bar that moves to
+the vertical axis on the inner display, `NavigationSplitView` list/detail
+screens, and adaptive grids that grow from one to two columns with the available
+width. The web client shares the same Worker, groups and cent allocations.
+
+[Join the TestFlight beta](https://testflight.apple.com/join/YX8W6bCx) · [Contribute](#contributing) · [Roadmap](ROADMAP.md) · [Changelog](CHANGELOG.md) · [Release and signing](docs/TESTFLIGHT.md) · [Simulator audit](docs/USABILITY.md) · [Screenshot gallery](screenshots/README.md)
 
 <p>
-  <img src="screenshots/light/groups.png" width="225" alt="Split groups in light appearance">
-  <img src="screenshots/dark/receipt.png" width="225" alt="Receipt photos and open purchases in dark appearance">
+  <img src="screenshots/split-drilldown/ios-member-light.png" width="205" alt="Harris’s charges on the Buenos Aires Trip">
+  <img src="screenshots/split-drilldown/ios-receipt-dark.png" width="205" alt="Parrilla dinner with its restaurant receipt and claimed items">
+  <img src="screenshots/split-drilldown/ios-split-with-light.png" width="205" alt="The four diners and their individual shares">
 </p>
 
-## What’s new in 0.5
+## What’s new in 0.7
 
+- **Member statements.** Tap **You** or any group member to see their charges
+  across shared groups. A person with several groups gets a picker, and the
+  Split with rows on a charge open another member directly.
 - **Home dashboard.** Per-currency totals for what you owe and are owed, every
   open balance by person, group cards, recent activity and a shareable balance
   reminder. Nothing is hidden behind an upgrade screen.
@@ -41,6 +54,8 @@ and adaptive grids that grow from one to two columns with the available width.
   background, Liquid Glass cards and controls on iOS 26+, and compact action
   clusters instead of full-width buttons. Light, dark, Dynamic Type and Reduce
   Motion are all first-class.
+- **A web client.** The same groups, expenses, receipts and member statements
+  are available in the browser at `split.yoinklabs.dev`.
 
 ## Using Split
 
@@ -56,10 +71,22 @@ and adaptive grids that grow from one to two columns with the available width.
 
 Supported currencies are USD, ARS, EUR, GBP, BRL, CAD, AUD, and MXN. Amounts use integer minor units. Largest-remainder allocation preserves every cent.
 
+## Split on the web
+
+[Open Split](https://split.yoinklabs.dev) and sign in with your Yoink account. Create or join a group, add an expense, attach receipt photos, enter line items, claim purchases, or record a payment from Balances. The browser uses the same group memberships and cent allocations as the iOS app. The browser accepts manual receipt items. iOS also offers on-device OCR.
+
+On either client, tap **You** or a person in a group to see their charges. People with several shared groups get a group picker. Tap a charge for the original receipt, purchases and each person's share, then choose another person under **Split with**. A placeholder has its own statement in that group. [Member navigation plan](docs/plans/member-drilldown.md) · [iOS and web screenshots](screenshots/split-drilldown)
+
+<p>
+  <img src="screenshots/split-drilldown/web-balances-desktop.png" width="510" alt="Buenos Aires Trip balances in the desktop web app">
+  <img src="screenshots/split-drilldown/web-member-mobile.png" width="180" alt="Harris’s charge history in a mobile browser">
+</p>
+
 ## Architecture
 
 | Component | Responsibility |
 | --- | --- |
+| [Web app](web) | Responsive React client, system/light/dark appearance, Clerk sign-in and in-memory group data |
 | [SwiftUI app](Split) | iOS 18+, system appearance and Dynamic Type, protected per-account cache, and FIFO outbox for new groups, expenses and payments |
 | [Split Worker](worker/src/index.ts) | Authenticated ledger and membership API, invitation landing page, universal-link association and CLI/MCP routes |
 | [D1 migrations](worker/migrations) | Groups, stable member IDs, private contact records, identity aliases, expenses, hashed invites, revisions via conditional updates, deletion tombstones, private receipt images and device credentials |
@@ -72,6 +99,8 @@ New ledger records without photos can be entered offline. Photo uploads, full-si
 Use Xcode with an iOS 18+ simulator, XcodeGen, Node 22.18+ and npm. Install project dependencies and generate the Xcode project from the repository root.
 
 ```sh
+npm ci --prefix web
+npm run build --prefix web
 npm ci --prefix worker
 xcodegen generate
 npm run typecheck --prefix worker
@@ -88,7 +117,7 @@ npm run db:local --prefix worker
 ade secrets exec --env CLERK_SECRET_KEY -- /opt/homebrew/bin/node worker/node_modules/wrangler/bin/wrangler.js dev --local --config worker/wrangler.jsonc --port 8787
 ```
 
-Use the absolute path to your Node executable if it differs. Add `-splitLocalAPI` to the **Debug simulator** launch arguments to use loopback port 8787. Local ledger storage has its own cache and outbox. The local Worker verifies real Clerk sessions. The automated Worker tests use isolated D1 test data and a stubbed identity response.
+Without ADE, copy `worker/.env.example` to `worker/.dev.vars`, fill in your own Clerk secret key and run `npm run dev --prefix worker -- --local --port 8787`. Use the absolute path to your Node executable if it differs. Add `-splitLocalAPI` to the **Debug simulator** launch arguments to use loopback port 8787. Local ledger storage has its own cache and outbox. The local Worker verifies real Clerk sessions. The automated Worker tests use isolated D1 test data and a stubbed identity response.
 
 On macOS file-provider volumes, Xcode may reject Finder metadata when signing a simulator bundle. Run `xcodebuild` with the same project, scheme and destination and the build setting `OTHER_CODE_SIGN_FLAGS=--strip-disallowed-xattrs`. This preserves normal signing and applies to dependency bundles as well.
 
@@ -97,13 +126,13 @@ On macOS file-provider volumes, Xcode may reject Finder metadata when signing a 
 | Name | Where it belongs |
 | --- | --- |
 | `CLERK_SECRET_KEY` | Split Worker secret and ADE vault. Used to read the authenticated user’s verified identity |
-| `CLERK_ISSUER`, `APP_URL` | Public Worker configuration |
+| `CLERK_ISSUER`, `APP_URL`, `WEB_URL` | Public Worker configuration |
 | `DB` | D1 binding to the database named `split` |
 | `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` | ADE deployment credentials |
 | `SPLIT_TOKEN`, `SPLIT_API_URL` | Optional CLI environment settings |
 | Clerk publishable key | Public client configuration in [SplitApp.swift](Split/SplitApp.swift) |
 
-The current production route is `split-api.yoinklabs.dev`. Verify the `split-api` Worker name and `split` database in [wrangler.jsonc](worker/wrangler.jsonc) before deployment. Apply outstanding migrations, then deploy from a revision containing both the iOS ledger and CLI/MCP routes. The Clerk secret must already be provisioned on this Worker. Keep credentials in the vault.
+The same Worker serves the API at `split-api.yoinklabs.dev` and the app at `split.yoinklabs.dev`. Build the web bundle before running Wrangler, including Worker tests and deployment. To use a separate Clerk instance for development, configure its issuer, JWKS, web origin, and matching public key in the client. Verify the `split-api` Worker name and `split` database in [wrangler.jsonc](worker/wrangler.jsonc) before deployment. Apply outstanding migrations, then deploy from a revision containing both the iOS ledger and CLI/MCP routes. The Clerk secret must already be provisioned on this Worker. Keep credentials in the vault.
 
 ```sh
 ade secrets exec --env CLOUDFLARE_API_TOKEN --env CLOUDFLARE_ACCOUNT_ID -- /opt/homebrew/bin/node worker/node_modules/wrangler/bin/wrangler.js d1 migrations apply split --remote --config worker/wrangler.jsonc
@@ -112,7 +141,7 @@ ade secrets exec --env CLOUDFLARE_API_TOKEN --env CLOUDFLARE_ACCOUNT_ID -- /opt/
 
 ## License
 
-This repository has no published open-source license. Contact Yoink Labs for reuse permission. Third-party dependencies retain their own licenses.
+Open source under MIT. See [LICENSE](LICENSE). Adapted third-party code and its retained license texts are listed in [third-party notices](THIRD_PARTY_NOTICES.md); dependencies keep their own licenses. Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request and report vulnerabilities as described in [SECURITY.md](SECURITY.md).
 
 ## CLI and MCP
 
@@ -154,10 +183,38 @@ Remote MCP clients can use Streamable HTTP at `https://split-api.yoinklabs.dev/m
 
 The Worker and its scheduled jobs use the existing free-tier Split D1 database. Frankfurter needs no API key. Source attributions and retained license texts are in [third-party notices](THIRD_PARTY_NOTICES.md).
 
+## Contributing
+
+Split is open source and built in the open. Contributions of every size are welcome: start with a [good first issue](https://github.com/yoink-labs/split/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22good%20first%20issue%22), browse [help wanted](https://github.com/yoink-labs/split/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22help%20wanted%22), check the [roadmap](ROADMAP.md), or ask in [Discussions](https://github.com/yoink-labs/split/discussions). Read [CONTRIBUTING.md](CONTRIBUTING.md) and the [Code of Conduct](CODE_OF_CONDUCT.md) before your first PR.
+
+### Local setup without our keys
+
+You need a Mac with Xcode, [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`) and Node 22. No Yoink Labs account, Cloudflare account or API key is required.
+
+1. **Install and generate the project.**
+   ```sh
+   git clone https://github.com/yoink-labs/split.git && cd split
+   npm ci --prefix worker
+   xcodegen generate
+   ```
+2. **Run the app with sample data.** Open `Split.xcodeproj`, run the **Split** scheme on a simulator and tap **Take a look around**. The sample preview runs entirely on the device with fictional data, so most UI work needs no backend.
+3. **Run the Worker locally.** `wrangler dev` runs the API on your machine against a local D1 database (SQLite under `worker/.wrangler/`, gitignored). Nothing touches production.
+   ```sh
+   cp worker/.env.example worker/.dev.vars   # leave CLERK_SECRET_KEY empty
+   npm run db:local --prefix worker
+   npm run dev --prefix worker -- --local --port 8787
+   ```
+   Add `-splitLocalAPI` to the **Debug simulator** launch arguments to point the app at `localhost:8787`. Without `CLERK_SECRET_KEY` the Worker still verifies sign-ins with Clerk's public keys; only claiming placeholders by verified email is skipped.
+4. **Point the CLI at your Worker.** `SPLIT_API_URL=http://localhost:8787 cli/bin/split --help` (see `cli/.env.example`).
+5. **Run the checks.** These are the same checks CI runs on every pull request, including PRs from forks, without any secrets.
+   ```sh
+   npm run typecheck --prefix worker
+   npm test --prefix worker      # isolated D1 and a stubbed identity service
+   node --test cli/test/*.test.mjs
+   ```
+
+Never commit `.dev.vars`, `.env` files or keys. Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
+
 ## Roadmap
 
-- Push reminders and monthly statements.
-- A web/PWA companion for joining, claiming and settling without an iPhone.
-- Extend the existing offline queue to edits, claims and other shared changes.
-- Negative expenses for refunds and bank import.
-- Spanish localization.
+See [ROADMAP.md](ROADMAP.md) for what is shipped, in progress and planned, and [CHANGELOG.md](CHANGELOG.md) for each release.

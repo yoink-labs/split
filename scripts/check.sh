@@ -1,5 +1,7 @@
 #!/bin/bash
 set -euo pipefail
+npm ci --prefix web
+npm run build --prefix web
 npm ci --prefix worker
 npm run typecheck --prefix worker
 npm test --prefix worker

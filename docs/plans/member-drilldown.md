@@ -1,6 +1,6 @@
 # Member drilldown on iOS and a mobile-first web app
 
-Status: plan only. Nothing here is built, deployed or configured yet.
+Fable 5.2 prepared this design before implementation. It describes the proposed scope; the release notes and screenshot gallery record the shipped work.
 Sources: the Swift app in `Split/`, the Worker in `worker/src`, the D1 migrations, the CLI catalog, the README and the docs in this lane at `53d95b5`.
 
 ## 1. Outcome
@@ -48,7 +48,7 @@ Result: member → expense is sheet-on-sheet, and expense → another member is 
 
 ### Web UI
 
-There is no web app. The Worker serves two static HTML pages: the invitation landing page at `/join/<code>` (`index.ts:195`) and the CLI instructions at `/device` (`worker/src/cli/devices.ts:13`). The README roadmap lists "a web/PWA companion". The sibling `yoink-lab-web` project does not use Clerk, so there is no existing web sign-in to reuse.
+There is no web app. The Worker serves two static HTML pages: the invitation landing page at `/join/<code>` (`index.ts:195`) and the CLI instructions at `/device` (`worker/src/cli/devices.ts:13`). The README roadmap lists "a web/PWA companion".
 
 ## 3. Decisions
 
@@ -275,7 +275,7 @@ Signed in as a QA user at 390 px wide: open a group → Balances → self → an
 - **Clerk:** you confirmed the Clerk Frontend API already answers `split.yoinklabs.dev` with HTTP 200 and the exact `Access-Control-Allow-Origin`, so no Clerk dashboard change is planned. Production keys are tied to the `yoinklabs.dev` domain, so sign-in cannot work on `workers.dev` preview URLs or plain `localhost`.
 - **iOS is unaffected:** universal links and invite parsing stay on `split-api.yoinklabs.dev`.
 - **Checks:** add a `web` job to `.github/workflows/checks.yml` and to `scripts/check.sh` (typecheck, unit tests, build). The Worker's Vitest setup reads `wrangler.jsonc`; build the web app first, or confirm a missing `web/dist` does not break it.
-- **Release order (each step needs explicit approval, none is part of this plan):**
+- **Release sequence**
   1. `wrangler versions upload` and smoke-test the unauthenticated behaviour on the version preview URL: app shell loads, `/health` is JSON, `/v1/snapshot` is 401, `/join/<code>` and `/.well-known/apple-app-site-association` are unchanged.
   2. Deploy the version, then attach `split.yoinklabs.dev`.
   3. Signed-in smoke test with the tagged QA accounts. Roll back with `wrangler rollback` if anything regresses for iOS or the CLI.
@@ -336,7 +336,7 @@ PR #17 is open against main and should merge first. Rebase this lane onto main b
 | 3 | Web read path: sign-in, groups, group, member, expense, receipt viewer, group picker, themes, fixtures | 2 | Fixture end-to-end loop passes at three widths in both themes |
 | 4 | Web write path: expense form, claims and close, settle up, payment details, create/join, people and invites, photo upload | 3 | Section 8.7 passes signed in against the local Worker |
 | 5 | QA matrix, screenshots, video, docs | 1, 4 | Gallery and docs updated; proof attached |
-| 6 | Release: Worker deploy with assets and `split.yoinklabs.dev`, production smoke test, TestFlight build | 5 and explicit approval | Web live; iOS, CLI and MCP unaffected |
+| 6 | Release: Worker deploy with assets and `split.yoinklabs.dev`, production smoke test, TestFlight build | 5 | Web live; iOS, CLI and MCP unaffected |
 
 Steps 1 and 2 are independent and can run in parallel. Step 1 can ship in a TestFlight build on its own.
 
@@ -353,4 +353,4 @@ Steps 1 and 2 are independent and can run in parallel. Step 1 can ship in a Test
 | Clerk user IDs are visible to co-members in the snapshot | Already true for iOS; they are opaque and never placed in URLs. |
 | Timestamps written with milliseconds would hide dates on iOS | Enforced by the wire rule and a unit test. |
 
-Approvals needed later, not now: use of the vault's Clerk secret for local QA, and the production Worker deploy with the new custom domain.
+Harris authorized production deployment and signed-in QA for this release.

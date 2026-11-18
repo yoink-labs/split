@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-Split is a free iPhone and iPad app for tracking shared expenses. Start a trip, household, or two-person tab, record who paid, and see who owes whom. Groups can settle in one currency using historical or manual rates. Open source under MIT.
+Split is a free web, iPhone and iPad app for tracking shared expenses. Start a trip, household, or two-person tab, record who paid, and see who owes whom. Groups can settle in one currency using historical or manual rates. Open source under MIT.
 
 [Join the TestFlight beta](https://testflight.apple.com/join/YX8W6bCx) · [Contribute](#contributing) · [Roadmap](ROADMAP.md) · [Changelog](CHANGELOG.md) · [Release and signing](docs/TESTFLIGHT.md) · [Simulator audit](docs/USABILITY.md) · [Screenshot gallery](screenshots/README.md)
 
@@ -25,10 +25,17 @@ Split is a free iPhone and iPad app for tracking shared expenses. Start a trip, 
 
 Supported currencies are USD, ARS, EUR, GBP, BRL, CAD, AUD, and MXN. Amounts use integer minor units. Largest-remainder allocation preserves every cent.
 
+## Split on the web
+
+[Open Split](https://split.yoinklabs.dev) and sign in with your Yoink account. Create or join a group, add an expense, attach receipt photos, enter line items, claim purchases, or record a payment from Balances. The browser uses the same group memberships and cent allocations as the iOS app. The browser accepts manual receipt items. iOS also offers on-device OCR.
+
+On either client, tap **You** or a person in a group to see their charges. People with several shared groups get a group picker. Tap a charge for the original receipt, purchases and each person's share, then choose another person under **Split with**. A placeholder has its own statement in that group. [Member navigation plan](docs/plans/member-drilldown.md) · [iOS and web screenshots](screenshots/split-drilldown)
+
 ## Architecture
 
 | Component | Responsibility |
 | --- | --- |
+| [Web app](web) | Responsive React client, system/light/dark appearance, Clerk sign-in and in-memory group data |
 | [SwiftUI app](Split) | iOS 18+, system appearance and Dynamic Type, protected per-account cache, and FIFO outbox for new groups, expenses and payments |
 | [Split Worker](worker/src/index.ts) | Authenticated ledger and membership API, invitation landing page, universal-link association and CLI/MCP routes |
 | [D1 migrations](worker/migrations) | Groups, stable member IDs, private contact records, identity aliases, expenses, hashed invites, revisions via conditional updates, deletion tombstones, private receipt images and device credentials |
@@ -41,6 +48,8 @@ New ledger records without photos can be entered offline. Photo uploads, full-si
 Use Xcode with an iOS 18+ simulator, XcodeGen, Node 22.18+ and npm. Install project dependencies and generate the Xcode project from the repository root.
 
 ```sh
+npm ci --prefix web
+npm run build --prefix web
 npm ci --prefix worker
 xcodegen generate
 npm run typecheck --prefix worker
@@ -66,13 +75,13 @@ On macOS file-provider volumes, Xcode may reject Finder metadata when signing a 
 | Name | Where it belongs |
 | --- | --- |
 | `CLERK_SECRET_KEY` | Split Worker secret and ADE vault. Used to read the authenticated user’s verified identity |
-| `CLERK_ISSUER`, `APP_URL` | Public Worker configuration |
+| `CLERK_ISSUER`, `APP_URL`, `WEB_URL` | Public Worker configuration |
 | `DB` | D1 binding to the database named `split` |
 | `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` | ADE deployment credentials |
 | `SPLIT_TOKEN`, `SPLIT_API_URL` | Optional CLI environment settings |
 | Clerk publishable key | Public client configuration in [SplitApp.swift](Split/SplitApp.swift) |
 
-The current production route is `split-api.yoinklabs.dev`. Verify the `split-api` Worker name and `split` database in [wrangler.jsonc](worker/wrangler.jsonc) before deployment. Apply outstanding migrations, then deploy from a revision containing both the iOS ledger and CLI/MCP routes. The Clerk secret must already be provisioned on this Worker. Keep credentials in the vault.
+The same Worker serves the API at `split-api.yoinklabs.dev` and the app at `split.yoinklabs.dev`. Build the web bundle before running Wrangler, including Worker tests and deployment. To use a separate Clerk instance for development, configure its issuer, JWKS, web origin, and matching public key in the client. Verify the `split-api` Worker name and `split` database in [wrangler.jsonc](worker/wrangler.jsonc) before deployment. Apply outstanding migrations, then deploy from a revision containing both the iOS ledger and CLI/MCP routes. The Clerk secret must already be provisioned on this Worker. Keep credentials in the vault.
 
 ```sh
 ade secrets exec --env CLOUDFLARE_API_TOKEN --env CLOUDFLARE_ACCOUNT_ID -- /opt/homebrew/bin/node worker/node_modules/wrangler/bin/wrangler.js d1 migrations apply split --remote --config worker/wrangler.jsonc

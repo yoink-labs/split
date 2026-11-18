@@ -12,6 +12,9 @@ is noted next to each release. The CLI is versioned separately with
 
 ### Added
 
+- Group-scoped member statements and linked receipt participants on iOS, including placeholders.
+- A mobile web app for shared groups, expense entry, photographed receipts, item claims, balances and payments.
+
 - Split is open source under the MIT license, with contributing guide, code
   of conduct, security policy, issue and pull request templates
   ([#7](https://github.com/yoink-labs/split/pull/7)).

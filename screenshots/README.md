@@ -18,3 +18,11 @@ The gallery shows the 0.3 receipt release and 0.4 group tools on the lane-owned 
 | CSV import preview | [Light](light/csv-import.png) | [Dark](dark/csv-import.png) |
 
 [Web invitation landing page](web-fallback.png) · [Baseline audit and production flow checks](../docs/USABILITY.md)
+
+## Member drill-down
+
+| iOS screen | Light | Dark |
+| --- | --- | --- |
+| Member charges and group picker | [Light](split-drilldown/ios-member-light.png) | [Dark](split-drilldown/ios-member-dark.png) |
+| Original expense and receipt | [Light](split-drilldown/ios-receipt-light.png) | [Dark](split-drilldown/ios-receipt-dark.png) |
+| Claims and split-with amounts | [Light](split-drilldown/ios-split-with-light.png) | [Dark](split-drilldown/ios-split-with-dark.png) |

@@ -1,0 +1,7 @@
+/*
+  Referrer-Policy: no-referrer
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Content-Security-Policy: default-src 'self'; script-src 'self' https://clerk.yoinklabs.dev https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data: https://img.clerk.com https://images.clerk.dev https://clerk.yoinklabs.dev; connect-src 'self' https://clerk.yoinklabs.dev https://*.clerk.com; frame-src https://challenges.cloudflare.com https://clerk.yoinklabs.dev https://accounts.yoinklabs.dev; worker-src 'self' blob:; font-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self' https://*.yoinklabs.dev
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable

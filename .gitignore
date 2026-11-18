@@ -31,3 +31,5 @@ xcuserdata/
 *.xcarchive
 *.dSYM.zip
 *.tar.gz
+
+web/dist/

@@ -8,6 +8,9 @@ import { createRemoteJWKSet, jwtVerify } from 'jose';
 import { currencies, InputError, validID, validateEntry } from './ledger';
 const jwks = createRemoteJWKSet(new URL('https://clerk.yoinklabs.dev/.well-known/jwks.json'));
 interface Member {id:string; groupID:string; userID:string|null; name:string; email?:string; phone?:string;payment?:string}
+export function validParty(azp: unknown, webOrigin: string) {
+  return azp === undefined || (typeof azp === 'string' && [webOrigin, 'com.yoinklabs.split', 'https://yoinklabs.dev', 'https://www.yoinklabs.dev'].includes(azp));
+}
 function contactInfo(emailInput:unknown,phoneInput:unknown) {
     const email=typeof emailInput==='string' ? emailInput.trim().toLowerCase() : '';
     const phone=typeof phoneInput==='string' ? phoneInput.trim() : '';
@@ -43,7 +46,7 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
     });
     const entries=(await env.DB.prepare('SELECT e.payload,e.author,(SELECT cadence FROM recurring WHERE entry_id=e.id) AS recurrence,(SELECT json_group_array(id) FROM receipts WHERE entry_id=e.id) AS photos FROM entries e JOIN members m ON m.group_id=e.group_id WHERE m.user_id=? AND e.id NOT IN (SELECT entry_id FROM deleted_entries) ORDER BY e.created_at DESC LIMIT 5001').bind(userID).all<{payload:string;author:string;recurrence:string|null;photos:string}>()).results;
     if(entries.length>5000)throw new HTTPError(409,'This beta supports up to 5,000 entries. Export support is coming.');
-    return json({groups:all,entries:entries.map(e=>({...resolveEntry(JSON.parse(e.payload),aliases), recurrence:e.recurrence,receiptIDs:JSON.parse(e.photos),editable:e.author===userID}))});
+    return json({userID,groups:all,entries:entries.map(e=>({...resolveEntry(JSON.parse(e.payload),aliases), recurrence:e.recurrence,receiptIDs:JSON.parse(e.photos),editable:e.author===userID}))});
   }
   if(path==='/v1/groups' && request.method==='POST') {
     const b=await body(request);
@@ -193,14 +196,14 @@ export default {
    if(url.pathname==='/health')return json({service:'split-api',status:'ok'});
    if(url.pathname==='/.well-known/apple-app-site-association') return json({applinks:{details:[{appIDs:['64PUT29XZ8.com.yoinklabs.split'],components:[{'/':'/join/*'}]}]}});
    const invite=url.pathname.match(/^\/join\/((?:[a-f0-9-]{72}|[A-HJ-NP-Z2-9]{12}))$/);
-   if(invite && request.method==='GET') return new Response(`<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><title>Join your group · Split</title><style>body{font:20px system-ui;background:#f4f3ee;color:#172e27;max-width:480px;margin:5vh auto;padding:28px}a{display:block;background:#183f34;color:white;padding:18px;border-radius:18px;text-align:center;text-decoration:none}p{line-height:1.6}@media(prefers-color-scheme:dark){body{background:#101b17;color:#edf3ea}}</style><svg role="img" aria-label="Split logo" width="72" height="72" viewBox="0 0 1024 1024"><rect width="1024" height="1024" rx="240" fill="#d1f091"/><g fill="#12382b"><rect x="222" y="340" width="580" height="142" rx="71"/><rect x="222" y="542" width="580" height="142" rx="71"/></g><path d="M518 744H622L506 280H402Z" fill="#d1f091"/></svg><h1>Join a group on Split</h1><p>Open your invitation on iPhone or iPad.</p><a href="com.yoinklabs.split://join/${invite[1]}">Open Split</a><p><a href="https://testflight.apple.com/join/YX8W6bCx">Get Split on TestFlight</a></p><p>${invite[1].length===12 ? `You can also choose <b>Join group</b> in Split and enter <strong>${invite[1]}</strong>.` : "After installing Split, open this invitation again to claim your place."}</p>`,{headers:{'Content-Type':'text/html; charset=utf-8','Referrer-Policy':'no-referrer','Content-Security-Policy':"default-src 'none'; style-src 'unsafe-inline'"}});
+   if(invite && request.method==='GET') return new Response(`<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><title>Join your group · Split</title><style>body{font:20px system-ui;background:#f4f3ee;color:#172e27;max-width:480px;margin:5vh auto;padding:28px}a{display:block;background:#183f34;color:white;padding:18px;border-radius:18px;text-align:center;text-decoration:none}p{line-height:1.6}@media(prefers-color-scheme:dark){body{background:#101b17;color:#edf3ea}}</style><svg role="img" aria-label="Split logo" width="72" height="72" viewBox="0 0 1024 1024"><rect width="1024" height="1024" rx="240" fill="#d1f091"/><g fill="#12382b"><rect x="222" y="340" width="580" height="142" rx="71"/><rect x="222" y="542" width="580" height="142" rx="71"/></g><path d="M518 744H622L506 280H402Z" fill="#d1f091"/></svg><h1>Join a group on Split</h1><p>Join this group on the web or in the iOS app.</p><a href="https://split.yoinklabs.dev/invite/${invite[1]}">Continue on the web</a><br><a href="com.yoinklabs.split://join/${invite[1]}">Open Split</a><p><a href="https://testflight.apple.com/join/YX8W6bCx">Get Split on TestFlight</a></p><p>${invite[1].length===12 ? `You can also choose <b>Join group</b> in Split and enter <strong>${invite[1]}</strong>.` : "After installing Split, open this invitation again to claim your place."}</p>`,{headers:{'Content-Type':'text/html; charset=utf-8','Referrer-Policy':'no-referrer','Content-Security-Policy':"default-src 'none'; style-src 'unsafe-inline'"}});
    const publicDevice = await deviceRoute(request, env);
    if (publicDevice) return publicDevice;
    const token=request.headers.get('Authorization')?.match(/^Bearer (.+)$/)?.[1];if(!token)throw new HTTPError(401,'Sign in to sync your expenses.');
    let userID:string;
    const device = token.startsWith('spl_') ? await deviceIdentity(env, token) : null;
    if (device) userID = device.user_id;
-   else try{const {payload}=await jwtVerify(token,jwks,{issuer:env.CLERK_ISSUER,algorithms:['RS256'],requiredClaims:['exp','sub','iat']});if(!payload.sub || (payload.azp && !['com.yoinklabs.split','https://yoinklabs.dev','https://www.yoinklabs.dev'].includes(String(payload.azp))))throw 0;userID=payload.sub;}catch{throw new HTTPError(401,'Your session expired. Sign in again.');}
+   else try{const {payload}=await jwtVerify(token,jwks,{issuer:env.CLERK_ISSUER,algorithms:['RS256'],requiredClaims:['exp','sub','iat']});if(!payload.sub || !validParty(payload.azp, env.WEB_URL))throw 0;userID=payload.sub;}catch{throw new HTTPError(401,'Your session expired. Sign in again.');}
    if (url.pathname.startsWith('/v1/device/')) return await manageDevices(request, env, userID, device?.id);
    if (url.pathname === '/mcp' || url.pathname === '/v1/cli') {
      if (!device) throw new HTTPError(403, 'Sign in with a Split device token.');

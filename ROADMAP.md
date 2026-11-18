@@ -35,14 +35,14 @@ and [help wanted](https://github.com/yoink-labs/split/issues?q=is%3Aissue%20is%3
 - **Open source under MIT**
   ([#7](https://github.com/yoink-labs/split/pull/7)).
 
+- **Member charges and web app.** Open a member, charge, receipt or another participant on iOS and the web. Join, claim and settle at [Split](https://split.yoinklabs.dev).
+
 ## In progress
 
 - **Splitwise parity, Liquid Glass and iPhone Duo (0.5).** A home dashboard,
   friends, comments and likes, search, insights charts, multiple payers and
   archived groups ([#6](https://github.com/yoink-labs/split/pull/6),
   [plan](https://github.com/yoink-labs/split/blob/ade/splitwise-website-login/docs/SPLITWISE_PARITY.md)).
-- **Web app and drill-down views**, so people can join, claim and settle
-  without an iPhone.
 
 ## Planned
 

@@ -438,7 +438,12 @@ export function GroupScreen() {
     [open, setOpen] = useState(false);
   const g = data.groups.find((g) => g.id === gid);
   if (!g) return <p>Group unavailable.</p>;
-  const entries = data.entries.filter((e) => e.groupID === gid),
+  const entries = data.entries
+      .filter((e) => e.groupID === gid)
+      .sort(
+        (a, b) =>
+          b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id),
+      ),
     view = query.get("tab") ?? "expenses";
   return (
     <>

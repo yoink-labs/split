@@ -7,8 +7,9 @@ Split is a free web, iPhone and iPad app for tracking shared expenses. Start a t
 [Join the TestFlight beta](https://testflight.apple.com/join/YX8W6bCx) · [Contribute](#contributing) · [Roadmap](ROADMAP.md) · [Changelog](CHANGELOG.md) · [Release and signing](docs/TESTFLIGHT.md) · [Simulator audit](docs/USABILITY.md) · [Screenshot gallery](screenshots/README.md)
 
 <p>
-  <img src="screenshots/light/groups.png" width="225" alt="Split groups in light appearance">
-  <img src="screenshots/dark/receipt.png" width="225" alt="Receipt photos and open purchases in dark appearance">
+  <img src="screenshots/split-drilldown/ios-member-light.png" width="205" alt="Harris’s charges on the Buenos Aires Trip">
+  <img src="screenshots/split-drilldown/ios-receipt-dark.png" width="205" alt="Parrilla dinner with its restaurant receipt and claimed items">
+  <img src="screenshots/split-drilldown/ios-split-with-light.png" width="205" alt="The four diners and their individual shares">
 </p>
 
 ## Using Split
@@ -30,6 +31,11 @@ Supported currencies are USD, ARS, EUR, GBP, BRL, CAD, AUD, and MXN. Amounts use
 [Open Split](https://split.yoinklabs.dev) and sign in with your Yoink account. Create or join a group, add an expense, attach receipt photos, enter line items, claim purchases, or record a payment from Balances. The browser uses the same group memberships and cent allocations as the iOS app. The browser accepts manual receipt items. iOS also offers on-device OCR.
 
 On either client, tap **You** or a person in a group to see their charges. People with several shared groups get a group picker. Tap a charge for the original receipt, purchases and each person's share, then choose another person under **Split with**. A placeholder has its own statement in that group. [Member navigation plan](docs/plans/member-drilldown.md) · [iOS and web screenshots](screenshots/split-drilldown)
+
+<p>
+  <img src="screenshots/split-drilldown/web-balances-desktop.png" width="510" alt="Buenos Aires Trip balances in the desktop web app">
+  <img src="screenshots/split-drilldown/web-member-mobile.png" width="180" alt="Harris’s charge history in a mobile browser">
+</p>
 
 ## Architecture
 

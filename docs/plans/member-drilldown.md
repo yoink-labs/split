@@ -272,7 +272,7 @@ Signed in as a QA user at 390 px wide: open a group → Balances → self → an
 
 - **Shape:** `npm run build --prefix web` produces `web/dist`; `wrangler deploy` on the existing `split-api` Worker uploads code and assets together. `split.yoinklabs.dev` is a second custom domain on that Worker. Nothing new is billed: static asset requests are free and unlimited, and API calls share the existing 100,000 requests per day.
 - **Routing:** the paths in `run_worker_first` reach the Worker exactly as today (API, MCP, health, invitation page, device page, universal-link association). Everything else is an asset or the app shell. The app redirects to `split.yoinklabs.dev` if opened on the API hostname.
-- **Clerk:** you confirmed the Clerk Frontend API already answers `split.yoinklabs.dev` with HTTP 200 and the exact `Access-Control-Allow-Origin`, so no Clerk dashboard change is planned. Production keys are tied to the `yoinklabs.dev` domain, so sign-in cannot work on `workers.dev` preview URLs or plain `localhost`.
+- **Clerk:** an initial environment request returned 200 for the origin. During signed-in browser verification Clerk required its subdomain allowlist entry. The release appended `split.yoinklabs.dev` and preserved the existing entries. Production keys are tied to the `yoinklabs.dev` domain, so sign-in cannot work on `workers.dev` preview URLs or plain `localhost`.
 - **iOS is unaffected:** universal links and invite parsing stay on `split-api.yoinklabs.dev`.
 - **Checks:** add a `web` job to `.github/workflows/checks.yml` and to `scripts/check.sh` (typecheck, unit tests, build). The Worker's Vitest setup reads `wrangler.jsonc`; build the web app first, or confirm a missing `web/dist` does not break it.
 - **Release sequence**

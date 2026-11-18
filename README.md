@@ -29,6 +29,20 @@ width. The web client shares the same Worker, groups and cent allocations.
   <img src="screenshots/split-drilldown/ios-split-with-light.png" width="205" alt="The four diners and their individual shares">
 </p>
 
+## What’s new in 0.8
+
+- **Import from Splitwise.** Export each group from Splitwise (group → settings
+  gear → **Export as spreadsheet**; in the app, the **Export** button at the end
+  of the group's header menu) and pick one or several CSVs. Split previews each
+  group, lets you match names to yourself, existing members or placeholders,
+  and confirms the balances equal Splitwise's own **Total balance** rows to the
+  cent before anything is saved. [How it works](docs/SPLITWISE_IMPORT.md)
+- **Free currency conversion.** Expenses in another currency show the converted
+  amount and the rate for that day, from Frankfurter (ECB) or the BCRA official
+  rate for pesos, and you can enter your own rate for the blue dollar.
+  **Show in** converts Home, group and member totals to your home currency.
+  Settle up in any currency. No Pro tier, no API key, no paywall.
+
 ## What’s new in 0.7
 
 - **Member statements.** Tap **You** or any group member to see their charges

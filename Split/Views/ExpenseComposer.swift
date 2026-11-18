@@ -1136,6 +1136,14 @@ struct AddExpenseView: View {
         currency = original?.currency ?? group.currency
         title = original?.title ?? ""
         amount = original.map { Money.input($0.amount) } ?? ""
+        #if DEBUG
+        // Simulator QA: `-splitComposerCurrency USD -splitComposerAmount 12 -splitComposerTitle Taxi` presets a new expense.
+        if original == nil, let preset = UserDefaults.standard.string(forKey: "splitComposerCurrency"), Money.currencies.contains(preset) {
+            currency = preset
+            amount = UserDefaults.standard.string(forKey: "splitComposerAmount") ?? amount
+            title = UserDefaults.standard.string(forKey: "splitComposerTitle") ?? title
+        }
+        #endif
         category = original?.category ?? ""
         notes = original?.notes ?? ""
         bill = original?.bill ?? ReceiptBill()

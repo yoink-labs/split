@@ -1,6 +1,6 @@
 # TestFlight
 
-Split is listed under Undrift LLC in App Store Connect. The bundle is `com.yoinklabs.split`, team `64PUT29XZ8`, App Store Connect app `6836072005`. The 0.7.1 UI consistency build is 9, distributed to Yoink Internal only. The 0.7 release uses build 8. It follows the member drill-down release 0.6.0 (7) and the 0.4 build 5. It adds the Splitwise-parity dashboard, friends, comments and likes, search, insights charts, Liquid Glass surfaces, the iPhone Duo layouts and receipt claimant chips on top of member statements and the web client.
+Split is listed under Undrift LLC in App Store Connect. The bundle is `com.yoinklabs.split`, team `64PUT29XZ8`, App Store Connect app `6836072005`. The 0.8.0 build 10 adds Splitwise import and free currency conversion and is distributed to Yoink Internal and, after external beta review, Public Beta. The 0.7.1 UI consistency build is 9, distributed to Yoink Internal only. The 0.7 release uses build 8. It follows the member drill-down release 0.6.0 (7) and the 0.4 build 5. It adds the Splitwise-parity dashboard, friends, comments and likes, search, insights charts, Liquid Glass surfaces, the iPhone Duo layouts and receipt claimant chips on top of member statements and the web client.
 
 [Public Beta](https://testflight.apple.com/join/YX8W6bCx) · [Live build and beta review status](https://appstoreconnect.apple.com/apps/6836072005/testflight/ios)
 

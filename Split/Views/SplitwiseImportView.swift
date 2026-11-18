@@ -434,10 +434,10 @@ private struct ImportDraftCard: View {
         VStack(alignment: .leading, spacing: 10) {
             Text("People").font(.subheadline.weight(.semibold)).foregroundStyle(Palette.ink)
             ForEach(draft.parsed.members, id: \.self) { name in
-                HStack(spacing: 10) {
+                HStack(alignment: .center, spacing: 10) {
                     Avatar(name: name, size: 32)
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(name).font(.subheadline).foregroundStyle(Palette.ink).lineLimit(1)
+                        Text(name).font(.subheadline.weight(.medium)).foregroundStyle(Palette.ink).lineLimit(1)
                         if let total = net(name) {
                             Text(total).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
                         }
@@ -450,10 +450,11 @@ private struct ImportDraftCard: View {
                                 Text(member.name).tag(MemberMapping.member(member.id))
                             }
                         }
-                        Text("New placeholder").tag(MemberMapping.placeholder)
+                        Text("Placeholder").tag(MemberMapping.placeholder)
                     }
                     .pickerStyle(.menu)
                     .labelsHidden()
+                    .fixedSize()
                     .accessibilityLabel("\(name) becomes")
                 }
             }

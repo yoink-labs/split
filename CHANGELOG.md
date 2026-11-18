@@ -8,6 +8,43 @@ Versions match the iOS app's marketing version. The TestFlight build number
 is noted next to each release. The CLI is versioned separately with
 `split-v*` tags.
 
+## [0.8.0] - 2026-11-18
+
+TestFlight build 10, Yoink Internal and Public Beta (external review).
+
+### Added
+
+- **Import from Splitwise** on iOS and the web. Pick one or more of Splitwise's
+  per-group "Export as spreadsheet" CSVs; each becomes a group. The preview
+  shows members, expenses, payments and rows left out, lets you map every
+  Splitwise name to yourself, an existing member or a placeholder, and checks
+  the imported balances against the file's "Total balance" rows to the cent,
+  with a warning when they differ. Headers in any Splitwise language, friend
+  exports, spreadsheet re-saves, multiple payers and multi-currency groups are
+  handled. A group, its placeholders and up to 1,500 entries are written in one
+  atomic request (`POST /v1/import/splitwise`), and re-importing the same file
+  adds nothing. Entry points: Groups "+", the Groups and Home empty states,
+  the Home "+" menu and Account.
+- **Free currency conversion.** The composer fetches the rate for the expense
+  date and shows "≈ ARS 18,624.00 at 1 USD = 1,552 ARS (BCRA official,
+  Nov 17)", with Edit rate for your own (blue or card) rate; the original
+  amount and frozen rate are saved. Rates are Frankfurter (ECB) or the BCRA
+  official rate for pesos, with no key and no paywall.
+- **Show in.** Home, group headers, group balances, member statements and
+  people rows show an approximate total in your home currency (set in Account)
+  at today's rate, labelled with the source and date.
+- **Settle up in any currency.** Paying in a currency the group has no balance
+  in converts the payment to the group currency at a frozen rate.
+- A standalone currency converter from Home, Account and the composer, with
+  per-pair manual rates for the ARS blue dollar.
+- Rates are cached with a timestamp for six hours and keep working offline.
+
+### Changed
+
+- Home currency replaces "Default currency" and also sets new groups' currency.
+- Non-ARS rates now pin the ECB provider, so weekend and holiday dates return
+  the previous business day's rate.
+
 ## [0.7.1] - 2026-11-18
 
 TestFlight build 9, Yoink Internal only.

@@ -65,7 +65,6 @@ struct ApproxTotal: View {
                 Text(caption)
                     .font(.caption2)
                     .foregroundStyle(onHero ? Palette.onHero.opacity(0.55) : Color.secondary)
-                    .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }

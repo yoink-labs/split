@@ -7,7 +7,7 @@ struct GroupsView: View {
     @State private var showCreate = false
     @State private var joining = false
     @State private var importing = false
-    @State private var inspecting: LedgerEntry?
+    @State private var presentedSheet: GroupDetailSheet?
     @State private var query = ""
     @State private var showArchived = false
 
@@ -24,7 +24,7 @@ struct GroupsView: View {
             sidebar
         } detail: {
             if let selection, let group = store.group(selection) {
-                GroupDetail(groupID: group.id) { inspecting = $0 }
+                GroupDetail(groupID: group.id) { presentedSheet = $0 }
             } else {
                 GroupDetailPlaceholder(showCreate: $showCreate, joining: $joining)
             }
@@ -33,7 +33,8 @@ struct GroupsView: View {
         .sheet(isPresented: $showCreate) { CreateGroupView(friend: false) }
         .sheet(isPresented: $joining) { JoinGroupView { id in selection = id } }
         .sheet(isPresented: $importing) { SplitwiseImportView() }
-        .sheet(item: $inspecting) { EntrySheet(entry: $0) }
+        // The split view can recreate its detail column as the device folds.
+        .sheet(item: $presentedSheet) { $0.content }
         .onChange(of: store.joinedGroupID) { _, id in
             if let id { selection = id; store.joinedGroupID = nil }
         }

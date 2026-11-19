@@ -1,17 +1,39 @@
 import SwiftUI
 
+enum GroupDetailSheet: Identifiable {
+    case expense(ExpenseGroup)
+    case settlement(ExpenseGroup)
+    case balances(ExpenseGroup)
+    case receipt(LedgerEntry)
+
+    var id: String {
+        switch self {
+        case .expense(let group): "expense-\(group.id)"
+        case .settlement(let group): "settlement-\(group.id)"
+        case .balances(let group): "balances-\(group.id)"
+        case .receipt(let entry): "receipt-\(entry.id)"
+        }
+    }
+
+    @ViewBuilder var content: some View {
+        switch self {
+        case .expense(let group): AddExpenseView(group: group)
+        case .settlement(let group): SettleUpView(group: group)
+        case .balances(let group): GroupBalancesView(groupID: group.id)
+        case .receipt(let entry): EntrySheet(entry: entry)
+        }
+    }
+}
+
 struct GroupDetail: View {
     var groupID: String
-    var onInspect: ((LedgerEntry) -> Void)? = nil
+    var onPresentSheet: ((GroupDetailSheet) -> Void)? = nil
     @EnvironmentObject private var store: ExpenseStore
     @EnvironmentObject private var session: SessionStore
     @Environment(\.horizontalSizeClass) private var size
-    @State private var adding = false
-    @State private var settling = false
+    @State private var presentedSheet: GroupDetailSheet?
     @State private var inviting = false
     @State private var settings = false
-    @State private var inspecting: LedgerEntry?
-    @State private var balances = false
     @State private var insights = false
     @State private var openOnly = false
 
@@ -44,7 +66,7 @@ struct GroupDetail: View {
                 .refreshable { await store.sync() }
                 .toolbar {
                     ToolbarItemGroup(placement: .topBarTrailing) {
-                        Button { balances = true } label: { Label("Balances", systemImage: "chart.pie") }
+                        Button { present(.balances(group)) } label: { Label("Balances", systemImage: "chart.pie") }
                         Button { inviting = true } label: { Label("People", systemImage: "person.2") }
                         Menu {
                             Button { insights = true } label: { Label("Insights", systemImage: "chart.bar.xaxis") }
@@ -54,18 +76,15 @@ struct GroupDetail: View {
                         }
                     }
                 }
-                .sheet(isPresented: $adding) { AddExpenseView(group: group) }
-                .sheet(isPresented: $settling) { SettleUpView(group: group) }
                 .sheet(isPresented: $inviting) { InviteView(group: group) }
                 .sheet(isPresented: $settings) { GroupTools(group: group) }
-                .sheet(isPresented: $balances) { GroupBalancesView(groupID: group.id) }
                 .sheet(isPresented: $insights) {
                     NavigationStack {
                         InsightsView(group: group)
                             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { insights = false } } }
                     }
                 }
-                .sheet(item: $inspecting) { entry in EntryDetails(entry: entry, group: group) }
+                .sheet(item: $presentedSheet) { $0.content }
             } else {
                 ContentUnavailableView("Group unavailable", systemImage: "person.2.slash")
                     .background(AppBackground())
@@ -79,6 +98,14 @@ struct GroupDetail: View {
             ToolbarItem(placement: .principal) {
                 Color.clear.frame(width: 1, height: 1).accessibilityHidden(true)
             }
+        }
+    }
+
+    private func present(_ sheet: GroupDetailSheet) {
+        if let onPresentSheet {
+            onPresentSheet(sheet)
+        } else {
+            presentedSheet = sheet
         }
     }
 
@@ -148,9 +175,9 @@ struct GroupDetail: View {
             .overlay(RoundedRectangle(cornerRadius: Radius.header).stroke(Palette.lime.opacity(0.16), lineWidth: 1))
 
             ActionBar {
-                SplitActionButton(title: "Add expense", symbol: "plus", prominent: true) { adding = true }
+                SplitActionButton(title: "Add expense", symbol: "plus", prominent: true) { present(.expense(group)) }
                     .accessibilityIdentifier("group-add-expense")
-                SplitActionButton(title: "Settle up", symbol: "arrow.left.arrow.right") { settling = true }
+                SplitActionButton(title: "Settle up", symbol: "arrow.left.arrow.right") { present(.settlement(group)) }
             }
         }
     }
@@ -225,7 +252,7 @@ struct GroupDetail: View {
                         symbol: openOnly ? "checkmark.seal" : "receipt",
                         actionTitle: openOnly ? "Show all" : "Add an expense"
                     ) {
-                        if openOnly { openOnly = false } else { adding = true }
+                        if openOnly { openOnly = false } else { present(.expense(group)) }
                     }
                 }
             } else {
@@ -235,13 +262,7 @@ struct GroupDetail: View {
                         Card(padding: 0) {
                             VStack(spacing: 0) {
                                 ForEach(Array(monthEntries.enumerated()), id: \.element.id) { index, entry in
-                                    Button {
-                                        if let onInspect {
-                                            onInspect(entry)
-                                        } else {
-                                            inspecting = entry
-                                        }
-                                    } label: {
+                                    Button { present(.receipt(entry)) } label: {
                                         EntryRow(entry: entry, group: group, currentUserID: store.currentUserID)
                                             .padding(.horizontal, 14)
                                             .padding(.vertical, 12)

@@ -334,8 +334,7 @@ struct HeroStats: View {
                 Text(item.value)
                     .font(.splitAmount(15))
                     .foregroundStyle(Palette.onHero.opacity(0.92))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.55)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }

@@ -2,6 +2,7 @@ import SwiftUI
 
 struct GroupDetail: View {
     var groupID: String
+    var onInspect: ((LedgerEntry) -> Void)? = nil
     @EnvironmentObject private var store: ExpenseStore
     @EnvironmentObject private var session: SessionStore
     @Environment(\.horizontalSizeClass) private var size
@@ -234,7 +235,13 @@ struct GroupDetail: View {
                         Card(padding: 0) {
                             VStack(spacing: 0) {
                                 ForEach(Array(monthEntries.enumerated()), id: \.element.id) { index, entry in
-                                    Button { inspecting = entry } label: {
+                                    Button {
+                                        if let onInspect {
+                                            onInspect(entry)
+                                        } else {
+                                            inspecting = entry
+                                        }
+                                    } label: {
                                         EntryRow(entry: entry, group: group, currentUserID: store.currentUserID)
                                             .padding(.horizontal, 14)
                                             .padding(.vertical, 12)

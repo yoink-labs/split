@@ -69,7 +69,7 @@ struct ApproxTotal: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .contain)
         .task(id: Array(open.keys).sorted().joined() + fx.display) {
             await fx.refresh(currencies: Set(open.keys), into: fx.display)
         }

@@ -17,6 +17,7 @@ struct EntryDetails: View {
         let item: Purchase?
     }
 
+    @State private var path: [LedgerRoute] = []
     @State private var assignment: Assignment?
     @State private var gallery: ReceiptPresentation?
     @State private var editing = false
@@ -83,7 +84,7 @@ struct EntryDetails: View {
             if embedded {
                 content
             } else {
-                NavigationStack {
+                NavigationStack(path: $path) {
                     content.ledgerDestinations()
                 }
             }

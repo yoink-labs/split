@@ -437,11 +437,12 @@ private struct ImportDraftCard: View {
                 HStack(alignment: .center, spacing: 10) {
                     Avatar(name: name, size: 32)
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(name).font(.subheadline.weight(.medium)).foregroundStyle(Palette.ink).lineLimit(1)
+                        Text(name).font(.subheadline.weight(.medium)).foregroundStyle(Palette.ink)
                         if let total = net(name) {
-                            Text(total).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                            Text(total).font(.caption2).foregroundStyle(.secondary)
                         }
                     }
+                    .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 8)
                     Picker(name, selection: Binding(get: { draft.mapping[name] ?? .placeholder }, set: { draft.mapping[name] = $0 })) {
                         Text("Me").tag(MemberMapping.me)

@@ -5,6 +5,7 @@ ARCHIVE="${1:-.ade/build/Split.xcarchive}"
 APP="$ARCHIVE/Products/Applications/Split.app"
 PROFILE='.ade/tmp/Split.mobileprovision'
 IDENTITY='iPhone Distribution: Undrift LLC (64PUT29XZ8)'
+python3 "$(dirname "$0")/check-release-sdk.py" "$APP/Info.plist"
 security cms -D -i "$PROFILE" > .ade/tmp/profile.plist
 python3 - <<'PY'
 import plistlib, datetime

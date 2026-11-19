@@ -50,8 +50,10 @@ xcodebuild test -project Split.xcodeproj -scheme Split \
   -destination 'platform=iOS Simulator,name=iPhone 17'
 ```
 
-CI runs the Worker and CLI checks on every pull request, including PRs from
-forks. It needs no secrets.
+CI builds the web app, runs the Worker and CLI checks, and tests iOS on every
+pull request, including PRs from forks. The iOS job uses the standard GitHub
+`xcode-27` runner with Xcode 27.2 and the iOS 27.2 simulator. It needs no secrets.
+See [TestFlight](docs/TESTFLIGHT.md) for the release SDK requirements.
 
 ## Pull requests
 

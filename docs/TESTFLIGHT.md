@@ -8,27 +8,28 @@ Yoink Internal receives builds automatically. Public Beta uses external beta rev
 
 ## Build and sign
 
-Install XcodeGen, Xcode and the App Store Connect CLI. Use the authorized ASC profile and the existing Undrift distribution identity in the macOS keychain. Check the next build number in App Store Connect before editing `project.yml`.
+Install Xcode 27.2 with the iOS 27 SDK, XcodeGen and the App Store Connect CLI. The archive script defaults to `/Applications/Xcode-27.app/Contents/Developer`. Set `DEVELOPER_DIR` to the chosen Xcode 27 installation if it lives elsewhere. The script selects the device SDK explicitly. Split still deploys to iOS 18.0.
+
+Use the authorized ASC profile and the existing Undrift distribution identity in the macOS keychain. Check the next build number in App Store Connect before editing `project.yml`.
 
 ```sh
-mkdir -p .ade/build .ade/tmp
-xcodegen generate
-xcodebuild archive -project Split.xcodeproj -scheme Split -configuration Release -destination 'generic/platform=iOS' -archivePath .ade/build/Split.xcarchive -derivedDataPath .ade/cache/release CODE_SIGNING_ALLOWED=NO
+scripts/archive-release.sh
+mkdir -p .ade/tmp
 asc --profile default profiles download --id FZ2S8RH4U3 --output .ade/tmp/Split.mobileprovision
 scripts/package-release.sh
 ```
 
-The packaging script verifies the profile’s bundle ID, team and expiry, applies distribution entitlements and verifies the signature before creating the IPA. Signing material stays outside source control.
+The packaging script prints the app's `DTSDKName` and `DTXcode` and requires an iOS 27 device SDK and Xcode 27 before signing. For Xcode 27.2, expect `iphoneos27.2` and `2720`. It also checks the profile’s bundle ID, team and expiry and verifies the signature before creating the IPA.
 
 ## Distribute
 
-Upload after the release PR lands and verify the build’s processing state. The distribution groups are Yoink Internal (`6949ab6e-b7d2-4245-9a72-8a095832113f`) and Public Beta (`29476472-8917-4cd6-b916-d0d695dcc90e`).
+After the release PR lands, set `SPLIT_IPA` to the path printed by the packaging script. Upload the IPA and wait for processing. The upload script rechecks the IPA’s SDK metadata and targets Yoink Internal only.
 
 ```sh
-asc --profile default publish testflight --app 6836072005 --ipa .ade/build/Split-0.7.0-8.ipa --group 29476472-8917-4cd6-b916-d0d695dcc90e --test-notes "Open your profile or a group member, choose a group, then open a charge. Add a receipt and mark who had each item with the new chips. Try search, insights, Liquid Glass, and the iPhone Duo open and closed layouts." --locale en-US --wait --submit --confirm
+scripts/upload-release.sh "${SPLIT_IPA:?Set SPLIT_IPA to the packaged IPA path}"
 ```
 
-Confirm both group relationships, the internal testing state and the external review submission in App Store Connect.
+In App Store Connect, confirm that the same version and build finished processing and appears in Yoink Internal. Record the SDK metadata from packaging and check the release mailbox for ITMS-90725 once processing completes. Public Beta distribution is a separate decision. Leave build 0.8.0 (10) in external review until Harris approves a replacement.
 
 ## QA
 

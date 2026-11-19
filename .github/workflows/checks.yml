@@ -24,3 +24,17 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: node --test ../cli/test/*.test.mjs
+  ios:
+    runs-on: xcode-27
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.2.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v4
+      - run: brew install xcodegen
+      - run: xcodegen generate
+      - name: Test with Xcode 27.2
+        run: |
+          xcodebuild -version
+          xcodebuild test -project Split.xcodeproj -scheme Split \
+            -destination 'platform=iOS Simulator,name=iPhone 17,OS=27.2' \
+            OTHER_CODE_SIGN_FLAGS=--strip-disallowed-xattrs

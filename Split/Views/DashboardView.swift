@@ -13,6 +13,7 @@ struct DashboardView: View {
     @State private var showJoin = false
     @State private var showImport = false
     @State private var showConverter = false
+    @State private var showTipJar = TipJarStore.opensOnLaunch
 
     private var dashboard: DashboardModel { store.dashboard }
     private var visibleGroups: [GroupSummary] { Array(dashboard.groups.prefix(4)) }
@@ -55,6 +56,7 @@ struct DashboardView: View {
             .navigationTitle("Home")
             .navigationBarTitleDisplayMode(.large)
             .toolbar {
+                TipTheDevsToolbarItem { showTipJar = true }
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     Button { showSearch = true } label: { Label("Search everything", systemImage: "magnifyingglass") }
                     Menu {
@@ -82,6 +84,7 @@ struct DashboardView: View {
             .sheet(isPresented: $showJoin) { JoinGroupView { store.joinedGroupID = $0 } }
             .sheet(isPresented: $showImport) { SplitwiseImportView() }
             .sheet(isPresented: $showConverter) { ConverterView() }
+            .sheet(isPresented: $showTipJar) { TipJarView(store: .shared) }
             .onChange(of: store.joinedGroupID) { _, id in if id != nil { showNewExpense = false } }
         }
     }

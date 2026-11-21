@@ -16,7 +16,11 @@ targets:
     type: application
     platform: iOS
     sources:
-      - Split
+      - path: Split
+        excludes:
+          # StoreKit testing config: used by the scheme and unit tests, never
+          # shipped in the app bundle.
+          - Resources/Split.storekit
       - path: THIRD_PARTY_NOTICES.md
         buildPhase: resources
       - path: docs/licenses
@@ -44,11 +48,18 @@ targets:
         CODE_SIGN_ENTITLEMENTS: Split/Resources/Split.entitlements
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     scheme:
+      # Local tip products for simulator and Xcode runs. The real products
+      # live in App Store Connect under the same ids.
+      storeKitConfiguration: Split/Resources/Split.storekit
       testTargets: [SplitTests]
   SplitTests:
     type: bundle.unit-test
     platform: iOS
-    sources: [SplitTests]
+    sources:
+      - path: SplitTests
+      # Bundled so a test can check the config matches the code's product ids.
+      - path: Split/Resources/Split.storekit
+        buildPhase: resources
     dependencies:
       - target: Split
     settings:

@@ -6,7 +6,16 @@ import {
   useSearchParams,
 } from "react-router-dom";
 import { Form, useLedger, value } from "./context";
-import { AddMenu, Avatar, Badge, Balance, EmptyState, Hero, Row } from "./ui";
+import {
+  AddMenu,
+  Avatar,
+  Badge,
+  Balance,
+  EmptyState,
+  Hero,
+  Row,
+  TIP_URL,
+} from "./ui";
 import { Approx, ApproxNote, CurrencySelect, RateField, useShowIn } from "./fxui";
 import { convert, fx, rateText, sourceLabel, useHomeCurrency, type Exchange } from "./fx";
 import {
@@ -272,6 +281,15 @@ export function Account() {
           <strong>Import from Splitwise</strong>
           <span>Bring every group over, free ›</span>
         </Link>
+        <a className="row" href={TIP_URL}>
+          <strong>
+            <span className="tip-heart" aria-hidden="true">
+              ♥
+            </span>{" "}
+            Tip the devs
+          </strong>
+          <span>Optional, unlocks nothing ›</span>
+        </a>
         <button onClick={() => void window.Clerk.signOut()}>Sign out</button>
       </section>
     </>

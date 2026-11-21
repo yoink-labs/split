@@ -23,6 +23,7 @@ import {
 import { ExpenseForm } from "./expense";
 import { SplitwiseImport } from "./splitwise";
 import { ConverterScreen } from "./fxui";
+import { TipTheDevs } from "./ui";
 import "./style.css";
 
 function SignIn() {
@@ -36,9 +37,26 @@ function SignIn() {
     return () => window.Clerk.unmountSignIn(el);
   }, []);
   return (
-    <main className="auth">
-      <div ref={node} />
-    </main>
+    <>
+      <PublicHeader />
+      <main className="auth">
+        <div ref={node} />
+      </main>
+    </>
+  );
+}
+/** The header before sign-in: the brand and the tip pill. */
+function PublicHeader() {
+  return (
+    <header>
+      <Link className="brand" to="/" aria-label="Split home">
+        <img src="/icon.png" alt="" />
+        <span className="brand-name">Split</span>
+      </Link>
+      <nav>
+        <TipTheDevs />
+      </nav>
+    </header>
   );
 }
 function Ledger({ user }: { user: string }) {
@@ -98,11 +116,12 @@ function Ledger({ user }: { user: string }) {
   return (
     <>
       <header>
-        <Link className="brand" to="/">
+        <Link className="brand" to="/" aria-label="Split home">
           <img src="/icon.png" alt="" />
-          Split
+          <span className="brand-name">Split</span>
         </Link>
         <nav>
+          <TipTheDevs />
           <Link to="/">Groups</Link>
           <Link to="/you">You</Link>
           <button
@@ -217,11 +236,14 @@ function App() {
   }, []);
   if (!ready)
     return (
-      <main>
-        <h1>Split</h1>
-        <p>{error || "Loading sign-in…"}</p>
-        {error && <button onClick={() => location.reload()}>Retry</button>}
-      </main>
+      <>
+        <PublicHeader />
+        <main>
+          <h1>Split</h1>
+          <p>{error || "Loading sign-in…"}</p>
+          {error && <button onClick={() => location.reload()}>Retry</button>}
+        </main>
+      </>
     );
   return user ? <Ledger key={user} user={user} /> : <SignIn />;
 }

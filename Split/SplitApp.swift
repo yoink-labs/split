@@ -6,7 +6,12 @@ import ClerkKit
     @StateObject private var fx = FXStore()
     @AppStorage("split.appearance") private var appearance = "system"
     @Environment(\.scenePhase) private var phase
-    init() { Clerk.configure(publishableKey: "pk_live_Y2xlcmsueW9pbmtsYWJzLmRldiQ") }
+    init() {
+        Clerk.configure(publishableKey: "pk_live_Y2xlcmsueW9pbmtsYWJzLmRldiQ")
+        // Finish tips StoreKit delivers outside the purchase sheet (Ask to
+        // Buy approvals, or a tip left unfinished by a previous launch).
+        Task { @MainActor in TipJarStore.shared.startObservingTransactions() }
+    }
     private var scheme: ColorScheme? {
         switch appearance { case "light": .light; case "dark": .dark; default: nil }
     }

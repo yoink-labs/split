@@ -10,6 +10,8 @@ is noted next to each release. The CLI is versioned separately with
 
 ## [Unreleased]
 
+TestFlight build 0.8.0 (12), Yoink Internal.
+
 ### Added
 
 - "Tip the devs": an optional tip jar on iPhone, iPad and iPhone Duo. Split

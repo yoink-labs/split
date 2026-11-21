@@ -15,6 +15,7 @@ struct AccountView: View {
     @State private var exporting = false
     @State private var exportText = ""
     @State private var exportError: String?
+    @State private var showTipJar = false
 
     private var activeGroups: [ExpenseGroup] {
         store.groups.filter { !($0.archived ?? false) }
@@ -84,6 +85,7 @@ struct AccountView: View {
             .background(AppBackground())
             .ledgerDestinations()
             .sheet(isPresented: $importing) { SplitwiseImportView() }
+            .sheet(isPresented: $showTipJar) { TipJarView(store: .shared) }
             .navigationTitle("You")
             .confirmationDialog(
                 session.isDemo ? "Leave the sample preview?" : "Sign out?",
@@ -400,6 +402,38 @@ struct AccountView: View {
                         }
                         .buttonStyle(.plain)
                     }
+                    rowDivider
+                    Button { showTipJar = true } label: {
+                        HStack(spacing: 12) {
+                            Image(systemName: "heart.fill")
+                                .font(.system(size: 15, weight: .semibold))
+                                .frame(width: 34, height: 34)
+                                .background(Color.pink.opacity(0.14))
+                                .foregroundStyle(.pink)
+                                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                .accessibilityHidden(true)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Tip the devs")
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(Palette.ink)
+                                Text("Optional. Unlocks nothing")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer(minLength: 8)
+                            Image(systemName: "chevron.right")
+                                .font(.caption2.weight(.bold))
+                                .foregroundStyle(.tertiary)
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 12)
+                        .frame(minHeight: 56)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityHint("Opens the optional tip jar")
+                    .accessibilityIdentifier("account-tip-the-devs")
                     rowDivider
                     NavigationLink { ThirdPartyNoticesView() } label: {
                         navigationLabel(icon: "doc.text", title: "Third-party notices", subtitle: "Licenses for the work Split builds on")

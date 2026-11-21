@@ -32,6 +32,7 @@ struct WelcomeView: View {
     @EnvironmentObject var store: ExpenseStore
     @Environment(\.horizontalSizeClass) private var size
     @State private var emailSheet = false
+    @State private var showTipJar = false
 
     var body: some View {
         ScrollView {
@@ -79,6 +80,7 @@ struct WelcomeView: View {
         }
         .background(AppBackground())
         .sheet(isPresented: $emailSheet) { EmailView() }
+        .sheet(isPresented: $showTipJar) { TipJarView(store: .shared) }
     }
 
     private var brand: some View {
@@ -91,11 +93,14 @@ struct WelcomeView: View {
             Text("split")
                 .font(.splitDisplay(31))
                 .foregroundStyle(Palette.evergreen)
-            Spacer()
-            Text("BY YOINK LABS")
-                .font(.system(size: 10, weight: .semibold))
-                .tracking(1.6)
-                .foregroundStyle(.secondary)
+            Spacer(minLength: 8)
+            if size == .regular {
+                Text("BY YOINK LABS")
+                    .font(.system(size: 10, weight: .semibold))
+                    .tracking(1.6)
+                    .foregroundStyle(.secondary)
+            }
+            TipTheDevsButton { showTipJar = true }
         }
     }
 

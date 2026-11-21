@@ -8,6 +8,20 @@ Versions match the iOS app's marketing version. The TestFlight build number
 is noted next to each release. The CLI is versioned separately with
 `split-v*` tags.
 
+## [Unreleased]
+
+### Added
+
+- "Tip the devs": an optional tip jar on iPhone, iPad and iPhone Duo. Split
+  stays free with nothing locked; a tip unlocks nothing. Three StoreKit 2
+  consumables (`dev.yoinklabs.split.tip.small|medium|large`) with prices from
+  the App Store, a pink heart button in the Home top bar and on the welcome
+  screen, and a row on the You tab. Pending (Ask to Buy), thanks, failure and
+  "Tips aren't available yet" states; transactions finished outside the sheet
+  are handled from launch. A local `Split.storekit` backs the scheme and tests.
+- Web: a pink "♥ Tip the devs" pill in the header and a row on You, linking to
+  yoinklabs.dev/tip, which explains that tipping happens in the iPhone app.
+
 ## [0.8.0] - 2026-11-18
 
 TestFlight build 10, Yoink Internal and Public Beta (external review).

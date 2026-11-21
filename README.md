@@ -108,6 +108,24 @@ On either client, tap **You** or a person in a group to see their charges. Peopl
 
 New ledger records without photos can be entered offline. Photo uploads, full-size downloads and shared claims require a connection. The app compresses each photo to a JPEG of at most 240 KiB and strips original image metadata. Split stores photos in its existing D1 database, checks group membership on every download, and caps receipt bytes at 100 MiB across the service. Deleting an expense removes its photos. Search, adding someone to an existing group, joining, sharing invites, editing and deleting require connectivity. Snapshot refreshes retry when the app becomes active or connectivity returns. The beta supports 50 active people per group, 100 groups per account and 5,000 visible entries per account. Split uses its own Worker and D1 database on Cloudflare’s free tier.
 
+## Tip the devs
+
+Split is free with nothing locked. Tips are optional and unlock nothing. On
+iOS they are StoreKit 2 consumables with no third-party SDK:
+`Split/Core/TipJar.swift` and `Split/Views/TipJarView.swift`. The product ids
+`dev.yoinklabs.split.tip.small`, `.medium` and `.large` exist in App Store
+Connect and in `Split/Resources/Split.storekit`; a unit test checks that the
+two match the code. Prices always come from StoreKit. The sheet opens from the
+pink heart button on Home (and the welcome screen) and from You.
+
+The Split scheme uses `Split.storekit` for local runs. Outside Xcode, Debug
+builds accept `-uiTipJar config` to serve tips from that file,
+`-uiTipOutcome thanks|pending|failed|cancel` to choose what a tap does, and
+`-uiRoute tipJar` to open the sheet on Home, for example
+`-splitDemo -uiTipJar config -uiRoute tipJar`. In TestFlight, Apple runs test
+purchases and nobody is charged; the sheet says so outside production. The
+web app links to [yoinklabs.dev/tip](https://yoinklabs.dev/tip).
+
 ## Local development
 
 Use Xcode with an iOS 18+ simulator, XcodeGen, Node 22.18+ and npm. Install project dependencies and generate the Xcode project from the repository root.

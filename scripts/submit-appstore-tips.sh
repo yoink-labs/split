@@ -5,6 +5,17 @@
 #   scripts/submit-appstore-tips.sh            # dry run (default): read-only plan + readiness check
 #   scripts/submit-appstore-tips.sh --submit   # apply the plan, then submit for review if validate is clean
 #   scripts/submit-appstore-tips.sh --submit --force   # submit even if validate reports blocking issues
+#   scripts/submit-appstore-tips.sh --submit --iaps-selected-in-asc
+#       # the tips were ticked by hand under "In-App Purchases and Subscriptions"
+#       # on the version page; skip attaching and only verify they're staged
+#
+# First-time consumables can't be added to a review submission through the
+# public API (STATE_ERROR.FIRST_CONSUMABLE_MUST_BE_SUBMITTED_ON_VERSION). The
+# script tries the public API, then asc's documented web-session command
+# `asc web review iaps attach`. If both refuse, it stops before submitting:
+# tick the tips on the version page in App Store Connect, then rerun with
+# --iaps-selected-in-asc. The version is never submitted without every
+# READY_TO_SUBMIT tip staged next to it.
 #
 # Steps
 #   1. Read MARKETING_VERSION from project.yml. It is never bumped here.
@@ -26,14 +37,16 @@ TIP_PREFIX="dev.yoinklabs.split.tip."
 
 MODE="dry-run"
 FORCE=0
+IAPS_SELECTED=0
 
-usage() { sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//'; }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dry-run) MODE="dry-run" ;;
     --submit) MODE="submit" ;;
     --force) FORCE=1 ;;
+    --iaps-selected-in-asc) IAPS_SELECTED=1 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -306,9 +319,61 @@ if [[ "$DRAFT_ID" == "-" ]]; then
 fi
 asc_mutate review items-add --submission "$DRAFT_ID" --item-type appStoreVersions --item-id "$VERSION_ID" --if-exists skip
 ok "added App Store version $MV"
+
+# IAP version ids currently staged in the draft.
+staged_iaps() {
+  asc review items-list --submission "$DRAFT_ID" --paginate --output json >"$TMP/items.json" 2>"$TMP/items.err" \
+    || { sed 's/^/         /' "$TMP/items.err" >&2; die "asc review items-list failed"; }
+  py "$TMP/items.json" "
+ids = set()
+for it in d.get('data', []):
+    rel = (it.get('relationships') or {}).get('inAppPurchaseVersion') or {}
+    if (rel.get('data') or {}).get('id'):
+        ids.add(rel['data']['id'])
+print(' '.join(sorted(ids)))
+"
+}
+
+if [[ "$IAPS_SELECTED" == "1" ]]; then
+  say "   --iaps-selected-in-asc: not attaching; checking the tips are staged"
+else
+  STAGED=" $(staged_iaps) "
+  for ((idx = 0; idx < ${#IAP_VERSION_IDS[@]}; idx++)); do
+    IAPV="${IAP_VERSION_IDS[$idx]}"; LABEL="${IAP_LABELS[$idx]}"
+    if [[ "$STAGED" == *" $IAPV "* ]]; then ok "$LABEL already staged"; continue; fi
+    printf '   RUN   asc review items-add --submission %s --item-type inAppPurchaseVersions --item-id %s\n' "$DRAFT_ID" "$IAPV"
+    if asc review items-add --submission "$DRAFT_ID" --item-type inAppPurchaseVersions --item-id "$IAPV" \
+         --if-exists skip --output json >"$TMP/iapadd.json" 2>"$TMP/iapadd.err"; then
+      ok "added $LABEL (public API)"
+      continue
+    fi
+    warn "public API refused $LABEL:"
+    sed 's/^/         /' "$TMP/iapadd.err" >&2
+    printf '   RUN   asc web review iaps attach --app %s --iap-id %s --submission %s --confirm\n' "$APP_ID" "$LABEL" "$DRAFT_ID"
+    if asc web review iaps attach --app "$APP_ID" --iap-id "$LABEL" --submission "$DRAFT_ID" --confirm \
+         --output json >"$TMP/webattach.json" 2>"$TMP/webattach.err"; then
+      ok "added $LABEL (asc web review iaps attach)"
+    else
+      warn "asc web review iaps attach refused $LABEL:"
+      sed 's/^/         /' "$TMP/webattach.err" >&2
+    fi
+  done
+fi
+
+# Never submit the version without every READY_TO_SUBMIT tip next to it.
+STAGED=" $(staged_iaps) "
+MISSING=()
 for ((idx = 0; idx < ${#IAP_VERSION_IDS[@]}; idx++)); do
-  asc_mutate review items-add --submission "$DRAFT_ID" --item-type inAppPurchaseVersions --item-id "${IAP_VERSION_IDS[$idx]}" --if-exists skip
-  ok "added ${IAP_LABELS[$idx]}"
+  [[ "$STAGED" == *" ${IAP_VERSION_IDS[$idx]} "* ]] || MISSING+=("${IAP_LABELS[$idx]}")
 done
+if [[ ${#MISSING[@]} -gt 0 ]]; then
+  say ""
+  say "Not submitted. These tips aren't staged in review submission $DRAFT_ID: ${MISSING[*]}"
+  say "In App Store Connect, open the $MV version page, tick them under"
+  say "\"In-App Purchases and Subscriptions\", save, then run:"
+  say "  scripts/submit-appstore-tips.sh --submit --iaps-selected-in-asc"
+  exit 3
+fi
+ok "all ${#IAP_VERSION_IDS[@]} tip IAPs are staged with version $MV"
 asc_mutate review submissions-submit --id "$DRAFT_ID" --confirm
 ok "submitted review submission $DRAFT_ID for App Review"

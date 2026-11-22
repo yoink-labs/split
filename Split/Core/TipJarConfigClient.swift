@@ -9,6 +9,9 @@ import Foundation
 ///     -uiTipJar config                     use this client
 ///     -uiTipOutcome thanks|pending|failed|cancel   what a tap does (default thanks)
 ///     -uiRoute tipJar                      open the tip sheet on Home
+///     -uiTipProducts none                  the App Store returns no tips
+///     -uiStorefront USA|GBR|none           storefront country (default: the
+///                                          file's `_storefront`; none = unknown)
 ///
 /// Release builds don't contain this type.
 struct TipJarConfigClient: TipStoreClient {
@@ -18,6 +21,9 @@ struct TipJarConfigClient: TipStoreClient {
 
     var configURL: URL = TipJarConfigClient.defaultConfigURL
     var outcome: Outcome = .thanks
+    /// Overrides the file's storefront. `.some(nil)` means unknown.
+    var storefrontOverride: String?? = nil
+    var returnsNoProducts = false
 
     /// The simulator can read the source tree, so point at the checked-in
     /// file rather than shipping it in the app bundle.
@@ -31,12 +37,26 @@ struct TipJarConfigClient: TipStoreClient {
     static func fromLaunchArguments() -> TipJarConfigClient? {
         guard TipJarLaunch.value("uiTipJar") == "config" else { return nil }
         let outcome = TipJarLaunch.value("uiTipOutcome").flatMap(Outcome.init(rawValue:)) ?? .thanks
-        return TipJarConfigClient(outcome: outcome)
+        var client = TipJarConfigClient(outcome: outcome)
+        client.returnsNoProducts = TipJarLaunch.value("uiTipProducts") == "none"
+        if let storefront = TipJarLaunch.value("uiStorefront") {
+            client.storefrontOverride = .some(storefront == "none" ? nil : storefront)
+        }
+        return client
     }
 
     func canMakePayments() async -> Bool { true }
 
+    func storefrontCountryCode() async -> String? {
+        if let storefrontOverride { return storefrontOverride }
+        guard let data = try? Data(contentsOf: configURL),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let settings = json["settings"] as? [String: Any] else { return nil }
+        return settings["_storefront"] as? String
+    }
+
     func products(for ids: [String]) async throws -> [TipProduct] {
+        if returnsNoProducts { return [] }
         let data: Data
         do {
             data = try Data(contentsOf: configURL)

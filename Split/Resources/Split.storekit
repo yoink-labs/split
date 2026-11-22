@@ -58,6 +58,66 @@
       "productID" : "dev.yoinklabs.split.tip.large",
       "referenceName" : "Tip (large)",
       "type" : "Consumable"
+    },
+    {
+      "displayPrice" : "9.99",
+      "familyShareable" : false,
+      "internalID" : "5B117A04",
+      "localizations" : [
+        {
+          "description" : "A generous thank-you to the devs.",
+          "displayName" : "Extra large tip",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "dev.yoinklabs.split.tip.xl",
+      "referenceName" : "Tip (xl)",
+      "type" : "Consumable"
+    },
+    {
+      "displayPrice" : "19.99",
+      "familyShareable" : false,
+      "internalID" : "5B117A05",
+      "localizations" : [
+        {
+          "description" : "A really generous thank-you to the devs.",
+          "displayName" : "Generous tip",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "dev.yoinklabs.split.tip.xxl",
+      "referenceName" : "Tip (xxl)",
+      "type" : "Consumable"
+    },
+    {
+      "displayPrice" : "49.99",
+      "familyShareable" : false,
+      "internalID" : "5B117A06",
+      "localizations" : [
+        {
+          "description" : "A huge thank-you to the devs.",
+          "displayName" : "Huge tip",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "dev.yoinklabs.split.tip.huge",
+      "referenceName" : "Tip (huge)",
+      "type" : "Consumable"
+    },
+    {
+      "displayPrice" : "99.99",
+      "familyShareable" : false,
+      "internalID" : "5B117A07",
+      "localizations" : [
+        {
+          "description" : "The biggest thank-you to the devs.",
+          "displayName" : "Biggest tip",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "dev.yoinklabs.split.tip.max",
+      "referenceName" : "Tip (max)",
+      "type" : "Consumable"
     }
   ],
   "settings" : {

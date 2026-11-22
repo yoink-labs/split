@@ -49,6 +49,7 @@ struct TipTheDevsToolbarItem: ToolbarContent {
 struct TipJarView: View {
     @ObservedObject var store: TipJarStore
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.openURL) private var openURL
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isTestPurchase = false
@@ -60,6 +61,7 @@ struct TipJarView: View {
                     header
                     statusCard
                     tipsSection
+                    if store.showsWebTipLink { webTipLink }
                     footnote
                 }
                 .padding(.horizontal, Spacing.page)
@@ -82,7 +84,11 @@ struct TipJarView: View {
             .sensoryFeedback(.success, trigger: store.thanksCount)
             .onChange(of: store.purchaseState) { _, state in announce(state) }
             .task {
-                if store.loadState != .loaded { await store.load() }
+                if store.loadState != .loaded {
+                    await store.load()
+                } else {
+                    await store.refreshStorefront()
+                }
             }
             .task { isTestPurchase = await Self.isTestEnvironment() }
             .refreshable { await store.load() }
@@ -225,6 +231,41 @@ struct TipJarView: View {
             }
         }
         .accessibilityIdentifier("tip-jar-unavailable")
+    }
+
+    /// US storefront only (see `WebTipLink`). Opens Safari, not an in-app
+    /// web view.
+    private var webTipLink: some View {
+        Button {
+            openURL(WebTipLink.url)
+        } label: {
+            HStack(alignment: .top, spacing: Spacing.s) {
+                Image(systemName: "arrow.up.right.square")
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(.pink)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: Spacing.xxs) {
+                    Text("Want to give more?")
+                        .font(.headline)
+                        .foregroundStyle(Palette.ink)
+                    Text("Tip any amount at yoinklabs.dev. Opens in Safari.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(Spacing.m)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .glassSurface(cornerRadius: Radius.card, tint: Palette.card.opacity(0.52))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Want to give more? Tip any amount at yoinklabs.dev")
+        .accessibilityHint("Opens yoinklabs.dev in Safari")
+        .accessibilityAddTraits(.isLink)
+        .accessibilityIdentifier("tip-jar-web-link")
     }
 
     private var paymentsDisabledNote: some View {

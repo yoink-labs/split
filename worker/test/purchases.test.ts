@@ -1,6 +1,7 @@
 import {env} from 'cloudflare:test';
 import {beforeEach,it,expect} from 'vitest';
-import {handle} from '../src/index';
+import worker, {handle} from '../src/index';
+import {manageDevices} from '../src/cli/devices';
 import {operate} from '../src/cli/operations';
 import {Entry} from '../src/ledger';
 import {Bill,breakdown,grossItems,itemSplit} from '../src/items';
@@ -80,4 +81,85 @@ it('merges a claimant draft onto a different member’s saved edit',async()=>{
   await call('maya',base+'/claim',{itemID:'line-toast',original:[],memberIDs:[other],mergeEdits:true});
   await call('alex',base+'/claim',{itemID:'line-toast',original:[],memberIDs:[guest],mergeEdits:true});
   expect((await snapshot()).bill?.items[1].memberIDs).toEqual([other,guest]);
+});
+
+it('exposes only the viewer’s expenses and photos to a revocable Finance connection', async () => {
+  await call('alex','/v1/entries',{...e,photos:[photo]});
+  const payerOnly = {
+    ...e, id:'payer-only', bill:undefined, splits:[{memberID:payer,amount:e.amount}], photos:[photo],
+  };
+  await call('alex','/v1/entries',payerOnly);
+  await call('alex','/v1/entries',{
+    ...payerOnly, id:'no-receipt', title:'Groceries', photos:undefined,
+    splits:[{memberID:payer,amount:900},{memberID:other,amount:901}],
+  });
+  await call('alex','/v1/entries',{
+    ...payerOnly, id:'settlement-entry', kind:'settlement', photos:undefined, category:undefined,
+    splits:[{memberID:other,amount:e.amount}],
+  });
+
+  const request = (path:string, data?:unknown, token?:string) => new Request(env.APP_URL+path, {
+    method: data === undefined ? 'GET' : 'POST',
+    headers: { 'Content-Type':'application/json', ...(token ? { Authorization:'Bearer '+token } : {}) },
+    body: data === undefined ? undefined : JSON.stringify(data),
+  });
+  const send = (path:string, data?:unknown, token?:string) => worker.fetch(request(path,data,token),env);
+  async function connect(user:string, scope='finance') {
+    const started = await send('/v1/device/start',{name:'Local test',scope});
+    expect(started.status).toBe(201);
+    const {code,device} = await started.json<{code:string;device:string}>();
+    if (scope==='finance') {
+      const review = await manageDevices(request('/v1/device/review',{code}),env,user);
+      expect(await review.json()).toEqual({name:'Finance (read-only)',scope});
+    }
+    expect((await send('/v1/device/poll',{device})).status).toBe(202);
+    await manageDevices(request('/v1/device/approve',{code}),env,user);
+    return (await (await send('/v1/device/poll',{device})).json<{token:string}>()).token;
+  }
+
+  const token = await connect('maya'), outsider = await connect('outsider'), cli = await connect('maya','cli');
+  expect(token).toMatch(/^sfi_/);
+  const base = '/v1/integrations/finance';
+  const list = base+'/expenses';
+  const receipt = base+'/receipts/'+e.id+'/'+photo.id;
+  const result = await (await send(list,undefined,token)).json<{total:number;expenses:Entry[]}>();
+  expect(result.total).toBe(2);
+  expect(result.expenses.map(x=>x.id).sort()).toEqual(['no-receipt',e.id]);
+  expect(await (await send(list+'?receipts=1&q=coffee',undefined,token)).json()).toMatchObject({
+    total:1,expenses:[{id:e.id,paid:0,share:301,group:'Weekend',receiptIDs:[photo.id],
+      bill:{closed:false,items:[{title:'Coffee',mine:true,share:301},{title:'Toast',mine:false,share:0}]}}],
+  });
+  expect(await (await send(list,undefined,outsider)).json()).toMatchObject({total:0});
+  expect((await send(list,undefined,cli)).status).toBe(403);
+  const image = await send(receipt,undefined,token);
+  expect(image.status).toBe(200);
+  expect(image.headers.get('cache-control')).toContain('no-store');
+  expect(new Uint8Array(await image.arrayBuffer())).toEqual(Uint8Array.from(atob(photo.data),c=>c.charCodeAt(0)));
+  expect((await send(receipt,undefined,outsider)).status).toBe(404);
+  expect((await send(base+'/receipts/'+payerOnly.id+'/'+photo.id,undefined,token)).status).toBe(404);
+  expect((await send('/v1/cli',{name:'groups_list'},token)).status).toBe(403);
+  expect((await send('/mcp',{},token)).status).toBe(403);
+  expect((await send(list,{},token)).status).toBe(403);
+  // Every other write or ledger path stays closed to a Finance token.
+  for (const method of ['PUT','PATCH','DELETE']) {
+    expect((await worker.fetch(new Request(env.APP_URL+list,{method,headers:{Authorization:'Bearer '+token}}),env)).status).toBe(403);
+  }
+  expect((await send('/v1/entries',{...e,id:'finance-write'},token)).status).toBe(403);
+  expect((await send('/v1/entries/'+e.id+'/claim',{itemID:'line-toast',original:[],memberIDs:[payer]},token)).status).toBe(403);
+  expect((await send('/v1/entries/'+e.id+'/delete',{},token)).status).toBe(403);
+  expect((await send('/v1/snapshot',undefined,token)).status).toBe(403);
+  expect((await send('/v1/entries/'+e.id+'/receipts/'+photo.id,undefined,token)).status).toBe(403);
+  expect((await send(base+'/receipts/'+e.id+'/'+photo.id,{},token)).status).toBe(403);
+  // A Finance token cannot approve a full-access computer or manage other tokens.
+  const pending = await (await send('/v1/device/start',{name:'Escalation'})).json<{code:string;device:string}>();
+  expect((await send('/v1/device/approve',{code:pending.code},token)).status).toBe(403);
+  expect((await send('/v1/device/review',{code:pending.code},token)).status).toBe(403);
+  expect((await send('/v1/device/poll',{device:pending.device})).status).toBe(202);
+  expect((await send('/v1/device/tokens',undefined,token)).status).toBe(403);
+  expect((await send('/v1/device/revoke',{id:'anything'},token)).status).toBe(403);
+  expect((await send('/v1/device/start',{name:'x',scope:'admin'})).status).toBe(422);
+  await call('alex','/v1/entries/'+e.id+'/delete',{});
+  expect((await send(receipt,undefined,token)).status).toBe(404);
+  expect((await send('/v1/device/logout',{},token)).status).toBe(200);
+  expect((await send(list,undefined,token)).status).toBe(401);
 });

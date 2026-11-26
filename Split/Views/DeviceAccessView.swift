@@ -6,11 +6,16 @@ private struct ConnectedComputer: Decodable, Identifiable {
     let last_used: Double?
 }
 
+private struct ComputerReview: Decodable {
+    let name: String
+    let scope: String?
+}
+
 struct DeviceAccessView: View {
     @EnvironmentObject private var store: ExpenseStore
     @State private var computers: [ConnectedComputer] = []
     @State private var code = ""
-    @State private var reviewedName: String?
+    @State private var review: ComputerReview?
     @State private var revoke: ConnectedComputer?
     @State private var busy = false
     @State private var message = ""
@@ -35,19 +40,23 @@ struct DeviceAccessView: View {
             // Device access is a live-account screen; the background matches the rest of the app.
 
             Section("Connect a computer") {
-                Text("Run split login on your computer and enter its code here.")
+                Text("Enter the code shown in a connected app or by split login.")
                 TextField("Device code", text: $code)
                     .textInputAutocapitalization(.characters).autocorrectionDisabled()
                     .accessibilityIdentifier("device-code")
-                    .onChange(of: code) { reviewedName = nil }
-                if let reviewedName {
-                    Text("Allow \(reviewedName) to read and change your Split groups and expenses?")
+                    .onChange(of: code) { review = nil }
+                if let review {
+                    if review.scope == "finance" {
+                        Text("Allow Finance to view your shares, payments, and receipts?")
+                    } else {
+                        Text("Allow \(review.name) to read and change your Split groups and expenses?")
+                    }
                     Button("Approve computer") {
                         perform {
                             _ = try await store.request(path: "/v1/device/approve", body: JSONEncoder().encode(["code":code]))
-                            self.reviewedName = nil
+                            self.review = nil
                             code = ""
-                            message = "Approved. Return to your terminal."
+                            message = "Approved. Return to the app where you got your code."
                             try await refresh()
                         }
                     }
@@ -56,7 +65,7 @@ struct DeviceAccessView: View {
                         perform {
                             let submitted = code
                             let data = try await store.request(path: "/v1/device/review", body: JSONEncoder().encode(["code":submitted]))
-                            if code == submitted { reviewedName = try JSONDecoder().decode([String:String].self, from: data)["name"] }
+                            if code == submitted { review = try JSONDecoder().decode(ComputerReview.self, from: data) }
                         }
                     }.disabled(code.filter { !$0.isWhitespace && $0 != "-" }.count != 8)
                 }

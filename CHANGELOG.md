@@ -12,6 +12,9 @@ is noted next to each release. The CLI is versioned separately with
 
 ### Added
 
+- Group creators can permanently delete groups on iOS and the web.
+- Set preferred payment methods in your profile, override them per group, and use payment handles and provider links when settling up.
+
 - Split CLI 0.3.0 creates personal invitations and can set, correct, or clear a placeholder member’s email for verified account linking.
 - Review or import several Splitwise CSV exports in one CLI command by repeating `--file`.
 

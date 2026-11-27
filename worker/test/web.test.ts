@@ -31,6 +31,7 @@ it("binds a browser snapshot to the caller", async () => {
   );
   expect(await res.json()).toEqual({
     userID: "qa-viewer",
+    paymentMethods: [],
     groups: [],
     entries: [],
     settlementRequests: [],

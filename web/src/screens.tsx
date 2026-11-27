@@ -1,3 +1,4 @@
+import { PaymentEditor, PaymentOptions, personPaymentMethods } from "./paymentMethods";
 import { PendingPayments } from "./settlements";
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
@@ -401,6 +402,18 @@ export function MemberScreen() {
           </Link>
         </div>
       </div>
+
+      {statements.some(({ person }) => personPaymentMethods(person).length > 0) && (
+        <div className="card card-pad form-stack">
+          <h3>Payment methods</h3>
+          {statements.filter(({ person }) => personPaymentMethods(person).length > 0).map(({ group, person }) => (
+            <div key={group.id}>
+              {statements.length > 1 && <strong>{group.name}</strong>}
+              <PaymentOptions person={person} />
+            </div>
+          ))}
+        </div>
+      )}
 
       <div className="kpi-grid" style={{ gridTemplateColumns: "repeat(3, minmax(0, 1fr))" }}>
         <div className="kpi">
@@ -928,6 +941,12 @@ export function Account() {
           </label>
         </div>
         {savedMsg && <p className="ok-banner" style={{ marginTop: 12 }}>{savedMsg}</p>}
+      </div>
+
+      <div className="card card-pad form-stack">
+        <h3>Payment methods</h3>
+        <PaymentEditor initial={data.paymentMethods ?? []}
+          save={(methods) => save("/v1/profile/payment-methods", { methods })} />
       </div>
 
       <AppearanceSettings />

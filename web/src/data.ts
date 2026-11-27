@@ -1,3 +1,5 @@
+import type { PaymentMethod } from '../../worker/src/paymentTypes';
+export type { PaymentMethod } from '../../worker/src/paymentTypes';
 import type { Entry } from "../../worker/src/ledger";
 import { entryPayers, simplify } from "../../worker/src/ledger";
 import { settlementEntry } from "../../worker/src/exchange";
@@ -34,6 +36,8 @@ export interface Person {
   removed?: boolean;
   avatarURL?: string | null;
   payment?: PaymentProfile;
+  paymentMethods?: PaymentMethod[];
+  paymentOverride?: PaymentMethod[];
 }
 
 export interface Group {
@@ -46,6 +50,7 @@ export interface Group {
   endDate?: string | null;
   simplify?: boolean;
   archived?: boolean;
+  canDelete?: boolean;
   members: Person[];
   defaultWeights?: Record<string, number>;
   tripRates?: Record<string, number>;
@@ -57,6 +62,7 @@ export interface Snapshot {
   groups: Group[];
   entries: Expense[];
   settlementRequests?: Expense[];
+  paymentMethods?: PaymentMethod[];
 }
 
 export interface ExpenseComment {

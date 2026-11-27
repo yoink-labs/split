@@ -191,20 +191,15 @@ async function leaveGroup(env:Env,groupID:string,seatID:string) {
     env.DB.prepare('DELETE FROM invites WHERE member_id=?').bind(seatID),
     env.DB.prepare('DELETE FROM members WHERE id=? AND group_id=?').bind(seatID,groupID)
   ]);
-  const remaining=await env.DB.prepare('SELECT count(*) AS n FROM members WHERE group_id=?').bind(groupID).first<{n:number}>();
-  if(!remaining?.n) await env.DB.batch([
-    env.DB.prepare('DELETE FROM entry_comments WHERE entry_id IN (SELECT id FROM entries WHERE group_id=?)').bind(groupID),
-    env.DB.prepare('DELETE FROM entry_reactions WHERE entry_id IN (SELECT id FROM entries WHERE group_id=?)').bind(groupID),
-    env.DB.prepare('DELETE FROM receipts WHERE entry_id IN (SELECT id FROM entries WHERE group_id=?)').bind(groupID),
-    env.DB.prepare('DELETE FROM recurring WHERE entry_id IN (SELECT id FROM entries WHERE group_id=?)').bind(groupID),
-    env.DB.prepare('DELETE FROM deleted_entries WHERE entry_id IN (SELECT id FROM entries WHERE group_id=?)').bind(groupID),
-    env.DB.prepare('DELETE FROM entries WHERE group_id=?').bind(groupID),
-    env.DB.prepare('DELETE FROM invites WHERE group_id=?').bind(groupID),
-    env.DB.prepare('DELETE FROM group_invites WHERE group_id=?').bind(groupID),
-    env.DB.prepare('DELETE FROM group_splits WHERE group_id=?').bind(groupID),
-    env.DB.prepare('DELETE FROM members WHERE group_id=?').bind(groupID),
-    env.DB.prepare('DELETE FROM groups WHERE id=?').bind(groupID)
-  ]);
+  await env.DB.prepare('DELETE FROM groups WHERE id=? AND NOT EXISTS (SELECT 1 FROM members WHERE group_id=?)').bind(groupID,groupID).run();
+  return json({ok:true});
+}
+
+async function deleteGroup(env:Env,groupID:string,userID:string) {
+  const result=await env.DB.prepare(`DELETE FROM groups WHERE id=? AND creator=? AND EXISTS (
+    SELECT 1 FROM members WHERE group_id=? AND user_id=? AND removed_at IS NULL
+  )`).bind(groupID,userID,groupID,userID).run();
+  if(!result.meta.changes) throw new HTTPError(403,'Only the active group creator can delete this group.');
   return json({ok:true});
 }
 
@@ -249,10 +244,11 @@ export async function socialRoute(request:Request,env:Env,userID:string):Promise
     const callerSeat=await groupSeat(env,memberRemoveMatch[1],userID);
     return removeMember(request,env,memberRemoveMatch[1],memberRemoveMatch[2],callerSeat);
   }
-  const groupMatch=path.match(/^\/v1\/groups\/([\w-]+)\/(update|archive|leave)$/);
+  const groupMatch=path.match(/^\/v1\/groups\/([\w-]+)\/(update|archive|leave|delete)$/);
   if(groupMatch) {
     if(request.method!=='POST') throw new HTTPError(404,'Not found.');
     const [,groupID,action]=groupMatch;
+    if(action==='delete') return deleteGroup(env,groupID,userID);
     const seat=await groupSeat(env,groupID,userID);
     if(action==='update') return updateGroup(request,env,groupID);
     if(action==='archive') return archiveGroup(request,env,groupID);

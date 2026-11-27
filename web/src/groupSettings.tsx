@@ -1,10 +1,11 @@
-import { useEffect, useState, type ReactNode } from "react";
-import { Link } from "react-router-dom";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import { Form, useLedger, value } from "./context";
 import { breakdown, memberPath, type ActiveInvite, type Expense, type Group, type Person } from "./data";
 import { rateE8, rateInput, rateText } from "./fx";
 import { CurrencySelect } from "./fxui";
 import { memberBalances, useHomeMoney } from "./homeMoney";
+import { PaymentEditor } from "./paymentMethods";
 import { Avatar, BalanceBadge } from "./ui";
 
 function SettingsCard({ id, title, description, children }: {
@@ -73,7 +74,9 @@ function TripRates({ group, canEdit }: { group: Group; canEdit: boolean }) {
 }
 
 export function GroupSettings({ g, entries, showRates }: { g: Group; entries: Expense[]; showRates: boolean }) {
-  const { user, request, save } = useLedger();
+  const { data, user, request, save } = useLedger();
+  const navigate = useNavigate();
+  const deleteDialog = useRef<HTMLDialogElement>(null);
   const homeMoney = useHomeMoney();
   const me = g.members.find((m) => m.userID === user);
   const projected = entries.map(homeMoney.project);
@@ -118,7 +121,8 @@ export function GroupSettings({ g, entries, showRates }: { g: Group; entries: Ex
         <a href="#group-members">Members</a>
         <a href="#add-person">Add a person</a>
         <a href="#group-invites">Invites</a>
-        <a href="#payment-handles">Payment handles</a>
+        {me && !me.removed && <a href="#payment-handles">Payment methods</a>}
+        {g.canDelete && <a href="#delete-group">Delete group</a>}
       </nav>
       <div className="settings-grid">
         <SettingsCard id="group-details" title="Group details" description="Edit the name, description, and dates.">
@@ -317,38 +321,31 @@ export function GroupSettings({ g, entries, showRates }: { g: Group; entries: Ex
             </div>
           )}
         </SettingsCard>
-        <SettingsCard id="payment-handles" title="Payment handles" description="Help group members pay you when they settle up.">
-          <Form
-            label="Save payment handles"
-            submit={async (f) => {
-              await save(`/v1/groups/${g.id}/payment-profile`, {
-                venmo: value(f, "venmo") || undefined,
-                paypal: value(f, "paypal") || undefined,
-                mercado: value(f, "mercado") || undefined,
-                alias: value(f, "alias") || undefined,
-              });
-            }}
-          >
-            <div className="form-row">
-              <label className="field">
-                Venmo username
-                <input type="text" name="venmo" defaultValue={me?.payment?.venmo ?? ""} placeholder="your-username" />
-              </label>
-              <label className="field">
-                PayPal.Me username
-                <input type="text" name="paypal" defaultValue={me?.payment?.paypal ?? ""} placeholder="your-username" />
-              </label>
+        {me && !me.removed && (
+          <SettingsCard id="payment-handles" title="Your payment methods">
+            <PaymentEditor initial={me.paymentOverride} defaults={data.paymentMethods ?? []}
+              save={(methods) => save(`/v1/groups/${g.id}/payment-profile`, { methods })} />
+          </SettingsCard>
+        )}
+        {g.canDelete && (
+          <SettingsCard id="delete-group" title="Delete group"
+            description="Permanently remove the group, its expenses, receipts, and payments for everyone.">
+            <div>
+              <button className="btn btn-danger" type="button" onClick={() => deleteDialog.current?.showModal()}>
+                Delete group
+              </button>
             </div>
-            <label className="field">
-              Argentine Alias / CVU
-              <input type="text" name="alias" defaultValue={me?.payment?.alias ?? ""} placeholder="your.alias" />
-            </label>
-            <label className="field">
-              Mercado Pago link
-              <input type="text" name="mercado" defaultValue={me?.payment?.mercado ?? ""} placeholder="https://link.mercadopago.com.ar/..." />
-            </label>
-          </Form>
-        </SettingsCard>
+            <dialog ref={deleteDialog} className="modal group-delete-dialog" aria-labelledby="delete-group-confirmation">
+              <Form label="Delete group" destructive cancel={() => deleteDialog.current?.close()} submit={async () => {
+                await save(`/v1/groups/${g.id}/delete`, {});
+                navigate("/", { replace: true });
+              }}>
+                <h2 id="delete-group-confirmation">Delete {g.name}?</h2>
+                <p>This permanently removes the group, its expenses, receipts, and payments for everyone.</p>
+              </Form>
+            </dialog>
+          </SettingsCard>
+        )}
       </div>
 
       {/* Member Remove / Retain as Entity Modal */}

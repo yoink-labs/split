@@ -103,6 +103,15 @@ struct MemberCharges: View {
                 VStack(alignment: .leading, spacing: Spacing.section) {
                     header(name: name, isMe: isMe, person: first.person, statements: statements, memberships: memberships)
                     if memberships.count > 1 { groupPicker(memberships, selected: selected) }
+                    ForEach(statements.filter { !$0.person.availablePaymentMethods.isEmpty }) { statement in
+                        VStack(alignment: .leading, spacing: 8) {
+                            SectionHeader(title: "Payment methods", subtitle: statements.count > 1 ? statement.group.name : nil)
+                            Card {
+                                PaymentOptions(methods: statement.person.availablePaymentMethods)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                        }
+                    }
                     if hasPayments {
                         Picker("Show", selection: $kind) {
                             ForEach(Kind.allCases) { Text($0.rawValue).tag($0) }

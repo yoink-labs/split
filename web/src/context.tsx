@@ -32,11 +32,15 @@ export function Form({
   submit,
   label,
   footer,
+  destructive = false,
+  cancel,
 }: {
-  children: ReactNode;
+  children?: ReactNode;
   submit: (form: FormData) => Promise<void>;
   label: string;
   footer?: ReactNode;
+  destructive?: boolean;
+  cancel?: () => void;
 }) {
   const [busy, setBusy] = useState(false),
     [error, setError] = useState("");
@@ -66,10 +70,11 @@ export function Form({
             {error}
           </p>
         )}
-        <div className={footer ? "expense-save" : undefined}>
+        <div className={footer ? "expense-save" : cancel ? "form-actions" : undefined}>
           {footer}
-          <button className="btn btn-primary" type="submit">
-            {busy ? "Saving…" : label}
+          {cancel && <button className="btn" type="button" onClick={cancel} autoFocus>Cancel</button>}
+          <button className={destructive ? "btn btn-danger" : "btn btn-primary"} type="submit">
+            {busy ? (destructive ? "Deleting…" : "Saving…") : label}
           </button>
         </div>
       </fieldset>

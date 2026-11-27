@@ -1,3 +1,4 @@
+import { PaymentOptions } from "./paymentMethods";
 import { memberBalances, useHomeMoney } from "./homeMoney";
 import { PendingPayments } from "./settlements";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -700,7 +701,6 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
                       {stats.settlements.map((t) => {
                         const key = currency + ":" + t.from + ":" + t.to;
                         const recipient = g.members.find((m) => m.id === t.to);
-                        const pay = recipient?.payment;
                         const isOpen = settlingKey === key;
                         return (
                           <div key={key} style={{ padding: "14px 16px", borderBottom: "1px solid var(--border)" }}>
@@ -724,34 +724,7 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
                               )}
                             </div>
 
-                            {pay && (pay.venmo || pay.paypal || pay.mercado || pay.alias) && (
-                              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
-                                {pay.venmo && (
-                                  <a className="btn btn-xs" href={`https://venmo.com/${pay.venmo}`} target="_blank" rel="noreferrer">
-                                    Venmo @{pay.venmo}
-                                  </a>
-                                )}
-                                {pay.paypal && (
-                                  <a className="btn btn-xs" href={`https://paypal.me/${pay.paypal}/${(t.amount / 100).toFixed(2)}${currency}`} target="_blank" rel="noreferrer">
-                                    PayPal.me/{pay.paypal}
-                                  </a>
-                                )}
-                                {pay.mercado && (
-                                  <a className="btn btn-xs" href={pay.mercado} target="_blank" rel="noreferrer">
-                                    Mercado Pago
-                                  </a>
-                                )}
-                                {pay.alias && (
-                                  <button
-                                    type="button"
-                                    className="btn btn-xs mono"
-                                    onClick={() => void navigator.clipboard?.writeText(pay.alias!)}
-                                  >
-                                    Copy alias: {pay.alias}
-                                  </button>
-                                )}
-                              </div>
-                            )}
+                            {recipient && <PaymentOptions person={recipient} amount={t.amount} currency={currency} />}
 
                             {isOpen && (
                               <SettlePaymentForm

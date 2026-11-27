@@ -111,8 +111,8 @@ describe('CLI and MCP', () => {
     expect(await env.DB.prepare('SELECT user_id FROM members WHERE id=?').bind(member).first('user_id')).toBeNull();
     await saveProfile(env.DB,{userID:'maya',name:'Maya',username:null,email:'maya@example.test'});
     const joined = await send('groups_show',{group},outsider);
-    expect(await joined.json()).toMatchObject({members:expect.arrayContaining([{...owner,payment:{}},
-      {id:member,groupID:group,userID:'maya',name:'Maya',payment:{}}])});
+    expect(await joined.json()).toMatchObject({members:expect.arrayContaining([expect.objectContaining({...owner,payment:{}}),
+      expect.objectContaining({id:member,groupID:group,userID:'maya',name:'Maya',payment:{}})])});
     const history = await send('expenses_list',{group},outsider);
     expect(await history.json()).toMatchObject([{id:expense.id,splits:expense.splits}]);
     expect((await send('members_update',update)).status).toBe(422);

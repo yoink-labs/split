@@ -23,3 +23,9 @@ The web client uses React, React DOM, Scheduler and React Router under MIT licen
 The web PDF download uses [pdfmake](https://github.com/bpampuch/pdfmake) under the MIT license and embeds [Roboto](https://github.com/googlefonts/roboto-3-classic) under the SIL Open Font License 1.1. Both licenses are included in the [web notices](web/public/NOTICE.txt).
 
 The web receipt reader loads [Tesseract.js 7.0.0](https://github.com/naptha/tesseract.js/tree/v7.0.0), Tesseract.js Core, and the [English Tesseract model](https://github.com/tesseract-ocr/tessdata_best) on demand. The OCR engine and model are available under the [Apache License 2.0](docs/licenses/tesseract.txt).
+
+## Payment platform icons
+
+Brand SVG artwork from [Simple Icons](https://github.com/simple-icons/simple-icons/tree/801eaab5b70f4933137069397ebbd2ce5f9ad56e)
+is included under [CC0 1.0](docs/licenses/simple-icons-CC0-1.0.txt).
+The marks identify the corresponding payment providers. Trademark rights remain with their owners.

@@ -237,6 +237,17 @@ struct AccountView: View {
                         reminderNote
                     }
                     rowDivider
+                    NavigationLink {
+                        PaymentSettings(initial: store.state.snapshot.paymentMethods)
+                    } label: {
+                        settingsRow(icon: "creditcard", title: "Payment methods", subtitle: "Choose how people can pay you") {
+                            Image(systemName: "chevron.right")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    rowDivider
                     settingsRow(
                         icon: "banknote",
                         title: "Home currency",

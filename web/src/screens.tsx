@@ -1,1074 +1,969 @@
-import { useEffect, useRef, useState } from "react";
-import {
-  Link,
-  useNavigate,
-  useParams,
-  useSearchParams,
-} from "react-router-dom";
+import { useEffect, useState } from "react";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { AVATAR_PRESETS } from "./categories";
+import { DEFAULT_PALETTE, PALETTES, readAppearance, saveAppearance, type Appearance, type Mode } from "./appearance";
 import { Form, useLedger, value } from "./context";
 import {
-  AddMenu,
-  Avatar,
-  Badge,
-  Balance,
-  EmptyState,
-  Hero,
-  Row,
-  TIP_URL,
-} from "./ui";
-import { Approx, ApproxNote, CurrencySelect, RateField, useShowIn } from "./fxui";
-import { convert, fx, rateText, sourceLabel, useHomeCurrency, type Exchange } from "./fx";
-import {
   balances,
-  breakdown,
   currencies,
-  dateText,
-  shortDate,
-  entryPath,
-  grossItems,
+  entryPayers,
   memberEntries,
   memberName,
   memberPath,
   membersGroups,
-  minor,
   money,
+  moneyCompact,
   settlementEntry,
-  stamp,
+  shortDate,
+  tripRangeText,
   type Expense,
   type Group,
 } from "./data";
+import { useHomeCurrency } from "./fx";
+import { Approx, CurrencySelect, useShowIn } from "./fxui";
+import { Avatar, AvatarStack, BalanceBadge, CategoryIcon, EmptyState, TIP_URL } from "./ui";
 
-export function Groups() {
+export function HomeOverview() {
   const { data, user } = useLedger();
-  return (
-    <>
-      <div className="titlebar">
-        <h1>Groups</h1>
-        <AddMenu
-          label="Add group"
-          items={[
-            { label: "New group", to: "/new" },
-            { label: "Join with code or link", to: "/join" },
-            { label: "Import from Splitwise", to: "/import/splitwise" },
-            { label: "Currency converter", to: "/convert" },
-          ]}
-        />
-      </div>
-      {data.groups.length === 0 ? (
-        <>
-          <EmptyState
-            title="No groups yet"
-            message="Start a trip or a home, join with an invite code, or bring your groups over from Splitwise for free."
-            action={{ label: "New group", to: "/new" }}
-          />
-          <p className="center">
-            <Link className="secondary" to="/import/splitwise">
-              Import from Splitwise
-            </Link>
-          </p>
-        </>
-      ) : (
-        <>
-        <HomeTotals />
-        <div className="panel">
-          {data.groups.map((g) => {
-            const entries = data.entries.filter((e) => e.groupID === g.id);
-            const me = g.members.find((p) => p.userID === user);
-            const open = me
-              ? [...new Set([g.currency, ...entries.map((e) => settlementEntry(e).currency)])]
-                  .map((c) => ({ currency: c, amount: balances(entries, c)[me.id] ?? 0 }))
-                  .filter((b) => b.amount !== 0)
-              : [];
-            return (
-              <Link className="row ledger-row" key={g.id} to={"/g/" + g.id}>
-                <Badge label={g.name} />
-                <span className="ledger-main">
-                  <strong>{g.name}</strong>
-                  <small>
-                    {g.members.length} people · {g.kind}
-                  </small>
-                </span>
-                {open.length ? (
-                  <Balance
-                    amount={open[0].amount}
-                    currency={open[0].currency}
-                    positive="you’re owed"
-                    negative="you owe"
-                  />
-                ) : (
-                  <small className="accent">Settled up</small>
-                )}
-                <span className="chevron" aria-hidden="true">
-                  ›
-                </span>
-              </Link>
-            );
-          })}
-        </div>
-        </>
-      )}
-    </>
-  );
-}
-/** Your net across every group, per currency, plus one approximate total in the "Show in" currency. */
-function HomeTotals() {
-  const { data, user } = useLedger(),
-    [target, setTarget] = useShowIn();
+  const [target, setTarget] = useShowIn();
+
   const net: Record<string, number> = {};
+  let owedToYou = 0;
+  let youOwe = 0;
+
   for (const g of data.groups) {
     const me = g.members.find((p) => p.userID === user);
     if (!me) continue;
     const entries = data.entries.filter((e) => e.groupID === g.id);
-    for (const c of new Set([g.currency, ...entries.map((e) => settlementEntry(e).currency)]))
-      net[c] = (net[c] ?? 0) + (balances(entries, c)[me.id] ?? 0);
+    for (const c of new Set([g.currency, ...entries.map((e) => settlementEntry(e).currency)])) {
+      const amt = balances(entries, c)[me.id] ?? 0;
+      net[c] = (net[c] ?? 0) + amt;
+      if (c === g.currency) {
+        if (amt > 0) owedToYou += amt;
+        if (amt < 0) youOwe += Math.abs(amt);
+      }
+    }
   }
-  const open = Object.keys(net).sort().filter((c) => net[c]);
+
+  const openReceipts = data.entries.filter(
+    (e) => e.bill && !e.bill.closed && e.bill.items.some((i) => !i.memberIDs.length),
+  );
+  const trips = data.groups.filter((g) => !g.archived && g.kind === "trip");
+  const longTerm = data.groups.filter((g) => !g.archived && g.kind !== "trip");
+  const openCurrencies = Object.keys(net).sort().filter((c) => net[c]);
+
+  const renderGroupCard = (g: Group) => {
+    const entries = data.entries.filter((e) => e.groupID === g.id);
+    const me = g.members.find((p) => p.userID === user);
+    const bal = me ? balances(entries, g.currency)[me.id] ?? 0 : 0;
+    const totalSpent = entries
+      .filter((e) => e.kind === "expense")
+      .map(settlementEntry)
+      .filter((e) => e.currency === g.currency)
+      .reduce((s, e) => s + e.amount, 0);
+    const openCount = entries.filter((e) => e.bill && !e.bill.closed && e.bill.items.some((i) => !i.memberIDs.length)).length;
+    const range = tripRangeText(g.startDate, g.endDate);
+    const activeMembers = g.members.filter((m) => !m.removed);
+
+    return (
+      <Link key={g.id} to={`/g/${g.id}`} className="card card-pad" style={{ color: "var(--ink)", display: "flex", flexDirection: "column", gap: 12 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
+              <strong style={{ fontSize: 15.5 }}>{g.name}</strong>
+              <span className="tag mono">{g.currency}</span>
+            </div>
+            {range && <p className="muted" style={{ fontSize: 12, marginTop: 3 }}>{range}</p>}
+            {g.description && (
+              <p className="muted" style={{ fontSize: 12.5, marginTop: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {g.description}
+              </p>
+            )}
+          </div>
+          <BalanceBadge amount={bal} currency={g.currency} positive="owed" negative="you owe" />
+        </div>
+
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: 10, borderTop: "1px solid var(--border)" }}>
+          <AvatarStack people={activeMembers} size={24} />
+          <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5 }}>
+            {openCount > 0 && <span className="tag tag-warn">{openCount} open receipt</span>}
+            <span className="muted num">Spent <b style={{ color: "var(--ink)" }}>{moneyCompact(totalSpent, g.currency)}</b></span>
+          </div>
+        </div>
+      </Link>
+    );
+  };
+
   return (
-    <section className="summary home-total">
-      <div className="summary-head">
-        <small>Your balance across {data.groups.length} {data.groups.length === 1 ? "group" : "groups"}</small>
-        <CurrencySelect label="Show in" value={target} onChange={setTarget} />
+    <>
+      <div className="page-head">
+        <div>
+          <h1 className="page-title">Overview</h1>
+          <p className="page-sub">
+            All your trips, ongoing shared spaces, and pending receipt claims in one place.
+          </p>
+        </div>
+        <div className="head-actions">
+          <CurrencySelect label="Show in" value={target} onChange={setTarget} />
+          <Link className="btn btn-sm" to="/import/splitwise">
+            Import Splitwise
+          </Link>
+          <Link className="btn btn-sm btn-primary" to="/new">
+            + New trip or group
+          </Link>
+        </div>
       </div>
-      {open.length ? (
-        open.map((c) => (
-          <h2 key={c} className={net[c] < 0 ? "neg" : undefined}>
-            {net[c] > 0 ? "+" : "−"}
-            {money(Math.abs(net[c]), c)}
-          </h2>
-        ))
+
+      {!data.groups.length ? (
+        <EmptyState
+          title="No trips or groups yet"
+          message="Start a trip, set up an ongoing apartment ledger, join with a code, or import your existing groups from Splitwise for free."
+          action={{ label: "Create your first group", to: "/new" }}
+        />
       ) : (
-        <h2>All settled</h2>
+        <div className="form-stack" style={{ gap: 22 }}>
+          <div className="kpi-grid">
+            <div className="kpi">
+              <div className="kpi-label">Overall net balance</div>
+              <div className="kpi-val">
+                {openCurrencies.length ? (
+                  <span className={net[openCurrencies[0]] > 0 ? "pos" : "neg"}>
+                    {net[openCurrencies[0]] > 0 ? "+" : "−"}
+                    {moneyCompact(Math.abs(net[openCurrencies[0]]), openCurrencies[0])}
+                  </span>
+                ) : (
+                  <span className="pos">All settled</span>
+                )}
+              </div>
+              <div className="kpi-sub">
+                {openCurrencies.length > 0 && <Approx amounts={net} target={target} signed prefix="≈ Total" note={false} />}
+              </div>
+            </div>
+            <div className="kpi">
+              <div className="kpi-label">You are owed</div>
+              <div className="kpi-val pos">{moneyCompact(owedToYou, "USD")}</div>
+              <div className="kpi-sub">Across active groups</div>
+            </div>
+            <div className="kpi">
+              <div className="kpi-label">You owe</div>
+              <div className="kpi-val neg">{moneyCompact(youOwe, "USD")}</div>
+              <div className="kpi-sub">Across active groups</div>
+            </div>
+            <div className="kpi">
+              <div className="kpi-label">Open receipts</div>
+              <div className={"kpi-val " + (openReceipts.length ? "warn" : "pos")}>
+                {openReceipts.length ? `${openReceipts.length} need claims` : "None open"}
+              </div>
+              <div className="kpi-sub">
+                {openReceipts[0] ? (
+                  <Link to={`/g/${openReceipts[0].groupID}?tab=receipts`}>Review {openReceipts[0].title} ›</Link>
+                ) : (
+                  "All itemized bills settled"
+                )}
+              </div>
+            </div>
+          </div>
+
+          {trips.length > 0 && (
+            <section>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                <h2 style={{ fontSize: 15, fontWeight: 700 }}>Trips ({trips.length})</h2>
+                <Link to="/new?kind=trip" style={{ fontSize: 12.5, fontWeight: 600 }}>+ New trip</Link>
+              </div>
+              <div className="grid-2">{trips.map(renderGroupCard)}</div>
+            </section>
+          )}
+
+          {longTerm.length > 0 && (
+            <section>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                <h2 style={{ fontSize: 15, fontWeight: 700 }}>Long-term & Home ({longTerm.length})</h2>
+                <Link to="/new?kind=home" style={{ fontSize: 12.5, fontWeight: 600 }}>+ New group</Link>
+              </div>
+              <div className="grid-2">{longTerm.map(renderGroupCard)}</div>
+            </section>
+          )}
+        </div>
       )}
-      {open.length > 0 && <Approx amounts={net} target={target} signed prefix="≈ Total" />}
-    </section>
+    </>
   );
 }
+
 export function NewGroup() {
-  const { user, save } = useLedger(),
-    nav = useNavigate(),
-    [id] = useState(() => crypto.randomUUID()),
-    [seat] = useState(() => crypto.randomUUID());
+  const { user, userName, save } = useLedger();
+  const nav = useNavigate();
+  const [query] = useSearchParams();
+  const [id] = useState(() => crypto.randomUUID());
+  const [seat] = useState(() => crypto.randomUUID());
+  const [kind, setKind] = useState(query.get("kind") || "trip");
+  const [placeholders, setPlaceholders] = useState("");
+
   return (
-    <>
-      <h1>New group</h1>
-      <Form
-        label="Create group"
-        submit={async (f) => {
-          await save("/v1/groups", {
-            id,
-            name: value(f, "name"),
-            currency: value(f, "currency"),
-            kind: value(f, "kind"),
-            members: [
-              {
-                id: seat,
-                name: window.Clerk.user?.fullName || "Split member",
-                userID: user,
-              },
-            ],
-          });
-          nav("/g/" + id, { replace: true });
-        }}
-      >
-        <label>
-          Group name
-          <input name="name" maxLength={80} required autoFocus />
-        </label>
-        <label>
-          Type
-          <select name="kind">
-            <option value="trip">Trip</option>
-            <option value="home">Home</option>
-            <option value="friend">Friends</option>
-          </select>
-        </label>
-        <label>
-          Currency
-          <select name="currency">
-            {currencies.map((c) => (
-              <option key={c}>{c}</option>
-            ))}
-          </select>
-        </label>
-      </Form>
-    </>
-  );
-}
-export function Join() {
-  const { request, refresh } = useLedger(),
-    nav = useNavigate(),
-    { code } = useParams();
-  return (
-    <>
-      <h1>Join a group</h1>
-      <Form
-        label="Join group"
-        submit={async (f) => {
-          const input = value(f, "code");
-          const token =
-            input.match(
-              /^https:\/\/split-api\.yoinklabs\.dev\/join\/([\w-]+)$/,
-            )?.[1] ?? input;
-          const r = await request<{ groupID: string }>("/v1/join", { token });
-          await refresh();
-          nav("/g/" + r.groupID, { replace: true });
-        }}
-      >
-        <label>
-          Invitation code or link
-          <input
-            name="code"
-            defaultValue={code}
-            required
-            autoCapitalize="characters"
-          />
-        </label>
-      </Form>
-    </>
-  );
-}
-export function Account() {
-  const { data, user } = useLedger(),
-    [theme, setTheme] = useState(document.documentElement.dataset.theme),
-    [home, setHome] = useHomeCurrency();
-  const first = data.groups.find((g) =>
-    g.members.some((p) => p.userID === user),
-  );
-  return (
-    <>
-      <h1>You</h1>
-      <section className="panel">
-        {first ? (
-          <Link
-            className="row"
-            to={memberPath(
-              first,
-              first.members.find((p) => p.userID === user)!.id,
-            )}
-          >
-            <strong>{window.Clerk.user?.fullName || "Your profile"}</strong>
-            <span>Your charges by group ›</span>
-          </Link>
-        ) : (
-          <p>Join a group to see your charges.</p>
-        )}
-        <label>
-          Appearance
-          <select
-            value={theme}
-            onChange={(e) => {
-              setTheme(e.target.value);
-              document.documentElement.dataset.theme = e.target.value;
-              localStorage.setItem("split-theme", e.target.value);
-            }}
-          >
-            <option value="system">System</option>
-            <option value="light">Light</option>
-            <option value="dark">Dark</option>
-          </select>
-        </label>
-        <CurrencySelect label="Home currency" value={home} onChange={setHome} />
-        <small>
-          Free currency conversion: totals can be shown in your home currency at
-          today’s rate (ECB via Frankfurter, BCRA official for ARS), and every
-          expense can be entered in any currency. No Pro tier.
-        </small>
-        <Link className="row" to="/convert">
-          <strong>Currency converter</strong>
-          <span>Rates and your own ARS rate ›</span>
-        </Link>
-        <Link className="row" to="/import/splitwise">
-          <strong>Import from Splitwise</strong>
-          <span>Bring every group over, free ›</span>
-        </Link>
-        <a className="row" href={TIP_URL}>
-          <strong>
-            <span className="tip-heart" aria-hidden="true">
-              ♥
-            </span>{" "}
-            Tip the devs
-          </strong>
-          <span>Optional, unlocks nothing ›</span>
-        </a>
-        <button onClick={() => void window.Clerk.signOut()}>Sign out</button>
-      </section>
-    </>
-  );
-}
-function EntryRow({ e, g, seat }: { e: Expense; g: Group; seat?: string }) {
-  const open = e.bill?.items.filter((i) => !i.memberIDs.length).length;
-  const share = seat
-    ? (e.splits.find((s) => s.memberID === seat)?.amount ?? 0)
-    : null;
-  const settlement = e.kind === "settlement";
-  return (
-    <Row
-      to={entryPath(e)}
-      badge={<Badge label={settlement ? "↔" : (e.category ?? e.title)} />}
-      title={
-        settlement
-          ? memberName(g, e.paidBy) +
-            " → " +
-            memberName(g, e.splits[0]?.memberID ?? "")
-          : e.title
-      }
-      detail={
-        shortDate(e.createdAt) +
-        (settlement ? "" : " · " + memberName(g, e.paidBy) + " paid") +
-        (open ? " · " + open + " open" : "") +
-        (e.exchange && !settlement && share === null ? " · ≈ " + money(settlementEntry(e).amount, e.exchange.target) : "")
-      }
-      value={money(share !== null && !settlement ? share : e.amount, e.currency)}
-      caption={
-        share !== null && !settlement
-          ? "of " + money(e.amount, e.currency)
-          : settlement
-            ? "payment"
-            : undefined
-      }
-      tone={share === 0 ? "muted" : undefined}
-    />
-  );
-}
-function People({ g }: { g: Group }) {
-  const { save, request } = useLedger(),
-    [invite, setInvite] = useState(""),
-    [matches, setMatches] = useState<{ userID: string; name: string }[]>([]),
-    [error, setError] = useState("");
-  return (
-    <>
-      <h2>People</h2>
-      <div className="panel">
-        {g.members.map((p) => (
-          <Link className="row" key={p.id} to={memberPath(g, p.id)}>
-            <strong>{p.name}</strong>
-            <small>{p.userID ? "Joined" : "Placeholder"} ›</small>
-          </Link>
-        ))}
+    <div style={{ maxWidth: 620, margin: "0 auto" }}>
+      <div className="page-head">
+        <div>
+          <h1 className="page-title">Create a trip or group</h1>
+          <p className="page-sub">Set up a time-bounded trip or an ongoing household/rent ledger.</p>
+        </div>
       </div>
-      <details>
-        <summary>Add a person</summary>
+      <div className="card card-pad">
         <Form
-          label="Add placeholder"
+          label="Create group"
           submit={async (f) => {
-            await save("/v1/groups/" + g.id + "/members", {
-              id: crypto.randomUUID(),
-              name: value(f, "person"),
-              email: value(f, "email"),
+            const extraNames = placeholders
+              .split(",")
+              .map((s) => s.trim())
+              .filter(Boolean);
+            await save("/v1/groups", {
+              id,
+              name: value(f, "name"),
+              currency: value(f, "currency"),
+              kind,
+              description: value(f, "description") || undefined,
+              startDate: value(f, "startDate") || undefined,
+              endDate: value(f, "endDate") || undefined,
+              members: [
+                { id: seat, name: userName || "Split member", userID: user },
+                ...extraNames.map((n) => ({ id: crypto.randomUUID(), name: n, userID: null })),
+              ],
             });
+            nav("/g/" + id, { replace: true });
           }}
         >
-          <label>
-            Name
-            <input name="person" required maxLength={60} />
-          </label>
-          <label>
-            Email (optional)
-            <input type="email" name="email" />
-          </label>
-        </Form>
-        <Form
-          label="Search Split"
-          submit={async (f) => {
-            const result = await request<{ userID: string; name: string }[]>(
-              "/v1/people/search",
-              { query: value(f, "query") },
-            );
-            setMatches(result);
-            setError("");
-            if (!result.length) setError("No matches.");
-          }}
-        >
-          <label>
-            Exact email, username or shared contact
-            <input name="query" required />
-          </label>
-        </Form>
-        {matches.map((p) => (
-          <button
-            key={p.userID}
-            onClick={() => {
-              void save("/v1/groups/" + g.id + "/members", {
-                id: crypto.randomUUID(),
-                ...p,
-              })
-                .then(() => setMatches([]))
-                .catch((e) => setError(e.message));
-            }}
-          >
-            Add {p.name}
-          </button>
-        ))}
-      </details>
-      <details>
-        <summary>Invite someone</summary>
-        <Form
-          label="Create invitation"
-          submit={async (f) => {
-            const memberID = value(f, "member");
-            const result = await request<{ url: string; code: string }>(
-              "/v1/groups/" + g.id + "/invites",
-              memberID ? { memberID } : {},
-            );
-            setInvite(result.url);
-          }}
-        >
-          <label>
-            Invitation for
-            <select name="member">
-              <option value="">Anyone with the link</option>
-              {g.members
-                .filter((p) => !p.userID)
-                .map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-            </select>
-          </label>
-        </Form>
-        {invite && (
-          <label>
-            Share this link
-            <input readOnly value={invite} onFocus={(e) => e.target.select()} />
-          </label>
-        )}
-      </details>
-      {error && <p role="status">{error}</p>}
-    </>
-  );
-}
-function Balances({ g, entries }: { g: Group; entries: Expense[] }) {
-  const { save } = useLedger(),
-    converted = entries.map(settlementEntry);
-  const codes = [...new Set([g.currency, ...converted.map((e) => e.currency)])];
-  const [target, setTarget] = useShowIn();
-  const nets = Object.fromEntries(
-    g.members.map((p) => [
-      p.id,
-      Object.fromEntries(codes.map((c) => [c, balances(entries, c)[p.id] ?? 0])),
-    ]),
-  ) as Record<string, Record<string, number>>;
-  const mixed = codes.length > 1 || codes[0] !== target;
-  return (
-    <>
-      <div className="titlebar compact">
-        <h2>Balances</h2>
-        <CurrencySelect label="Show in" value={target} onChange={setTarget} />
-      </div>
-      {mixed && entries.length > 0 && (
-        <section>
-          <div className="panel">
-            {g.members.map((p) => (
-              <Link className="row ledger-row" key={p.id} to={memberPath(g, p.id)}>
-                <Avatar name={p.name} />
-                <span className="ledger-main">
-                  <strong>{p.name}</strong>
-                  <small>{codes.filter((c) => nets[p.id][c]).map((c) => (nets[p.id][c] > 0 ? "+" : "−") + money(Math.abs(nets[p.id][c]), c)).join(" · ") || "All square"}</small>
-                </span>
-                <Approx amounts={nets[p.id]} target={target} note={false} positive="gets back" negative="owes" className="approx row-approx" />
-                <span className="chevron" aria-hidden="true">›</span>
-              </Link>
-            ))}
-          </div>
-          <ApproxNote codes={codes} target={target} />
-        </section>
-      )}
-      {codes.map((currency) => {
-        const stats = breakdown(converted, g.members, currency);
-        return (
-          <section key={currency}>
-            <div className="summary">
-              <small>Total spent · {currency}</small>
-              <h2>{money(stats.total, currency)}</h2>
-            </div>
-            <h2>Member balances</h2>
-            <div className="panel">
-              {stats.members.map((p) => (
-                <Link className="row" key={p.id} to={memberPath(g, p.id)}>
-                  <div>
-                    <strong>{p.name}</strong>
-                    <small>
-                      Paid {money(p.paid, currency)} · Share{" "}
-                      {money(p.share, currency)}
-                    </small>
-                  </div>
-                  <b>
-                    {p.net
-                      ? (p.net > 0 ? "Owed " : "Owes ") +
-                        money(Math.abs(p.net), currency)
-                      : "All square"}
-                  </b>
-                </Link>
-              ))}
-            </div>
-            <h2>Settle up</h2>
-            {!stats.settlements.length && (
-              <p>Everyone is square in {currency}.</p>
-            )}
-            {stats.settlements.map((t) => (
-              <details key={t.from + t.to}>
-                <summary>
-                  {memberName(g, t.from)} → {memberName(g, t.to)} ·{" "}
-                  {money(t.amount, currency)}
-                </summary>
-                <SettleForm g={g} from={t.from} to={t.to} amount={t.amount} currency={currency} open={codes} />
-              </details>
-            ))}
-            {Object.entries({
-              Category: stats.categories,
-              Month: stats.months,
-            }).map(([label, buckets]) => (
-              <details key={label}>
-                <summary>By {label.toLowerCase()}</summary>
-                {Object.entries(buckets)
-                  .sort()
-                  .map(([k, v]) => (
-                    <p className="row" key={k}>
-                      {k}
-                      <b>{money(v, currency)}</b>
-                    </p>
-                  ))}
-              </details>
-            ))}
-          </section>
-        );
-      })}
-    </>
-  );
-}
-/** Records a payment in any currency. A currency with no open balance converts to the group currency. */
-function SettleForm({
-  g,
-  from,
-  to,
-  amount: owed,
-  currency: owedIn,
-  open,
-}: {
-  g: Group;
-  from: string;
-  to: string;
-  amount: number;
-  currency: string;
-  open: string[];
-}) {
-  const { save } = useLedger();
-  const [currency, setCurrency] = useState(owedIn);
-  const [text, setText] = useState((owed / 100).toFixed(2));
-  const [exchange, setExchange] = useState<Exchange | null>(null);
-  const [day] = useState(() => stamp());
-  const converts = currency !== g.currency && !open.includes(currency);
-  let typed: number | null = null;
-  try {
-    typed = minor(text);
-  } catch {
-    typed = null;
-  }
-  return (
-    <Form
-      label="Record payment"
-      submit={async () => {
-        const amount = minor(text);
-        if (amount <= 0) throw new Error("Enter a payment greater than zero.");
-        if (currency === owedIn && amount > owed)
-          throw new Error("Enter an amount up to the outstanding balance.");
-        if (converts && !exchange)
-          throw new Error("Wait for the rate, or enter your own rate.");
-        await save("/v1/entries", {
-          id: crypto.randomUUID(),
-          groupID: g.id,
-          title: "Settle-up payment",
-          amount,
-          currency,
-          paidBy: from,
-          splits: [{ memberID: to, amount }],
-          kind: "settlement",
-          splitMode: "exact",
-          createdAt: day,
-          ...(converts && exchange ? { exchange } : {}),
-        });
-      }}
-    >
-      <div className="columns">
-        <label>
-          Amount paid
-          <input
-            inputMode="decimal"
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            required
-          />
-        </label>
-        <CurrencySelect
-          label="Paid in"
-          value={currency}
-          onChange={(c) => {
-            setCurrency(c);
-            const q = c === owedIn ? null : fx.rate(owedIn, c);
-            setText(((c === owedIn ? owed : q ? convert(owed, q.rateE8) : owed) / 100).toFixed(2));
-            if (c !== owedIn) void fx.latest(owedIn, c);
-          }}
-        />
-      </div>
-      {converts && (
-        <RateField
-          from={currency}
-          to={g.currency}
-          amount={typed}
-          date={day.slice(0, 10)}
-          onChange={setExchange}
-        />
-      )}
-      <small>Records a payment already made. Split doesn’t move money.</small>
-    </Form>
-  );
-}
-export function GroupScreen() {
-  const { data } = useLedger(),
-    { gid } = useParams(),
-    [query, setQuery] = useSearchParams(),
-    [open, setOpen] = useState(false);
-  const g = data.groups.find((g) => g.id === gid);
-  if (!g) return <p>Group unavailable.</p>;
-  const entries = data.entries
-      .filter((e) => e.groupID === gid)
-      .sort(
-        (a, b) =>
-          b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id),
-      ),
-    view = query.get("tab") ?? "expenses";
-  return (
-    <>
-      <p className="eyebrow">
-        {g.kind} · {g.currency}
-      </p>
-      <div className="titlebar">
-        <h1>{g.name}</h1>
-        <Link className="primary" to={"/g/" + gid + "/new"}>
-          Add expense
-        </Link>
-      </div>
-      <div className="tabs">
-        {["expenses", "balances", "people"].map((tab) => (
-          <button
-            key={tab}
-            aria-pressed={view === tab}
-            onClick={() => setQuery({ tab }, { replace: true })}
-          >
-            {tab}
-          </button>
-        ))}
-      </div>
-      {view === "people" ? (
-        <People g={g} />
-      ) : view === "balances" ? (
-        <Balances g={g} entries={entries} />
-      ) : (
-        <>
-          <h2>Group ledger</h2>
-          {(open ||
-            entries.some((e) =>
-              e.bill?.items.some((i) => !i.memberIDs.length),
-            )) && (
-            <label className="check">
-              <input
-                type="checkbox"
-                checked={open}
-                onChange={(e) => setOpen(e.target.checked)}
-              />
-              Open purchases only
+          <div className="form-row">
+            <label className="field">
+              Name
+              <input type="text" name="name" maxLength={80} required autoFocus placeholder={kind === "trip" ? "Patagonia Trip" : "Apt 4B Rent"} />
             </label>
-          )}
-          {!entries.length && (
-            <p>Your first shared expense will appear here.</p>
-          )}
-          <div className="panel">
-            {entries
-              .filter(
-                (e) => !open || e.bill?.items.some((i) => !i.memberIDs.length),
-              )
-              .map((e) => (
-                <EntryRow key={e.id} e={e} g={g} />
-              ))}
+            <label className="field">
+              Type
+              <select value={kind} onChange={(e) => setKind(e.target.value)}>
+                <option value="trip">Trip (day-by-day)</option>
+                <option value="home">Long-term / Home (monthly)</option>
+                <option value="friend">Friends tab</option>
+              </select>
+            </label>
           </div>
-        </>
-      )}
-    </>
+          <label className="field">
+            Description (optional)
+            <textarea name="description" maxLength={400} placeholder="What is this group for?" />
+          </label>
+          <div className="form-row">
+            <label className="field">
+              Group settlement currency
+              <select name="currency" defaultValue="USD">
+                {currencies.map((c) => (
+                  <option key={c}>{c}</option>
+                ))}
+              </select>
+            </label>
+            <label className="field">
+              Add people now (comma-separated, optional)
+              <input
+                type="text"
+                value={placeholders}
+                onChange={(e) => setPlaceholders(e.target.value)}
+                placeholder="Maya, Alex, Sam"
+              />
+            </label>
+          </div>
+          {kind === "trip" && (
+            <div className="form-row">
+              <label className="field">
+                Start date (optional)
+                <input type="date" name="startDate" />
+              </label>
+              <label className="field">
+                End date (optional)
+                <input type="date" name="endDate" />
+              </label>
+            </div>
+          )}
+        </Form>
+      </div>
+    </div>
   );
 }
+
+export function Join() {
+  const { request, refresh } = useLedger();
+  const nav = useNavigate();
+  const { code } = useParams();
+  return (
+    <div style={{ maxWidth: 520, margin: "0 auto" }}>
+      <div className="page-head">
+        <div>
+          <h1 className="page-title">Join a group</h1>
+          <p className="page-sub">Paste an invite link or 12-character code shared with you.</p>
+        </div>
+      </div>
+      <div className="card card-pad">
+        <Form
+          label="Join group"
+          submit={async (f) => {
+            const input = value(f, "code");
+            const token =
+              input.match(/^https:\/\/split-api\.yoinklabs\.dev\/join\/([\w-]+)$/)?.[1] ??
+              input.match(/\/invite\/([\w-]+)$/)?.[1] ??
+              input;
+            const r = await request<{ groupID: string }>("/v1/join", { token });
+            await refresh();
+            nav("/g/" + r.groupID, { replace: true });
+          }}
+        >
+          <label className="field">
+            Invitation code or link
+            <input type="text" name="code" defaultValue={code} required autoCapitalize="characters" placeholder="ABCD1234EFGH" />
+          </label>
+        </Form>
+      </div>
+    </div>
+  );
+}
+
 export function MemberScreen() {
-  const { data, user } = useLedger(),
-    { gid, mid } = useParams(),
-    [query, setQuery] = useSearchParams(),
-    g = data.groups.find((g) => g.id === gid),
-    p = g?.members.find((p) => p.id === mid),
-    [target, setTarget] = useShowIn();
+  const { data, user } = useLedger();
+  const { gid, mid } = useParams();
+  const [query, setQuery] = useSearchParams();
+  const [target, setTarget] = useShowIn();
+
+  const g = data.groups.find((x) => x.id === gid);
+  const p = g?.members.find((x) => x.id === mid);
   if (!g || !p) return <p>Member unavailable in this group.</p>;
-  const shared = membersGroups(data.groups, g, p),
-    scope = query.get("scope") === "all" ? "all" : g.id,
-    kind = query.get("show") === "payments" ? "settlement" : "expense",
-    me = !!p.userID && p.userID === user,
-    statements = shared
-      .filter((s) => scope === "all" || s.group.id === scope)
-      .map((s) => ({
-        ...s,
-        all: memberEntries(data.entries, s.group.id, s.person.id),
-      }));
-  const net: Record<string, number> = {},
-    paid: Record<string, number> = {},
-    share: Record<string, number> = {};
+
+  const shared = membersGroups(data.groups, g, p);
+  const scope = query.get("scope") === "all" ? "all" : g.id;
+  const kind = query.get("show") === "payments" ? "settlement" : "expense";
+  const me = !!p.userID && p.userID === user;
+
+  const statements = shared
+    .filter((s) => scope === "all" || s.group.id === scope)
+    .map((s) => ({
+      ...s,
+      all: memberEntries(data.entries, s.group.id, s.person.id),
+    }));
+
+  const net: Record<string, number> = {};
+  const paid: Record<string, number> = {};
+  const share: Record<string, number> = {};
+
   for (const s of statements) {
     const entries = data.entries.filter((e) => e.groupID === s.group.id);
     for (const c of new Set(entries.map((e) => settlementEntry(e).currency)))
       net[c] = (net[c] ?? 0) + (balances(entries, c)[s.person.id] ?? 0);
     for (const e of s.all.filter((e) => e.kind === "expense").map(settlementEntry)) {
-      paid[e.currency] = (paid[e.currency] ?? 0) + (e.paidBy === s.person.id ? e.amount : 0);
+      paid[e.currency] =
+        (paid[e.currency] ?? 0) +
+        entryPayers(e)
+          .filter((x) => x.memberID === s.person.id)
+          .reduce((n, x) => n + x.amount, 0);
       share[e.currency] =
         (share[e.currency] ?? 0) +
         (e.splits.find((x) => x.memberID === s.person.id)?.amount ?? 0);
     }
   }
-  const sum = (v: Record<string, number>) =>
-    Object.keys(v)
+
+  const fmtMap = (m: Record<string, number>) =>
+    Object.keys(m)
       .sort()
-      .filter((c) => v[c])
-      .map((c) => money(v[c], c))
+      .filter((c) => m[c])
+      .map((c) => moneyCompact(m[c], c))
       .join(" · ") || "—";
-  const count = statements.reduce(
-      (n, s) => n + s.all.filter((e) => e.kind === "expense").length,
-      0,
-    ),
-    hasPayments = statements.some((s) => s.all.some((e) => e.kind === "settlement")),
-    shown = hasPayments ? kind : "expense",
-    open = Object.keys(net).sort().filter((c) => net[c]),
-    set = (key: string, value: string | null) => {
-      const next = new URLSearchParams(query);
-      if (value === null) next.delete(key);
-      else next.set(key, value);
-      setQuery(next, { replace: true });
-    };
+
+  const open = Object.keys(net).sort().filter((c) => net[c]);
+  const setParam = (k: string, v: string | null) => {
+    const next = new URLSearchParams(query);
+    if (v === null) next.delete(k);
+    else next.set(k, v);
+    setQuery(next, { replace: true });
+  };
+
   return (
-    <>
-      <Hero
-        leading={<Avatar name={p.name} size={52} />}
-        title={me ? "You" : p.name}
-        subtitle={
-          statements.length === 1
-            ? (p.userID ? "" : "Placeholder · ") + statements[0].group.name
-            : statements.length + " shared groups"
-        }
-      >
-        {open.length ? (
-          open.map((c) => (
-            <p className="hero-balance" key={c}>
-              <b className={net[c] > 0 ? "pos" : "neg"}>
-                {money(Math.abs(net[c]), c)}
-              </b>{" "}
-              {net[c] > 0
-                ? me
-                  ? "you’re owed"
-                  : "gets back"
-                : me
-                  ? "you owe"
-                  : "owes"}
+    <div className="form-stack" style={{ gap: 18 }}>
+      <div className="page-head">
+        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+          <Avatar name={p.name} avatarURL={p.avatarURL} size={48} />
+          <div>
+            <h1 className="page-title">{me ? "Your Statement" : p.name}</h1>
+            <p className="page-sub">
+              {!p.userID && <span className="tag">Placeholder</span>}
+              {p.removed && <span className="tag tag-warn">Archived entity</span>}
+              <span>{statements.length === 1 ? statements[0].group.name : `${statements.length} shared groups`}</span>
             </p>
-          ))
-        ) : (
-          <p className="hero-balance">
-            <b className="pos">Settled up</b>
-          </p>
-        )}
-        {open.length > 0 && (
-          <div className="hero-approx">
-            <Approx amounts={net} target={target} signed prefix="≈" />
-            <CurrencySelect label="Show in" value={target} onChange={setTarget} />
           </div>
-        )}
-        <dl className="hero-stats">
-          <div>
-            <dt>Paid</dt>
-            <dd>{sum(paid)}</dd>
-          </div>
-          <div>
-            <dt>Share</dt>
-            <dd>{sum(share)}</dd>
-          </div>
-          <div>
-            <dt>Charges</dt>
-            <dd>{count}</dd>
-          </div>
-        </dl>
-      </Hero>
-      {shared.length > 1 && (
-        <div className="chips" role="group" aria-label="Choose a group">
-          <button aria-pressed={scope === "all"} onClick={() => set("scope", "all")}>
-            All groups
-          </button>
-          {shared.map((s) => (
-            <Link
-              key={s.group.id}
-              className="chip"
-              aria-current={scope === s.group.id ? "true" : undefined}
-              to={memberPath(s.group, s.person.id)}
-              replace
-            >
-              {s.group.name}
-            </Link>
-          ))}
         </div>
-      )}
-      {hasPayments && (
-        <div className="segmented" role="group" aria-label="Show">
-          <button aria-pressed={shown === "expense"} onClick={() => set("show", null)}>
+        <div className="head-actions">
+          <CurrencySelect label="Show in" value={target} onChange={setTarget} />
+          <Link className="btn btn-sm" to={`/g/${g.id}`}>
+            Back to {g.name}
+          </Link>
+        </div>
+      </div>
+
+      <div className="kpi-grid" style={{ gridTemplateColumns: "repeat(3, minmax(0, 1fr))" }}>
+        <div className="kpi">
+          <div className="kpi-label">Total paid</div>
+          <div className="kpi-val">{fmtMap(paid)}</div>
+        </div>
+        <div className="kpi">
+          <div className="kpi-label">Total share</div>
+          <div className="kpi-val">{fmtMap(share)}</div>
+        </div>
+        <div className="kpi">
+          <div className="kpi-label">Net balance</div>
+          <div className="kpi-val">
+            {open.length ? (
+              <span className={net[open[0]] > 0 ? "pos" : "neg"}>
+                {net[open[0]] > 0 ? "+" : "−"}
+                {moneyCompact(Math.abs(net[open[0]]), open[0])}
+              </span>
+            ) : (
+              <span className="pos">Settled up</span>
+            )}
+          </div>
+          {open.length > 0 && <Approx amounts={net} target={target} signed prefix="≈" note={false} />}
+        </div>
+      </div>
+
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        {shared.length > 1 && (
+          <div className="seg">
+            <button aria-pressed={scope === "all"} onClick={() => setParam("scope", "all")}>
+              All groups
+            </button>
+            {shared.map((s) => (
+              <button
+                key={s.group.id}
+                aria-pressed={scope === s.group.id}
+                onClick={() => setParam("scope", null)}
+              >
+                <Link to={memberPath(s.group, s.person.id)} replace style={{ color: "inherit" }}>
+                  {s.group.name}
+                </Link>
+              </button>
+            ))}
+          </div>
+        )}
+        <div className="seg">
+          <button aria-pressed={kind === "expense"} onClick={() => setParam("show", null)}>
             Charges
           </button>
-          <button aria-pressed={shown === "settlement"} onClick={() => set("show", "payments")}>
+          <button aria-pressed={kind === "settlement"} onClick={() => setParam("show", "payments")}>
             Payments
           </button>
         </div>
-      )}
-      {statements.every((s) => !s.all.some((e) => e.kind === shown)) && (
-        <EmptyState
-          title={shown === "expense" ? "No charges yet" : "No payments yet"}
-          message={
-            shown === "expense"
-              ? "Expenses " + (me ? "you’re" : p.name + " is") + " part of appear here."
-              : "Recorded payments appear here."
-          }
-        />
-      )}
+      </div>
+
       {statements.map((s) => {
-        const rows = s.all.filter((e) => e.kind === shown);
+        const rows = s.all.filter((e) => e.kind === kind);
         if (!rows.length) return null;
         return (
           <section key={s.group.id}>
-            <h2 className="section-title">
-              {s.group.name}
-              <small>
-                {rows.length}{" "}
-                {shown === "expense"
-                  ? rows.length === 1 ? "charge" : "charges"
-                  : rows.length === 1 ? "payment" : "payments"}
-              </small>
-            </h2>
-            <div className="panel">
-              {rows.map((e) => (
-                <EntryRow key={e.id} e={e} g={s.group} seat={s.person.id} />
-              ))}
+            <h3 style={{ fontSize: 13.5, fontWeight: 700, marginBottom: 8 }}>
+              {s.group.name} <span className="muted">({rows.length})</span>
+            </h3>
+            <div className="ledger-list">
+              {rows.map((e: Expense) => {
+                const myShare = e.splits.find((x) => x.memberID === s.person.id)?.amount ?? 0;
+                const myPaid = entryPayers(e)
+                  .filter((x) => x.memberID === s.person.id)
+                  .reduce((n, x) => n + x.amount, 0);
+                return (
+                  <Link
+                    key={e.id}
+                    to={`/g/${s.group.id}?tab=ledger`}
+                    className="ledger-item"
+                    style={{ gridTemplateColumns: "34px minmax(0,1fr) 130px 120px" }}
+                  >
+                    <CategoryIcon category={e.category} settlement={e.kind === "settlement"} />
+                    <div>
+                      <div className="ledger-title">{e.title}</div>
+                      <div className="ledger-meta">
+                        {shortDate(e.createdAt)} · Paid by {memberName(s.group, e.paidBy)}
+                      </div>
+                    </div>
+                    <div className="ledger-amount">
+                      <strong className={myPaid > 0 ? "pos" : "muted"}>
+                        {myPaid > 0 ? `Paid ${moneyCompact(myPaid, e.currency)}` : "—"}
+                      </strong>
+                    </div>
+                    <div className="ledger-amount">
+                      <strong>{moneyCompact(myShare, e.currency)}</strong>
+                      <small>of {moneyCompact(e.amount, e.currency)}</small>
+                    </div>
+                  </Link>
+                );
+              })}
             </div>
           </section>
         );
       })}
-    </>
+    </div>
   );
 }
-function Photo({
-  entry,
-  id,
-  index,
-}: {
-  entry: string;
-  id: string;
-  index: number;
-}) {
-  const { request } = useLedger(),
-    [url, setUrl] = useState(""),
-    [failed, setFailed] = useState(false),
-    [attempt, retry] = useState(0),
-    dialog = useRef<HTMLDialogElement>(null);
+
+interface Computer { id: string; name: string; created_at: number; last_used: number | null }
+
+function ConnectedComputers() {
+  const { request, demo } = useLedger();
+  const [computers, setComputers] = useState<Computer[]>([]);
+  const [code, setCode] = useState("");
+  const [pending, setPending] = useState<string | null>(null);
+  const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function load() {
+    if (demo) {
+      setComputers((c) => (c.length ? c : [{ id: "demo-mac", name: "Harris’s MacBook Pro", created_at: Date.now() - 86400000 * 3, last_used: Date.now() - 600000 }]));
+      return;
+    }
+    setComputers(await request<Computer[]>("/v1/device/tokens"));
+  }
   useEffect(() => {
-    let alive = true,
-      object = "";
-    setUrl("");
-    setFailed(false);
-    request<Blob>("/v1/entries/" + entry + "/receipts/" + id, undefined, true)
-      .then((blob) => {
-        if (alive) {
-          object = URL.createObjectURL(blob);
-          setUrl(object);
-        }
-      })
-      .catch(() => {
-        if (alive) setFailed(true);
-      });
-    return () => {
-      alive = false;
-      if (object) URL.revokeObjectURL(object);
-    };
-  }, [request, entry, id, attempt]);
+    load().catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function act(fn: () => Promise<void>) {
+    setBusy(true);
+    setMessage("");
+    try {
+      await fn();
+    } catch (e) {
+      setMessage(e instanceof Error ? e.message : "Something went wrong.");
+    } finally {
+      setBusy(false);
+    }
+  }
+  const review = () =>
+    act(async () => {
+      if (demo) return setPending("Harris’s Mac mini");
+      setPending((await request<{ name: string }>("/v1/device/review", { code })).name);
+    });
+  const approve = () =>
+    act(async () => {
+      if (demo) {
+        setComputers((c) => [{ id: "demo-" + Date.now(), name: pending ?? "Computer", created_at: Date.now(), last_used: null }, ...c]);
+      } else {
+        await request("/v1/device/approve", { code });
+        await load();
+      }
+      setPending(null);
+      setCode("");
+      setMessage("Approved. Your terminal is signed in.");
+    });
+  const revoke = (id: string) =>
+    act(async () => {
+      if (!demo) await request("/v1/device/revoke", { id });
+      setComputers((c) => c.filter((x) => x.id !== id));
+    });
+  const when = (ms: number | null) => (ms ? new Date(ms).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "Never");
+
   return (
-    <>
-      <button
-        className="thumb"
-        aria-label={"View receipt " + (index + 1)}
-        onClick={() => (url ? dialog.current?.showModal() : retry(attempt + 1))}
-      >
-        {url ? (
-          <img src={url} alt="Receipt thumbnail" />
-        ) : failed ? (
-          "Retry"
-        ) : (
-          "Loading…"
-        )}
-      </button>
-      <dialog ref={dialog} className="viewer">
-        <button onClick={() => dialog.current?.close()}>Close photo</button>
-        {url && <img src={url} alt={"Receipt page " + (index + 1)} />}
-      </dialog>
-    </>
-  );
-}
-function ClaimForm({
-  e,
-  g,
-  item,
-}: {
-  e: Expense;
-  g: Group;
-  item?: NonNullable<Expense["bill"]>["items"][number];
-}) {
-  const { save } = useLedger(),
-    [original] = useState(item?.memberIDs ?? []),
-    [saved, setSaved] = useState(false);
-  return (
-    <Form
-      label={item ? "Save claims" : "Close receipt"}
-      submit={async (f) => {
-        const memberIDs = f.getAll("member").map(String);
-        if (!item && !memberIDs.length)
-          throw new Error("Choose someone to cover open purchases.");
-        await save(
-          "/v1/entries/" + e.id + "/" + (item ? "claim" : "close"),
-          item
-            ? { itemID: item.id, original, memberIDs, mergeEdits: true }
-            : { memberIDs },
-        );
-        setSaved(true);
-      }}
-    >
-      {g.members.map((p) => (
-        <label className="check" key={p.id}>
-          <input
-            type="checkbox"
-            name="member"
-            value={p.id}
-            defaultChecked={!item || original.includes(p.id)}
-            onChange={() => setSaved(false)}
-          />
-          {p.name}
-        </label>
-      ))}
-      {saved && <small role="status">Claims saved</small>}
-    </Form>
-  );
-}
-export function ExpenseScreen() {
-  const { data, user } = useLedger(),
-    { gid, eid } = useParams(),
-    g = data.groups.find((g) => g.id === gid),
-    e = data.entries.find((e) => e.id === eid && e.groupID === gid);
-  if (!g || !e) return <p>Entry unavailable.</p>;
-  const payer = g.members.find((p) => p.id === e.paidBy),
-    bill = e.bill,
-    open = bill
-      ? grossItems(bill)
-          .filter((i) => !i.memberIDs.length)
-          .reduce((sum, i) => sum + i.gross, 0)
-      : 0;
-  return (
-    <>
-      <p className="eyebrow">
-        <Link to={"/g/" + g.id}>{g.name}</Link> ·{" "}
-        {e.kind === "expense" ? "Expense" : "Payment"}
+    <div className="card card-pad">
+      <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 4 }}>2. Approve this computer</h3>
+      <p className="muted" style={{ fontSize: 12.5, marginBottom: 10 }}>
+        Enter the eight-character code <code className="mono">split login</code> printed in your terminal.
       </p>
-      <h1>{e.title}</h1>
-      <div className="summary">
-        <small>
-          {dateText(e.createdAt)}
-          {e.category && " · " + e.category}
-        </small>
-        <h2>{money(e.amount, e.currency)}</h2>
-        {e.exchange && (
-          <p className="converted">
-            Settles as <b>{money(settlementEntry(e).amount, e.exchange.target)}</b> at 1 {e.currency} ={" "}
-            {rateText(e.exchange.rateE8)} {e.exchange.target}{" "}
-            <small>({e.exchange.source === "Manual" ? "your rate" : sourceLabel(e.exchange as Parameters<typeof sourceLabel>[0])})</small>
+      {pending ? (
+        <div className="form-stack" style={{ gap: 8 }}>
+          <p style={{ fontSize: 13 }}>
+            Give <strong>{pending}</strong> full access to your groups and expenses?
           </p>
-        )}
-        Paid by{" "}
-        <Link to={memberPath(g, e.paidBy)}>
-          {payer?.name ?? "Group member"}
-        </Link>
-      </div>
-      {!!e.receiptIDs?.length && (
-        <section>
-          <h2>Receipts</h2>
-          {e.receiptIDs.map((id, i) => (
-            <Photo key={id} id={id} entry={e.id} index={i} />
-          ))}
-        </section>
-      )}
-      {bill && (
-        <section>
-          <h2>Purchases {bill.closed && <small>Closed</small>}</h2>
-          <div className="panel">
-            {bill.items.map((i) => (
-              <div key={i.id} className="purchase">
-                <div className="row">
-                  <div>
-                    <strong>{i.title}</strong>
-                    <small>
-                      {i.memberIDs.length
-                        ? i.memberIDs.map((id) => memberName(g, id)).join(" + ")
-                        : "Open purchase"}
-                    </small>
-                  </div>
-                  <b>{money(i.amount, e.currency)}</b>
-                </div>
-                {!bill.closed && (
-                  <details>
-                    <summary>Claim or share {i.title}</summary>
-                    <ClaimForm
-                      key={i.memberIDs.join(",")}
-                      e={e}
-                      g={g}
-                      item={i}
-                    />
-                  </details>
-                )}
-              </div>
-            ))}
-            {[
-              ["Tax", bill.tax],
-              ["Tip", bill.tip],
-              ["Open total", open],
-            ].map(([label, amount]) => (
-              <div key={label} className="row">
-                <span>{label}</span>
-                <b>{money(Number(amount), e.currency)}</b>
-              </div>
-            ))}
+          <div style={{ display: "flex", gap: 8 }}>
+            <button className="btn btn-primary btn-sm" disabled={busy} onClick={approve}>Approve</button>
+            <button className="btn btn-sm" disabled={busy} onClick={() => setPending(null)}>Cancel</button>
           </div>
-          {!bill.closed &&
-            (payer?.userID === user || (!payer?.userID && e.editable)) && (
-              <details>
-                <summary>Close receipt</summary>
-                <p>Choose who covers the remaining items.</p>
-                <ClaimForm e={e} g={g} />
-              </details>
-            )}
-        </section>
+        </div>
+      ) : (
+        <div style={{ display: "flex", gap: 8 }}>
+          <input
+            className="input mono"
+            placeholder="ABCD-EFGH"
+            value={code}
+            maxLength={9}
+            onChange={(e) => setCode(e.target.value.toUpperCase())}
+            onKeyDown={(e) => e.key === "Enter" && code.replace(/[- ]/g, "").length === 8 && review()}
+            style={{ flex: 1, letterSpacing: 2 }}
+          />
+          <button className="btn btn-primary btn-sm" disabled={busy || code.replace(/[- ]/g, "").length !== 8} onClick={review}>
+            Review
+          </button>
+        </div>
       )}
-      <h2>{e.kind === "expense" ? "Split with" : "Paid to"}</h2>
-      <div className="panel">
-        {e.splits.map((s) => (
-          <Link className="row" key={s.memberID} to={memberPath(g, s.memberID)}>
-            <strong>{memberName(g, s.memberID)}</strong>
-            <b>{money(s.amount, e.currency)} ›</b>
-          </Link>
-        ))}
+      {message && <p style={{ fontSize: 12.5, marginTop: 8 }} className="muted">{message}</p>}
+      <div style={{ marginTop: 14, borderTop: "1px solid var(--border)", paddingTop: 10 }}>
+        <div className="muted" style={{ fontSize: 11.5, fontWeight: 600, marginBottom: 6 }}>CONNECTED COMPUTERS</div>
+        {computers.length ? (
+          computers.map((c) => (
+            <div key={c.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 0", gap: 8 }}>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 600 }}>{c.name}</div>
+                <div className="muted" style={{ fontSize: 11.5 }}>Last used {when(c.last_used)}</div>
+              </div>
+              <button className="btn btn-xs" disabled={busy} onClick={() => revoke(c.id)}>Revoke</button>
+            </div>
+          ))
+        ) : (
+          <p className="muted" style={{ fontSize: 12.5 }}>None yet.</p>
+        )}
       </div>
-    </>
+    </div>
+  );
+}
+
+export function LocalAIScreen() {
+  const [copied, setCopied] = useState("");
+  const claudeConfig = JSON.stringify(
+    {
+      mcpServers: {
+        split: {
+          command: "/opt/homebrew/bin/split",
+          args: ["mcp"],
+        },
+      },
+    },
+    null,
+    2,
+  );
+  const remoteConfig = JSON.stringify(
+    {
+      mcpServers: {
+        split: {
+          url: "https://split-api.yoinklabs.dev/mcp",
+          headers: { Authorization: "Bearer <SPLIT_TOKEN>" },
+        },
+      },
+    },
+    null,
+    2,
+  );
+
+  const cliFlow = `# 1. Upload the receipt with its photo. Items with people are assigned now; the rest stay open.
+split expenses add --group GROUP --payer ME --title "Don Julio" --date 2026-11-14 \\
+  --photo ~/Desktop/receipt.heic \\
+  --bill '{"items":[{"title":"Malbec","amount":"48.00","memberIDs":["ME","MAYA","ALEX"]},
+                    {"title":"Empanadas x3","amount":"18.00","memberIDs":["ME","SAM"],"shares":[2,1]},
+                    {"title":"Flan","amount":"12.00"}],"tax":"14.00","tip":"28.00"}'
+
+# 2. See every item, its ID, gross amount and who has it
+split items list --group GROUP --expense EXPENSE
+
+# 3. Assign or adjust later: replace claimants, or add one person with a partial share
+split items assign --group GROUP --expense EXPENSE --item ITEM --participants '["MAYA","SAM"]' --shares '[1,0.5]'
+split items claim  --group GROUP --expense EXPENSE --item ITEM --member ALEX --share 0.5
+
+# 4. What is still unclaimed across the group
+split items open --group GROUP`;
+
+  function copy(key: string, text: string) {
+    void navigator.clipboard?.writeText(text);
+    setCopied(key);
+    setTimeout(() => setCopied(""), 2000);
+  }
+
+  return (
+    <div style={{ maxWidth: 820, margin: "0 auto" }} className="form-stack">
+      <div className="page-head">
+        <div>
+          <h1 className="page-title">Connect AI & CLI</h1>
+          <p className="page-sub" style={{ display: "block", maxWidth: 680, lineHeight: 1.55 }}>
+            Hand a receipt photo to your assistant. It reads the items with the <code className="mono">split</code> CLI,
+            uploads the expense with the photo attached and assigns each item to the right people. Anything it can’t place
+            stays open for the group to claim.
+          </p>
+        </div>
+      </div>
+
+      <div className="card card-pad">
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+          <h3 style={{ fontSize: 15, fontWeight: 700 }}>The receipt workflow</h3>
+          <button className="btn btn-xs" onClick={() => copy("flow", cliFlow)}>
+            {copied === "flow" ? "Copied!" : "Copy commands"}
+          </button>
+        </div>
+        <pre className="mono cli-block">{cliFlow}</pre>
+        <p className="muted" style={{ fontSize: 12.5, marginTop: 10 }}>
+          <code className="mono">--photo</code> takes JPEG, HEIC or PNG and shrinks it to fit. Shares are multipliers:
+          <code className="mono"> [2,1]</code> means one person had two of the three beers. Totals, tax and tip are allocated
+          to the exact cent.
+        </p>
+      </div>
+
+      <div className="grid-2">
+        <div className="card card-pad">
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+            <h3 style={{ fontSize: 14, fontWeight: 700 }}>1. Install and sign in</h3>
+          </div>
+          <pre className="mono cli-block">{`brew install yoink-labs/tap/split
+split login
+split groups list`}</pre>
+          <p className="muted" style={{ fontSize: 12.5, marginTop: 10 }}>
+            <code className="mono">split login</code> pairs this computer with an expiring device code. Every command also
+            works as an MCP tool.
+          </p>
+        </div>
+        <ConnectedComputers />
+      </div>
+
+        <div className="card card-pad">
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+            <h3 style={{ fontSize: 14, fontWeight: 700 }}>3. Add the MCP server to your AI</h3>
+            <button className="btn btn-xs" onClick={() => copy("stdio", claudeConfig)}>
+              {copied === "stdio" ? "Copied!" : "Copy JSON"}
+            </button>
+          </div>
+          <pre
+            className="mono"
+            style={{
+              background: "var(--surface-2)",
+              padding: 12,
+              borderRadius: "var(--radius-sm)",
+              overflowX: "auto",
+              margin: 0,
+              fontSize: 12,
+            }}
+          >
+            {claudeConfig}
+          </pre>
+          <p className="muted" style={{ fontSize: 12.5, marginTop: 10 }}>
+            Claude Desktop, Cursor and Codex use this config. In Claude Code run{" "}
+            <code className="mono">claude mcp add split -- $(command -v split) mcp</code>. Through the local server your AI can
+            pass receipt photos as file paths.
+          </p>
+      </div>
+
+      <div className="card card-pad">
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+          <h3 style={{ fontSize: 14, fontWeight: 700 }}>Remote Streamable HTTP MCP</h3>
+          <button className="btn btn-xs" onClick={() => copy("remote", remoteConfig)}>
+            {copied === "remote" ? "Copied!" : "Copy JSON"}
+          </button>
+        </div>
+        <pre
+          className="mono"
+          style={{
+            background: "var(--surface-2)",
+            padding: 12,
+            borderRadius: "var(--radius-sm)",
+            overflowX: "auto",
+            margin: 0,
+            fontSize: 12,
+          }}
+        >
+          {remoteConfig}
+        </pre>
+      </div>
+    </div>
+  );
+}
+
+function PaletteGrid({ mode, value, onPick }: { mode: "light" | "dark"; value: string; onPick: (id: string) => void }) {
+  return (
+    <div className="palette-grid" role="radiogroup" aria-label={mode === "light" ? "Light mode palette" : "Dark mode palette"}>
+      {PALETTES.map((p) => {
+        const c = p[mode];
+        return (
+          <button
+            key={p.id}
+            type="button"
+            role="radio"
+            aria-checked={value === p.id}
+            className={"palette-option" + (value === p.id ? " selected" : "")}
+            onClick={() => onPick(p.id)}
+          >
+            <span className="palette-preview" style={{ background: c.bg }}>
+              <span className="palette-preview-side" style={{ background: c.surface }}>
+                <span style={{ background: c.primary }} />
+              </span>
+              <span className="palette-preview-main">
+                <span className="palette-preview-card" style={{ background: c.surface }}>
+                  <span style={{ background: c.ink, width: "60%", opacity: 0.85 }} />
+                  <span style={{ background: c.primary, width: "85%" }} />
+                  <span style={{ background: mode === "light" ? "#94a3b8" : "#475569", width: "55%" }} />
+                </span>
+                <span className="palette-preview-button" style={{ background: c.primary }} />
+              </span>
+            </span>
+            <span className="palette-label">
+              {p.label}
+              {p.id === DEFAULT_PALETTE && <span className="muted"> · default</span>}
+            </span>
+            <span className="palette-note">{p.note}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function AppearanceSettings() {
+  const [a, setA] = useState<Appearance>(readAppearance);
+  const update = (next: Partial<Appearance>) => {
+    const merged = { ...a, ...next };
+    setA(merged);
+    saveAppearance(merged);
+  };
+  return (
+    <div className="card card-pad form-stack">
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <div>
+          <h3 style={{ fontSize: 15, fontWeight: 700 }}>Appearance</h3>
+          <p className="muted" style={{ fontSize: 12.5 }}>Pick a palette for light mode and one for dark mode. System follows your device.</p>
+        </div>
+        <div className="segmented" role="radiogroup" aria-label="Mode">
+          {(["system", "light", "dark"] as Mode[]).map((m) => (
+            <button key={m} type="button" role="radio" aria-checked={a.mode === m} className={a.mode === m ? "active" : ""} onClick={() => update({ mode: m })}>
+              {m === "system" ? "System" : m === "light" ? "Light" : "Dark"}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className={"palette-section" + (a.mode === "dark" ? " inactive" : "")}>
+        <div className="palette-section-title">Light mode</div>
+        <PaletteGrid mode="light" value={a.light} onPick={(light) => update({ light })} />
+      </div>
+      <div className={"palette-section" + (a.mode === "light" ? " inactive" : "")}>
+        <div className="palette-section-title">Dark mode</div>
+        <PaletteGrid mode="dark" value={a.dark} onPick={(dark) => update({ dark })} />
+      </div>
+    </div>
+  );
+}
+
+export function Account() {
+  const { data, user, userName, userAvatar, demo, save } = useLedger();
+  const [home, setHome] = useHomeCurrency();
+  const [savedMsg, setSavedMsg] = useState("");
+
+  const first = data.groups.find((g) => g.members.some((p) => p.userID === user));
+
+  async function pickPreset(presetID: string) {
+    await save("/v1/profile/avatar", { avatarURL: presetID });
+    setSavedMsg("Avatar updated");
+    setTimeout(() => setSavedMsg(""), 2000);
+  }
+
+  async function uploadAvatar(file: File) {
+    if (!file.type.startsWith("image/")) return;
+    const url = URL.createObjectURL(file);
+    try {
+      const img = new Image();
+      img.src = url;
+      await img.decode();
+      const canvas = document.createElement("canvas");
+      canvas.width = 128;
+      canvas.height = 128;
+      const ctx = canvas.getContext("2d")!;
+      const s = Math.min(img.width, img.height);
+      ctx.drawImage(img, (img.width - s) / 2, (img.height - s) / 2, s, s, 0, 0, 128, 128);
+      const dataURL = canvas.toDataURL("image/jpeg", 0.85);
+      await save("/v1/profile/avatar", { avatarURL: dataURL });
+      setSavedMsg("Photo avatar saved");
+      setTimeout(() => setSavedMsg(""), 2000);
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }
+
+  return (
+    <div style={{ maxWidth: 680, margin: "0 auto" }} className="form-stack">
+      <div className="page-head">
+        <div>
+          <h1 className="page-title">Account & Preferences</h1>
+          <p className="page-sub">Customize your avatar, home currency, and appearance.</p>
+        </div>
+      </div>
+
+      {/* Profile & Avatar */}
+      <div className="card card-pad">
+        <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 16 }}>
+          <Avatar name={userName} avatarURL={userAvatar} size={56} />
+          <div>
+            <strong style={{ fontSize: 16 }}>{userName}</strong>
+            <div className="muted" style={{ fontSize: 12.5 }}>
+              {demo ? "Interactive sample account" : "Signed in with Yoink Labs"}
+            </div>
+          </div>
+          {first && (
+            <Link
+              className="btn btn-sm"
+              style={{ marginLeft: "auto" }}
+              to={memberPath(first, first.members.find((p) => p.userID === user)!.id)}
+            >
+              View my statement ›
+            </Link>
+          )}
+        </div>
+
+        <p style={{ fontSize: 12.5, fontWeight: 600, color: "var(--ink-2)", marginBottom: 8 }}>
+          Choose avatar color or upload a photo
+        </p>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+          {AVATAR_PRESETS.map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              onClick={() => void pickPreset(p.id)}
+              title={p.label}
+              style={{
+                width: 32,
+                height: 32,
+                borderRadius: 999,
+                background: p.bg,
+                border: userAvatar === p.id ? "3px solid var(--ink)" : "2px solid var(--surface)",
+                cursor: "pointer",
+              }}
+            />
+          ))}
+          <label className="btn btn-sm" style={{ cursor: "pointer" }}>
+            Upload photo
+            <input
+              type="file"
+              accept="image/*"
+              style={{ display: "none" }}
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) void uploadAvatar(f);
+              }}
+            />
+          </label>
+        </div>
+        {savedMsg && <p className="ok-banner" style={{ marginTop: 12 }}>{savedMsg}</p>}
+      </div>
+
+      <AppearanceSettings />
+
+      {/* Currency */}
+      <div className="card card-pad form-stack">
+        <div className="form-row">
+          <label className="field">
+            Home currency (Show in default)
+            <select value={home} onChange={(e) => setHome(e.target.value)}>
+              {currencies.map((c) => (
+                <option key={c}>{c}</option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <p className="muted" style={{ fontSize: 12.5 }}>
+          Free currency conversion uses ECB (Frankfurter) and BCRA official rates for ARS, plus custom manual rates on any expense.
+        </p>
+      </div>
+
+      <div className="card">
+        <a className="row" href={TIP_URL} target="_blank" rel="noreferrer" style={{ color: "var(--ink)" }}>
+          <strong>♥ Tip the devs</strong>
+          <span className="muted" style={{ fontSize: 12.5 }}>Optional, unlocks nothing ›</span>
+        </a>
+        {!demo && (
+          <div className="row">
+            <button className="btn btn-danger btn-sm" onClick={() => void window.Clerk.signOut()}>
+              Sign out
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
   );
 }

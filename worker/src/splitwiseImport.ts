@@ -59,7 +59,7 @@ export async function importSplitwise(db: D1Database, user: string, b: Record<st
     if ((count?.n ?? 0) >= 100) throw new HTTPError(409, 'Group limit reached.');
     statements.push(db.prepare('INSERT INTO groups(id,name,kind,currency,creator,created_at) VALUES (?,?,?,?,?,?)')
       .bind(group, (spec!.name as string).trim(), spec!.kind, spec!.currency, user, new Date().toISOString()));
-    statements.push(db.prepare('INSERT INTO members VALUES (?,?,?,?)').bind(myID, group, user, (profile?.name ?? me.name).trim().slice(0, 60)));
+    statements.push(db.prepare('INSERT INTO members(id,group_id,user_id,name) VALUES (?,?,?,?)').bind(myID, group, user, (profile?.name ?? me.name).trim().slice(0, 60)));
   }
   for (const p of people) {
     let id: string;
@@ -70,7 +70,7 @@ export async function importSplitwise(db: D1Database, user: string, b: Record<st
     } else {
       // Same id as the generic CSV import, so a repeated import reuses the placeholder.
       id = await digest(['csv-person', group, key(p.name)]);
-      if (!roster.some(m => m.id === id)) statements.push(db.prepare('INSERT INTO members VALUES (?,?,NULL,?) ON CONFLICT(id) DO NOTHING').bind(id, group, p.name.trim()));
+      if (!roster.some(m => m.id === id)) statements.push(db.prepare('INSERT INTO members(id,group_id,user_id,name) VALUES (?,?,NULL,?) ON CONFLICT(id) DO NOTHING').bind(id, group, p.name.trim()));
     }
     if (used.has(id)) throw new InputError('Two Splitwise names point to the same person.');
     used.add(id); ids.set(key(p.name), id);

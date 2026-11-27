@@ -1,4 +1,5 @@
 import { createInterface } from 'node:readline';
+import { resolvePhotos } from './photos.mjs';
 
 // The Worker is stateless and returns a single JSON response (or an empty
 // 202 for notifications). Keep stdout exclusively for newline-delimited MCP.
@@ -13,6 +14,8 @@ export async function serve(client) {
       continue;
     }
     try {
+      const args = message?.method === 'tools/call' ? message.params?.arguments : undefined;
+      if (args?.photos) args.photos = await resolvePhotos(args.photos);
       const reply = await client.request('/mcp', message, true, {
         Accept: 'application/json, text/event-stream', ...(version ? { 'MCP-Protocol-Version': version } : {})
       });

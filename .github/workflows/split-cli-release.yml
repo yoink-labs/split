@@ -2,6 +2,9 @@ name: Release Split CLI
 on:
   push:
     tags: ['split-v*']
+    # A merged CLI version bump releases itself: the tag job creates split-vX.Y.Z, then publish runs.
+    branches: [main]
+    paths: ['cli/release/version.json']
   workflow_dispatch:
     inputs:
       tag:
@@ -13,15 +16,38 @@ concurrency:
   group: publish-split-cli
   cancel-in-progress: false
 jobs:
+  tag:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: version
+        name: Tag a new CLI version on main
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then echo "tag=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"; exit 0; fi
+          if [[ -n "${{ inputs.tag }}" ]]; then echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"; exit 0; fi
+          tag="split-v$(node -p "require('./cli/release/version.json')")"
+          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            echo "$tag already exists; nothing to release."
+            exit 0
+          fi
+          git tag "$tag" "$GITHUB_SHA"
+          git push origin "refs/tags/$tag"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
   publish:
+    needs: tag
+    if: needs.tag.outputs.tag != ''
     runs-on: ubuntu-latest
     env:
-      TAG: ${{ inputs.tag || github.ref_name }}
+      TAG: ${{ needs.tag.outputs.tag }}
       TAP: yoink-labs/homebrew-tap
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          ref: refs/tags/${{ needs.tag.outputs.tag }}
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-node@v4

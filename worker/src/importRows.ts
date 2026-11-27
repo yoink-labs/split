@@ -21,7 +21,7 @@ export async function importRows(db:D1Database,group:string,user:string,b:Record
     if(ambiguous.has(key)) throw new InputError('Multiple members match '+name+'. Rename the CSV column to identify one member.');
     if(!names.has(key)) {
       const id=await digest(['csv-person',group,key]);
-      members.push(db.prepare('INSERT INTO members VALUES (?,?,NULL,?) ON CONFLICT(id) DO NOTHING').bind(id,group,name.trim()));
+      members.push(db.prepare('INSERT INTO members(id,group_id,user_id,name) VALUES (?,?,NULL,?) ON CONFLICT(id) DO NOTHING').bind(id,group,name.trim()));
       names.set(key,id);
     }
     return names.get(key)!;

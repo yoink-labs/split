@@ -1,0 +1,11 @@
+{
+  "name": "@yoinklabs/split-cli",
+  "version": "0.2.0",
+  "description": "Split by Yoink Labs: manage shared expenses, receipts and claims from the terminal, and connect AI assistants over MCP.",
+  "license": "MIT",
+  "type": "module",
+  "bin": { "split": "bin/split" },
+  "files": ["bin/split", "split.mjs", "lib/*.mjs", "release/version.json", "README.md"],
+  "engines": { "node": ">=22.18" },
+  "repository": { "type": "git", "url": "git+https://github.com/yoink-labs/split.git", "directory": "cli" }
+}

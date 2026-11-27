@@ -1,10 +1,14 @@
 import { hostname } from 'node:os';
 import { spawn } from 'node:child_process';
+import { readFile, writeFile } from 'node:fs/promises';
+import { basename, join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { client } from './lib/client.mjs';
 import { tools } from './lib/catalog.mjs';
 import { serve } from './lib/stdio.mjs';
+import { photoData, resolvePhotos } from './lib/photos.mjs';
+export { photoData };
 
 import version from './release/version.json' with { type: 'json' };
 export { version };
@@ -12,11 +16,16 @@ const spelling = tool => tool.name.replaceAll('_',' ');
 function usage(tool) {
   const { properties, required } = tool.inputSchema;
   const args = Object.entries(properties).map(([key, spec]) => {
-    const flag = '--' + key + (spec.type === 'boolean' ? '' : spec.type === 'array' ? ' JSON' : ' VALUE');
+    const flag = '--' + key + (spec.type === 'boolean' ? '' : (spec.type === 'array' || spec.type === 'object') ? ' JSON' : ' VALUE');
     return required.includes(key) ? flag : '[' + flag + ']';
   });
+  if (properties.photos) args.push('[--photo PATH ...]');
+  if (properties.csv) args.push('[--file PATH]');
+  if (outputs.has(tool.name)) args.push('[--out PATH]');
   return 'split ' + [spelling(tool), ...args].join(' ');
 }
+const outputs = new Set(['groups_export', 'receipts_get']);
+
 const help = ['Split by Yoink Labs', 'Usage: split [--json] COMMAND [flags]', '',
   'split login [--name NAME] [--no-open]', 'split auth status', 'split logout [--yes]', 'split mcp',
   ...tools.map(usage), '', 'Use split COMMAND --help for argument details. JSON arrays must be shell-quoted.',
@@ -27,7 +36,7 @@ const print = (value, compact) => console.log(JSON.stringify(value, null, compac
 async function login(c, options) {
   const pending = await c.request('/v1/device/start', { name: options.name || hostname() }, false);
   const url = new URL('/device', c.origin).href;
-  console.error('In Split on your iPhone, open You → Connected computers. Enter ' + pending.code + ' and approve this computer.\n' + url);
+  console.error('Approve this computer with code ' + pending.code + ':\n  Web:    ' + url + '\n  iPhone: Split → You → Connected computers');
   if (!options['no-open']) {
     const browser = spawn(process.platform === 'darwin' ? 'open' : 'xdg-open', [url], { stdio:'ignore', detached:true });
     browser.on('error', () => {}); browser.unref();
@@ -75,12 +84,30 @@ export async function main(argv = process.argv.slice(2)) {
     }
     if (!tool) throw new Error('Unknown command. Run split --help.');
     const options = Object.fromEntries(Object.entries(tool.inputSchema.properties).map(([key,spec]) => [key, {type:spec.type === 'boolean' ? 'boolean' : 'string'}]));
+    if (tool.inputSchema.properties.photos) options.photo = { type:'string', multiple:true };
+    if (tool.inputSchema.properties.csv) options.file = { type:'string' };
+    if (outputs.has(tool.name)) options.out = { type:'string' };
     const { values } = parseArgs({ args: words.slice(spelling(tool).split(' ').length), options });
+    const paths = values.photo, out = values.out;
+    delete values.photo; delete values.out;
+    if (tool.inputSchema.properties.csv && typeof values.file === 'string' && !values.csv) {
+      values.csv = await readFile(values.file, 'utf8');
+      values.file = basename(values.file);
+    }
     for (const [key,value] of Object.entries(values)) {
-      if (tool.inputSchema.properties[key].type === 'array') {
-        try { values[key] = JSON.parse(value); } catch { throw new Error('--' + key + ' requires a JSON array.'); }
-        if (!Array.isArray(values[key])) throw new Error('--' + key + ' requires a JSON array.');
+      const type = tool.inputSchema.properties[key].type;
+      if (type === 'array' || type === 'object') {
+        const expected = '--' + key + ' requires a JSON ' + type + '.';
+        try { values[key] = JSON.parse(value); } catch { throw new Error(expected); }
+        if (type === 'array' ? !Array.isArray(values[key])
+          : !values[key] || typeof values[key] !== 'object' || Array.isArray(values[key])) throw new Error(expected);
       }
+    }
+    if (values.photos) values.photos = await resolvePhotos(values.photos);
+    if (paths?.length) {
+      if (values.photos) throw new Error('Use --photo or --photos, not both.');
+      if (paths.length > 4) throw new Error('Attach up to four receipt photos.');
+      values.photos = await Promise.all(paths.map(photoData));
     }
     const run = args => c.request('/v1/cli', { name:tool.name, arguments:args });
     if (tool.annotations.destructiveHint && values.yes) {
@@ -88,7 +115,16 @@ export async function main(argv = process.argv.slice(2)) {
       console.error(JSON.stringify(preview));
       values.revision ??= preview.revision;
     }
-    print(await run(values),compact);
+    const result = await run(values);
+    if (tool.name === 'groups_export' && !compact) {
+      if (out) { await writeFile(out, result.content); return console.log('Wrote ' + out); }
+      return process.stdout.write(result.content);
+    }
+    if (tool.name === 'receipts_get' && out) {
+      await writeFile(out, Buffer.from(result.data, 'base64'));
+      return compact ? print({ saved: out }, true) : console.log('Wrote ' + out);
+    }
+    print(result,compact);
   } catch (error) {
     console.error(compact ? JSON.stringify({ error:error.message }) : 'split: ' + error.message);
     process.exitCode = 1;

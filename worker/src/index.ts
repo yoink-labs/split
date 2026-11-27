@@ -1,15 +1,15 @@
 import {groupTools,generateRecurring} from './groupTools';
 import { purchaseRoute, attachments } from './receipts';
-import { socialRoute } from './social';
+import { optionalDescription, socialRoute } from './social';
 import { claimSeat, lookup, refreshIdentity, resolveEntry } from './people';
-import { HTTPError, json, body } from './http';
+import { HTTPError, json, body, optionalDay } from './http';
 import { deviceRoute, deviceIdentity, manageDevices } from './cli/devices';
 import { cliRoute } from './cli/routes';
 import { createRemoteJWKSet, jwtVerify } from 'jose';
 import { currencies, InputError, validID, validateEntry } from './ledger';
 import { importSplitwise } from './splitwiseImport';
 const jwks = createRemoteJWKSet(new URL('https://clerk.yoinklabs.dev/.well-known/jwks.json'));
-interface Member {id:string; groupID:string; userID:string|null; name:string; email?:string; phone?:string;payment?:string}
+interface Member {id:string; groupID:string; userID:string|null; name:string; email?:string; phone?:string; payment?:string; removedAt?:string|null; avatarURL?:string|null}
 export function validParty(azp: unknown, webOrigin: string) {
   return azp === undefined || (typeof azp === 'string' && [webOrigin, 'com.yoinklabs.split', 'https://yoinklabs.dev', 'https://www.yoinklabs.dev'].includes(azp));
 }
@@ -34,26 +34,51 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
   const social=await socialRoute(request,env,userID);
   if(social) return social;
   if(path==='/v1/snapshot' && request.method==='GET') {
-    type SnapshotGroup={id:string;name:string;kind:string;currency:string;simplify?:number;archivedAt?:string|null;weights:string|null;createdAt:string};
+    type SnapshotGroup={id:string;name:string;kind:string;currency:string;simplify?:number;archivedAt?:string|null;description?:string|null;startDate?:string|null;endDate?:string|null;weights:string|null;createdAt:string};
     let groups: SnapshotGroup[];
     try {
-      groups=(await env.DB.prepare('SELECT g.id,g.name,g.kind,g.currency,g.simplify,g.archived_at AS archivedAt,(SELECT weights FROM group_splits WHERE group_id=g.id) AS weights,g.created_at AS createdAt FROM groups g JOIN members m ON g.id=m.group_id WHERE m.user_id=? ORDER BY g.created_at DESC LIMIT 101').bind(userID).all<SnapshotGroup>()).results;
+      groups=(await env.DB.prepare('SELECT g.id,g.name,g.kind,g.currency,g.simplify,g.archived_at AS archivedAt,g.description,g.start_date AS startDate,g.end_date AS endDate,(SELECT weights FROM group_splits WHERE group_id=g.id) AS weights,g.created_at AS createdAt FROM groups g JOIN members m ON g.id=m.group_id WHERE m.user_id=? ORDER BY g.created_at DESC LIMIT 101').bind(userID).all<SnapshotGroup>()).results;
     } catch {
-      // 0013 may not be applied yet; keep the existing ledger readable.
-      groups=(await env.DB.prepare('SELECT g.id,g.name,g.kind,g.currency,1 AS simplify,NULL AS archivedAt,(SELECT weights FROM group_splits WHERE group_id=g.id) AS weights,g.created_at AS createdAt FROM groups g JOIN members m ON g.id=m.group_id WHERE m.user_id=? ORDER BY g.created_at DESC LIMIT 101').bind(userID).all<SnapshotGroup>()).results;
+      try {
+        groups=(await env.DB.prepare('SELECT g.id,g.name,g.kind,g.currency,g.simplify,g.archived_at AS archivedAt,(SELECT weights FROM group_splits WHERE group_id=g.id) AS weights,g.created_at AS createdAt FROM groups g JOIN members m ON g.id=m.group_id WHERE m.user_id=? ORDER BY g.created_at DESC LIMIT 101').bind(userID).all<SnapshotGroup>()).results;
+      } catch {
+        groups=(await env.DB.prepare('SELECT g.id,g.name,g.kind,g.currency,1 AS simplify,NULL AS archivedAt,(SELECT weights FROM group_splits WHERE group_id=g.id) AS weights,g.created_at AS createdAt FROM groups g JOIN members m ON g.id=m.group_id WHERE m.user_id=? ORDER BY g.created_at DESC LIMIT 101').bind(userID).all<SnapshotGroup>()).results;
+      }
     }
     if(groups.length>100) throw new HTTPError(409,'This beta supports up to 100 groups.');
     const aliases = new Map((await env.DB.prepare(`SELECT a.member_id, a.canonical_id FROM member_aliases a
       JOIN members m ON m.id=a.canonical_id JOIN members viewer ON viewer.group_id=m.group_id WHERE viewer.user_id=?`)
       .bind(userID).all<{member_id:string;canonical_id:string}>()).results.map(a=>[a.member_id,a.canonical_id]));
-    const visible=(await env.DB.prepare(`SELECT m.id,m.group_id AS groupID,m.user_id AS userID,m.name,(SELECT details FROM payment_profiles WHERE member_id=m.id) AS payment FROM members m
-      JOIN members viewer ON viewer.group_id=m.group_id WHERE viewer.user_id=? ORDER BY m.rowid`).bind(userID).all<Member>()).results;
-    const all=groups.map(({weights,simplify,archivedAt,...g})=>{
+    let visible: Member[];
+    let avatarURL: string | null | undefined;
+    try {
+      visible=(await env.DB.prepare(`SELECT m.id,m.group_id AS groupID,m.user_id AS userID,m.name,m.removed_at AS removedAt,
+        (SELECT avatar_url FROM user_avatars WHERE user_id=m.user_id) AS avatarURL,
+        (SELECT details FROM payment_profiles WHERE member_id=m.id) AS payment FROM members m
+        JOIN members viewer ON viewer.group_id=m.group_id WHERE viewer.user_id=? ORDER BY m.rowid`).bind(userID).all<Member>()).results;
+      avatarURL = visible.find(m => m.userID===userID)?.avatarURL
+        ?? (groups.length ? null : await env.DB.prepare('SELECT avatar_url FROM user_avatars WHERE user_id=?').bind(userID).first<string>('avatar_url'));
+    } catch {
+      visible=(await env.DB.prepare(`SELECT m.id,m.group_id AS groupID,m.user_id AS userID,m.name,(SELECT details FROM payment_profiles WHERE member_id=m.id) AS payment FROM members m
+        JOIN members viewer ON viewer.group_id=m.group_id WHERE viewer.user_id=? ORDER BY m.rowid`).bind(userID).all<Member>()).results;
+    }
+    const all=groups.map(({weights,simplify,archivedAt,description,startDate,endDate,...g})=>{
+      const roster=visible.filter(m=>m.groupID===g.id && !aliases.has(m.id));
+      const active=new Set(roster.filter(m=>!m.removedAt).map(m=>m.id));
       const defaults:Record<string,number>={};
       for(const [id,w] of Object.entries(JSON.parse(String(weights??'{}')) as Record<string,number>)) {
-        const key=aliases.get(id)??id;defaults[key]=(defaults[key]??0)+w;
+        const key=aliases.get(id)??id;
+        if(active.has(key)) defaults[key]=(defaults[key]??0)+w;
       }
-      return {...g,simplify:Boolean(simplify),archived:Boolean(archivedAt),defaultWeights:defaults,members:visible.filter(m=>m.groupID===g.id && !aliases.has(m.id)).map(({payment,...m})=>({...m,payment:JSON.parse(payment??'{}')}))};
+      return {...g,simplify:Boolean(simplify),archived:Boolean(archivedAt),
+        ...(description?{description}:{}),...(startDate?{startDate}:{}),...(endDate?{endDate}:{}),
+        defaultWeights:defaults,
+        members:roster.map(({payment,removedAt,avatarURL,...m})=>({
+          ...m,
+          payment:JSON.parse(payment??'{}'),
+          ...(removedAt?{removed:true}:{}),
+          ...(avatarURL?{avatarURL}:{})
+        }))};
     });
     type SnapshotEntryRow={payload:string;author:string;recurrence:string|null;photos:string;commentCount:number;likeCount:number;likedByMe:number};
     let entries: SnapshotEntryRow[];
@@ -75,7 +100,7 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
         .bind(userID).all<SnapshotEntryRow>()).results;
     }
     if(entries.length>5000)throw new HTTPError(409,'This beta supports up to 5,000 entries. Export support is coming.');
-    return json({userID,groups:all,entries:entries.map(e=>({...resolveEntry(JSON.parse(e.payload),aliases), recurrence:e.recurrence,receiptIDs:JSON.parse(e.photos),editable:e.author===userID,
+    return json({userID,...(avatarURL ? {avatarURL} : {}),groups:all,entries:entries.map(e=>({...resolveEntry(JSON.parse(e.payload),aliases), recurrence:e.recurrence,receiptIDs:JSON.parse(e.photos),editable:e.author===userID,
       commentCount:Number(e.commentCount),likeCount:Number(e.likeCount),likedByMe:Boolean(e.likedByMe)}))});
   }
   if(path==='/v1/import/splitwise' && request.method==='POST') return importSplitwise(env.DB,userID,await body(request,2_000_000));
@@ -86,7 +111,14 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
     const existing=await env.DB.prepare('SELECT creator FROM groups WHERE id=?').bind(b.id).first<{creator:string}>();
     if(existing){ if(existing.creator!==userID)throw new HTTPError(409,'Group ID already used.'); return json({ok:true}); }
     const count=await env.DB.prepare('SELECT count(*) AS n FROM members WHERE user_id=?').bind(userID).first<{n:number}>();if((count?.n??0)>=100)throw new HTTPError(409,'Group limit reached.');
-    const inserts=[env.DB.prepare('INSERT INTO groups(id,name,kind,currency,creator,created_at) VALUES (?,?,?,?,?,?)').bind(b.id,b.name.trim(),b.kind,b.currency,userID,new Date().toISOString())];
+    const desc=optionalDescription(b.description) ?? null;
+    const startDate=optionalDay(b.startDate,'start date') ?? null;
+    const endDate=optionalDay(b.endDate,'end date') ?? null;
+    if(startDate && endDate && endDate < startDate) throw new InputError('End date must be on or after the start date.');
+    const fields=[b.id,b.name.trim(),b.kind,b.currency,userID,new Date().toISOString()];
+    const inserts=[desc || startDate || endDate
+      ? env.DB.prepare('INSERT INTO groups(id,name,kind,currency,creator,created_at,description,start_date,end_date) VALUES (?,?,?,?,?,?,?,?,?)').bind(...fields,desc,startDate,endDate)
+      : env.DB.prepare('INSERT INTO groups(id,name,kind,currency,creator,created_at) VALUES (?,?,?,?,?,?)').bind(...fields)];
     for (const person of m) {
       let name=person.name.trim();
       if (person.userID && person.userID!==userID) {
@@ -94,7 +126,7 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
         if (!profile) throw new InputError('Choose an existing Split user.');
         name=profile.name;
       }
-      inserts.push(env.DB.prepare('INSERT INTO members VALUES (?,?,?,?)').bind(person.id,b.id,person.userID||null,name));
+      inserts.push(env.DB.prepare('INSERT INTO members(id,group_id,user_id,name) VALUES (?,?,?,?)').bind(person.id,b.id,person.userID||null,name));
       const contact=contactInfo(person.email,person.phone);
       if (!person.userID && (contact.email || contact.phone))
         inserts.push(env.DB.prepare('INSERT INTO member_contacts VALUES (?,?,?)').bind(person.id,contact.email||null,contact.phone||null));
@@ -103,7 +135,7 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
     return json({ok:true},201);
   }
   if(path==='/v1/entries' && request.method==='POST') {
-    const b=await body(request,1_350_000); if(!validID(b.groupID)) throw new InputError('Invalid group.');
+    const b=await body(request,1_650_000); if(!validID(b.groupID)) throw new InputError('Invalid group.');
     await member(env,b.groupID,userID);
     const e=validateEntry(b,(await members(env,b.groupID)).map(m=>m.id)), payload=JSON.stringify(e);
     if(e.bill?.closed) throw new InputError('New receipts start open.');
@@ -177,7 +209,7 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
     const existing=await env.DB.prepare('SELECT id FROM members WHERE group_id=? AND (id=? OR user_id=?)').bind(groupID,b.id,target?.user_id??null).first<{id:string}>();
     if (existing) return json({id:existing.id});
     await env.DB.batch([
-      env.DB.prepare('INSERT INTO members VALUES (?,?,?,?)').bind(b.id,groupID,target?.user_id??null,target?.name??name),
+      env.DB.prepare('INSERT INTO members(id,group_id,user_id,name) VALUES (?,?,?,?)').bind(b.id,groupID,target?.user_id??null,target?.name??name),
       ...(email || phone ? [env.DB.prepare('INSERT INTO member_contacts VALUES (?,?,?)').bind(b.id,email||null,phone||null)] : [])
     ]);
     return json({id:b.id},201);
@@ -187,8 +219,9 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
     const groupID=inviteMatch[1];await member(env,groupID,userID);const b=await body(request);
     const code=Array.from(crypto.getRandomValues(new Uint8Array(12)), n=>'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'[n%32]).join('');
     const digest=await hash(code), expiry=Date.now()+7*86400000;
-    if (b.memberID) {
-      const seat=await env.DB.prepare('SELECT id FROM members WHERE id=? AND group_id=? AND user_id IS NULL AND id NOT IN (SELECT member_id FROM member_aliases)')
+    if (b.memberID !== undefined && b.memberID !== null) {
+      if(!validID(b.memberID)) throw new InputError('Choose an unclaimed member to invite.');
+      const seat=await env.DB.prepare('SELECT id FROM members WHERE id=? AND group_id=? AND user_id IS NULL AND removed_at IS NULL AND id NOT IN (SELECT member_id FROM member_aliases)')
         .bind(b.memberID,groupID).first<{id:string}>();
       if(!seat)throw new InputError('Choose an unclaimed member to invite.');
       await env.DB.batch([env.DB.prepare('DELETE FROM invites WHERE member_id=?').bind(seat.id),env.DB.prepare('INSERT INTO invites VALUES (?,?,?,?)').bind(digest,groupID,seat.id,expiry)]);
@@ -208,12 +241,14 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
       .bind(digest,Date.now(),digest,Date.now()).first<{group_id:string;member_id:string|null}>();
     if(!invite)throw new HTTPError(404,'This invitation is invalid or expired. Ask for a new link or code.');
     if (invite.member_id) {
-      if (!await claimSeat(env.DB,invite.group_id,invite.member_id,userID)) throw new HTTPError(409,'This invitation has already been claimed.');
+      if (!await claimSeat(env.DB,invite.group_id,invite.member_id,userID,digest)) throw new HTTPError(409,'This invitation has expired or has already been claimed.');
     } else {
       const profile=await env.DB.prepare('SELECT name FROM split_profiles WHERE user_id=?').bind(userID).first<{name:string}>();
-      await env.DB.prepare(`INSERT INTO members SELECT ?,?,?,? WHERE NOT EXISTS
-        (SELECT 1 FROM members WHERE group_id=? AND user_id=?)`)
-        .bind(crypto.randomUUID(),invite.group_id,userID,profile?.name??'Split member',invite.group_id,userID).run();
+      const joined=await env.DB.prepare(`INSERT INTO members(id,group_id,user_id,name)
+        SELECT ?,group_id,?,? FROM group_invites WHERE token_hash=? AND group_id=? AND expires_at>?
+        ON CONFLICT(group_id,user_id) DO UPDATE SET user_id=excluded.user_id`)
+        .bind(crypto.randomUUID(),userID,profile?.name??'Split member',digest,invite.group_id,Date.now()).run();
+      if(!joined.meta.changes) throw new HTTPError(404,'This invitation is invalid or expired.');
     }
     return json({ok:true,groupID:invite.group_id});
   }

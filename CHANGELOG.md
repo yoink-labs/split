@@ -14,6 +14,21 @@ TestFlight build 0.8.0 (12), Yoink Internal.
 
 ### Added
 
+- CLI 0.2.0 and MCP: every web action is a command. New: `groups update`,
+  `groups archive`, `groups leave`, `groups export` (ledger CSV, per-member
+  summary CSV with transfers, full JSON), `members remove` (archive, restore,
+  delete), `invites list`, `invites revoke`, `expenses show`, `expenses like`,
+  `comments list|add|delete`, `receipts add`, `items list`, `items assign`,
+  `import splitwise` and `profile avatar`. `expenses add` takes several payers
+  and per-item share multipliers on itemized receipts; `items claim --share`
+  makes a partial claim. `--photo PATH` (and file paths through the local MCP
+  server) converts HEIC/PNG and shrinks photos to the receipt limit. The CLI
+  is also installable with `npm install -g ./cli`.
+- Web: approve and revoke CLI and MCP computers from Connect AI & CLI, so
+  pairing no longer needs the iPhone app. Splitwise import, the currency
+  converter, Connect AI & CLI and Join live in the account menu at the
+  bottom of the sidebar.
+
 - "Tip the devs": an optional tip jar on iPhone, iPad and iPhone Duo. Split
   stays free with nothing locked; a tip unlocks nothing. Three StoreKit 2
   consumables (`dev.yoinklabs.split.tip.small|medium|large`) with prices from

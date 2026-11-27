@@ -1,13 +1,22 @@
-// Shared building blocks so every web screen lines up with the iOS app:
-// one header card, one row, one empty state and one "+" menu.
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { type ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { money } from "./data";
+import { avatarStyleFor, categoryMeta } from "./categories";
+import { moneyCompact, type Person } from "./data";
 
-export function Avatar({ name, size = 40 }: { name: string; size?: number }) {
+export function Avatar({
+  name,
+  avatarURL,
+  size = 32,
+}: {
+  name: string;
+  avatarURL?: string | null;
+  size?: number;
+}) {
+  const style = avatarStyleFor(name, avatarURL);
   const initials =
     name
-      .split(" ")
+      .trim()
+      .split(/\s+/)
       .slice(0, 2)
       .map((p) => p[0] ?? "")
       .join("")
@@ -15,19 +24,105 @@ export function Avatar({ name, size = 40 }: { name: string; size?: number }) {
   return (
     <span
       className="avatar"
-      aria-hidden="true"
-      style={{ width: size, height: size, fontSize: Math.max(11, size * 0.36) }}
+      title={name}
+      style={{
+        width: size,
+        height: size,
+        fontSize: Math.max(10, Math.round(size * 0.37)),
+        background: style.bg,
+        color: style.fg,
+      }}
     >
-      {initials}
+      {style.image ? <img src={style.image} alt={name} /> : initials}
     </span>
   );
 }
 
-/** A signed balance with its direction spelled out, never colour alone. */
-export function Balance({
+export function AvatarStack({
+  people,
+  max = 5,
+  size = 26,
+}: {
+  people: Pick<Person, "id" | "name" | "avatarURL">[];
+  max?: number;
+  size?: number;
+}) {
+  const shown = people.slice(0, max);
+  const extra = people.length - shown.length;
+  return (
+    <span className="avatar-stack">
+      {shown.map((p) => (
+        <Avatar key={p.id} name={p.name} avatarURL={p.avatarURL} size={size} />
+      ))}
+      {extra > 0 && (
+        <span
+          className="avatar"
+          style={{
+            width: size,
+            height: size,
+            fontSize: 10.5,
+            background: "var(--surface-2)",
+            color: "var(--ink-2)",
+          }}
+        >
+          +{extra}
+        </span>
+      )}
+    </span>
+  );
+}
+
+export function CategoryIcon({
+  category,
+  settlement = false,
+}: {
+  category?: string | null;
+  settlement?: boolean;
+}) {
+  if (settlement) {
+    return (
+      <span
+        className="cat-icon"
+        style={{ background: "var(--pos-soft)", color: "var(--pos)" }}
+        aria-hidden="true"
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M17 8l4 4-4 4M3 12h18M7 16l-4-4 4-4" />
+        </svg>
+      </span>
+    );
+  }
+  const meta = categoryMeta(category);
+  const paths: Record<string, ReactNode> = {
+    utensils: <path d="M3 2v7c0 1.1.9 2 2 2h4a2 2 0 0 0 2-2V2M7 2v20M21 15V2a5 5 0 0 0-5 5v6c0 1.1.9 2 2 2h3Zm0 0v7" />,
+    bed: <path d="M2 4v16M2 8h18a2 2 0 0 1 2 2v10M2 17h20M6 8v9" />,
+    plane: <path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z" />,
+    car: <path d="M19 17h2c.6 0 1-.4 1-1v-3c0-.9-.7-1.7-1.5-1.9C18.7 10.6 16 10 16 10s-1.3-1.4-2.2-2.3c-.5-.4-1.1-.7-1.8-.7H5c-.6 0-1.1.4-1.4.9l-1.4 2.9A3.7 3.7 0 0 0 2 12v4c0 .6.4 1 1 1h2M7 17a2 2 0 1 0 4 0 2 2 0 0 0-4 0Zm10 0a2 2 0 1 0 4 0 2 2 0 0 0-4 0Z" />,
+    cart: <path d="M2 3h2l3.6 10.6a2 2 0 0 0 1.9 1.4h8.4a2 2 0 0 0 1.9-1.4L22 7H6M9 20a1 1 0 1 0 0-2 1 1 0 0 0 0 2Zm9 0a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" />,
+    cup: <path d="M17 8h1a4 4 0 1 1 0 8h-1M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4V8Zm3-6v3m4-3v3m4-3v3" />,
+    ticket: <path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z" />,
+    home: <path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z" />,
+    bag: <path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4ZM3 6h18M16 10a4 4 0 0 1-8 0" />,
+    tag: <path d="M12 2H2v10l9.3 9.3a2 2 0 0 0 2.8 0l7.2-7.2a2 2 0 0 0 0-2.8L12 2ZM7 7h.01" />,
+  };
+  return (
+    <span
+      className="cat-icon"
+      style={{ background: meta.bg, color: meta.color }}
+      title={meta.label}
+      aria-hidden="true"
+    >
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        {paths[meta.glyph] ?? paths.tag}
+      </svg>
+    </span>
+  );
+}
+
+export function BalanceBadge({
   amount,
   currency,
-  positive = "gets back",
+  positive = "owed",
   negative = "owes",
 }: {
   amount: number;
@@ -35,63 +130,15 @@ export function Balance({
   positive?: string;
   negative?: string;
 }) {
+  if (amount === 0) return <span className="tag">Settled</span>;
   return (
-    <span className="balance">
-      <b className={amount > 0 ? "pos" : amount < 0 ? "neg" : undefined}>
-        {money(Math.abs(amount), currency)}
-      </b>
-      <small>{amount === 0 ? "settled" : amount > 0 ? positive : negative}</small>
+    <span className={amount > 0 ? "tag tag-pos num" : "tag tag-neg num"}>
+      {amount > 0 ? "+" : "−"}
+      {moneyCompact(Math.abs(amount), currency)} {amount > 0 ? positive : negative}
     </span>
   );
 }
 
-/** The standard ledger row: badge, title and detail, value and caption. */
-export function Row({
-  to,
-  badge,
-  title,
-  detail,
-  value,
-  caption,
-  tone,
-}: {
-  to: string;
-  badge: ReactNode;
-  title: string;
-  detail: string;
-  value: string;
-  caption?: string;
-  tone?: "pos" | "neg" | "muted";
-}) {
-  return (
-    <Link className="row ledger-row" to={to}>
-      {badge}
-      <span className="ledger-main">
-        <span className="ledger-line">
-          <strong>{title}</strong>
-          <b className={tone}>{value}</b>
-        </span>
-        <span className="ledger-line">
-          <small>{detail}</small>
-          {caption && <small className="caption">{caption}</small>}
-        </span>
-      </span>
-      <span className="chevron" aria-hidden="true">
-        ›
-      </span>
-    </Link>
-  );
-}
-
-export function Badge({ label }: { label: string }) {
-  return (
-    <span className="badge" aria-hidden="true">
-      {label.slice(0, 1).toUpperCase()}
-    </span>
-  );
-}
-
-/** Centred empty state with at most one primary action. */
 export function EmptyState({
   title,
   message,
@@ -102,11 +149,13 @@ export function EmptyState({
   action?: { label: string; to: string };
 }) {
   return (
-    <section className="empty">
-      <h2>{title}</h2>
-      <p>{message}</p>
+    <section className="card card-pad" style={{ textAlign: "center", padding: "48px 24px" }}>
+      <h2 style={{ fontSize: 17, fontWeight: 700, marginBottom: 6 }}>{title}</h2>
+      <p className="muted" style={{ maxWidth: 420, margin: "0 auto 18px" }}>
+        {message}
+      </p>
       {action && (
-        <Link className="primary" to={action.to}>
+        <Link className="btn btn-primary" to={action.to}>
           {action.label}
         </Link>
       )}
@@ -114,105 +163,12 @@ export function EmptyState({
   );
 }
 
-/** The ink header card used for a group, a person or a statement. */
-export function Hero({
-  leading,
-  title,
-  subtitle,
-  children,
-}: {
-  leading: ReactNode;
-  title: string;
-  subtitle: ReactNode;
-  children?: ReactNode;
-}) {
-  return (
-    <section className="hero">
-      <div className="hero-head">
-        {leading}
-        <div>
-          <h1>{title}</h1>
-          <p>{subtitle}</p>
-        </div>
-      </div>
-      {children}
-    </section>
-  );
-}
-
-/** A toolbar "+" that opens a short menu of create actions. */
-export function AddMenu({
-  label,
-  items,
-}: {
-  label: string;
-  items: { label: string; to: string }[];
-}) {
-  const [open, setOpen] = useState(false);
-  const root = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const close = (e: Event) => {
-      if (
-        e instanceof KeyboardEvent
-          ? e.key === "Escape"
-          : !root.current?.contains(e.target as Node)
-      )
-        setOpen(false);
-    };
-    document.addEventListener("pointerdown", close);
-    document.addEventListener("keydown", close);
-    return () => {
-      document.removeEventListener("pointerdown", close);
-      document.removeEventListener("keydown", close);
-    };
-  }, [open]);
-  return (
-    <div className="menu" ref={root}>
-      <button
-        className="icon add"
-        aria-label={label}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        onClick={() => setOpen(!open)}
-      >
-        <span aria-hidden="true">+</span>
-      </button>
-      {open && (
-        <div className="menu-list" role="menu">
-          {items.map((item) => (
-            <Link
-              key={item.to}
-              role="menuitem"
-              to={item.to}
-              onClick={() => setOpen(false)}
-            >
-              {item.label}
-            </Link>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
 export const TIP_URL = "https://yoinklabs.dev/tip";
 
-/** The pink "♥ Tip the devs" pill. Tipping happens in the iPhone app; the
- * yoinklabs.dev page explains where, so nothing here takes a payment. */
 export function TipTheDevs() {
   return (
-    <a
-      className="tip-pill"
-      href={TIP_URL}
-      title="Split is free with nothing locked. Tips are optional and unlock nothing."
-    >
-      <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
-        <path
-          fill="currentColor"
-          d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"
-        />
-      </svg>
+    <a className="tip-pill" href={TIP_URL} target="_blank" rel="noreferrer">
+      <span>♥</span>
       <span>Tip the devs</span>
     </a>
   );

@@ -26,10 +26,42 @@ test('credentials are private, origin-bound and forgotten independently of env o
 });
 test('offline version, help and per-command flags work through the installed launcher', () => {
   const run = args => spawnSync(fileURLToPath(new URL('../bin/split',import.meta.url)),args,{encoding:'utf8'});
-  assert.equal(run(['--version']).stdout.trim(),'split 0.1.0');
+  assert.equal(run(['--version']).stdout.trim(),'split 0.2.0');
   assert.match(run(['--help']).stdout,/members lookup/);
   assert.match(run(['--help']).stdout,/github\.com\/yoink-labs\/split/);
   assert.match(run(['expenses','edit','--help']).stdout,/--revision/);
   assert.match(run(['groups','create','--placeholders','nonsense','--json']).stderr,/JSON array/);
   assert.equal(run(['groups','list','--unknown']).status,1);
+});
+test('the release archive and npm package include every module the CLI imports', async () => {
+  const { readFile, readdir } = await import('node:fs/promises');
+  const root = fileURLToPath(new URL('..', import.meta.url));
+  const script = await readFile(join(root, 'release/package.sh'), 'utf8');
+  const pkg = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
+  const version = JSON.parse(await readFile(join(root, 'release/version.json'), 'utf8'));
+  assert.equal(pkg.version, version);
+  for (const file of ['split.mjs', ...(await readdir(join(root, 'lib'))).map(f => 'lib/' + f)]) {
+    assert.match(script, new RegExp('cli/' + file.replace('.', '\\.')), file + ' is missing from package.sh');
+  }
+});
+test('photo paths become receipt JPEGs and base64 passes through untouched', async () => {
+  const { resolvePhotos } = await import('../lib/photos.mjs');
+  const { mkdtemp, writeFile } = await import('node:fs/promises');
+  const dir = await mkdtemp(join(tmpdir(), 'split-photo-test-'));
+  const jpeg = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff]), Buffer.alloc(32), Buffer.from([0xff, 0xd9])]);
+  await writeFile(join(dir, 'r.jpg'), jpeg);
+  const [fromPath, passthrough] = await resolvePhotos([join(dir, 'r.jpg'), '/9j/notAFile']);
+  assert.equal(fromPath, jpeg.toString('base64'));
+  assert.equal(passthrough, '/9j/notAFile');
+  await rm(dir, { recursive: true, force: true });
+});
+test('every web action has a CLI command with file flags where they help', () => {
+  const run = args => spawnSync(fileURLToPath(new URL('../bin/split',import.meta.url)),args,{encoding:'utf8'});
+  const help = run(['--help']).stdout;
+  for (const command of ['groups update','groups archive','groups leave','groups export','members remove','invites list','invites revoke',
+    'expenses show','expenses like','comments add','comments delete','receipts add','items list','items assign','import splitwise','profile avatar'])
+    assert.match(help, new RegExp('split ' + command + ' '), command);
+  assert.match(run(['expenses','add','--help']).stdout, /--photo PATH/);
+  assert.match(run(['import','splitwise','--help']).stdout, /--file PATH/);
+  assert.match(run(['groups','export','--help']).stdout, /--out PATH/);
 });

@@ -2,6 +2,7 @@ import { env } from 'cloudflare:test';
 import { beforeEach, describe, expect, it } from 'vitest';
 import worker from '../src/index';
 import { manageDevices } from '../src/cli/devices';
+import tripCSV from '../../fixtures/splitwise/buenos-aires-trip_2026-11-18_export.csv?raw';
 
 function req(path: string, data?: unknown, token?: string, headers: Record<string,string> = {}) {
   return new Request(env.APP_URL + path, {
@@ -55,6 +56,32 @@ describe('device authorization', () => {
   });
 });
 describe('CLI and MCP', () => {
+  it('uploads four full-size receipt photos over both MCP transports', async () => {
+    const token = await authorize('alex');
+    const outsider = await authorize('maya');
+    const send = (name: string, args: object) => fetch('/v1/cli', {name, arguments: args}, token);
+    const {id:group, members} = await (await send('groups_create', {name:'Trip', self:'Alex'})).json();
+    const photo = btoa('\xff\xd8\xff' + '\x00'.repeat(240 * 1024 - 5) + '\xff\xd9');
+    const args = {
+      group, payer: members[0].id, title: 'Dinner',
+      bill: {items: [{title:'Dinner', amount:'12.01'}], tax: '1.25'},
+      photos: Array(4).fill(photo)
+    };
+    const headers = {Accept:'application/json, text/event-stream','MCP-Protocol-Version':'2025-11-25'};
+    const rpc = {jsonrpc:'2.0', id:1, method:'tools/call', params:{name:'expenses_add', arguments:args}};
+    const remote = await (await fetch('/mcp', rpc, token, headers)).json();
+    const local = await (await send('expenses_add', args)).json();
+    for (const entry of [JSON.parse(remote.result.content[0].text), local]) {
+      expect(entry.amount).toBe(1326);
+      expect(entry.receiptIDs).toHaveLength(4);
+      const download = { name:'receipts_get', arguments:{group, expense:entry.id, photo:entry.receiptIDs[3]} };
+      expect((await fetch('/v1/cli', download, outsider)).status).toBe(404);
+      const response = await (await fetch('/mcp', {...rpc, params:download}, token, headers)).json();
+      expect(response.result.content[0]).toEqual({type:'image', mimeType:'image/jpeg', data:photo});
+    }
+    expect((await send('expenses_add', {...args, amount:'12.00'})).status).toBe(422);
+    expect((await send('expenses_edit', {group, expense:local.id, bill:args.bill})).status).toBe(422);
+  });
   it('validates operations, resolves placeholders and preserves the reviewed expense on conflict', async () => {
     const token = await authorize('alex'), outsider = await authorize('maya');
     async function run(name:string, args:object, device=token) {
@@ -101,6 +128,104 @@ describe('CLI and MCP', () => {
     expect(await run('activity',{group})).toHaveLength(3);
     expect(await run('expenses_list',{group})).toHaveLength(2);
     await expect(run('groups_list',{typo:'x'})).rejects.toThrow();
+  });
+  it('lets an agent upload a receipt with fractional shares, then list and assign items exactly to the cent', async () => {
+    const token = await authorize('alex'), outsider = await authorize('maya');
+    async function run(name:string, args:object, device=token) {
+      const r = await fetch('/v1/cli',{name,arguments:args},device);
+      const value = await r.json<any>();
+      if (!r.ok) throw Object.assign(new Error(JSON.stringify(value)),{status:r.status});
+      return value;
+    }
+    const {id:group, members} = await run('groups_create',{name:'Trip',self:'Alex',placeholders:['Sam','Jo']});
+    const [a,b,c] = members.map((m:{id:string})=>m.id);
+    const entry = await run('expenses_add',{group,payer:a,title:'Parrilla',bill:{items:[
+      {title:'Beers',amount:'24.00',memberIDs:[a,b],shares:[2,1]},
+      {title:'Flan',amount:'10.00'},
+      {title:'Steak',amount:'33.33'}],tax:'1.00'}});
+    expect(entry.amount).toBe(6833);
+    let list = await run('items_list',{group,expense:entry.id});
+    expect(list.items.map((i:any)=>i.gross).reduce((x:number,y:number)=>x+y,0)).toBe(6833);
+    expect(list.items[0].shares).toEqual({[a]:2,[b]:1});
+    expect(list.items.filter((i:any)=>i.open)).toHaveLength(2);
+    await run('items_claim',{group,expense:entry.id,item:list.items[1].id,member:c,share:'0.5'});
+    await run('items_assign',{group,expense:entry.id,item:list.items[2].id,participants:[a,b,c],shares:[1,1,1.5]});
+    list = await run('items_list',{group,expense:entry.id});
+    expect(list.items.every((i:any)=>!i.open)).toBe(true);
+    expect(list.items[2].shares).toEqual({[a]:1,[b]:1,[c]:1.5});
+    const saved = (await run('expenses_list',{group})).find((e:any)=>e.id===entry.id);
+    expect(saved.splits.reduce((s:number,p:{amount:number})=>s+p.amount,0)).toBe(6833);
+    await run('items_assign',{group,expense:entry.id,item:list.items[2].id,participants:[b]});
+    list = await run('items_list',{group,expense:entry.id});
+    expect(list.items[2].memberIDs).toEqual([b]); expect(list.items[2].shares).toBeUndefined();
+    await expect(run('items_assign',{group,expense:entry.id,item:list.items[2].id,participants:[a,b],shares:[1]})).rejects.toMatchObject({status:422});
+    await expect(run('items_list',{group,expense:entry.id},outsider)).rejects.toMatchObject({status:404});
+  });
+  it('covers every web action: settings, people, invites, comments, likes, photos, multi-payer, export and import', async () => {
+    const token = await authorize('alex'), outsider = await authorize('maya');
+    async function run(name:string, args:object, device=token) {
+      const r = await fetch('/v1/cli',{name,arguments:args},device);
+      const value = await r.json<any>();
+      if (!r.ok) throw Object.assign(new Error(JSON.stringify(value)),{status:r.status});
+      return value;
+    }
+    const {id:group, members} = await run('groups_create',{name:'Lisbon',self:'Alex',placeholders:['Sam','Jo','Cancelled'],start:'2026-12-01',end:'2026-12-05',description:'Pasteis'});
+    const [a,b,c,d] = members.map((m:{id:string})=>m.id);
+    expect(await run('groups_show',{group})).toMatchObject({description:'Pasteis',startDate:'2026-12-01',endDate:'2026-12-05'});
+    await run('groups_update',{group,name:'Lisbon 2026',end:'none',simplify:'off'});
+    expect(await run('groups_show',{group})).toMatchObject({name:'Lisbon 2026',startDate:'2026-12-01'});
+    expect((await run('groups_show',{group})).endDate).toBeUndefined();
+    await expect(run('groups_update',{group,name:'x'},outsider)).rejects.toMatchObject({status:404});
+
+    const dinner = await run('expenses_add',{group,title:'Dinner, "late"',amount:'100.00',payer:a,payers:[{member:a,amount:'60.00'},{member:b,amount:'40.00'}],participants:[a,b,c],category:'Dining',notes:'=SUM(A1)'});
+    expect(dinner.payers).toEqual([{memberID:a,amount:6000},{memberID:b,amount:4000}]);
+    await expect(run('expenses_add',{group,title:'Bad',amount:'10.00',payer:a,payers:[{member:a,amount:'5.00'}]})).rejects.toMatchObject({status:422});
+
+    const photo = btoa('\xff\xd8\xff' + '\x00'.repeat(64) + '\xff\xd9');
+    const attached = await run('receipts_add',{group,expense:dinner.id,photos:[photo]});
+    expect(await run('receipts_list',{group,expense:dinner.id})).toEqual(attached.attached);
+
+    const comment = await run('comments_add',{group,expense:dinner.id,text:'I had the wine'});
+    await run('expenses_like',{group,expense:dinner.id});
+    const shown = await run('expenses_show',{group,expense:dinner.id});
+    expect(shown.comments).toHaveLength(1);
+    expect(shown.payerNames.map((p:any)=>p.name)).toEqual(['Alex','Sam']);
+    await run('comments_delete',{group,expense:dinner.id,comment:comment.id});
+    expect(await run('comments_list',{group,expense:dinner.id})).toHaveLength(0);
+
+    await run('invite',{group});
+    await run('invite',{group,member:c});
+    const {invites} = await run('invites_list',{group});
+    expect(invites).toHaveLength(2);
+    await run('invites_revoke',{group,invite:invites[0].id});
+    expect((await run('invites_list',{group})).invites).toHaveLength(1);
+
+    await run('members_remove',{group,member:d,mode:'delete'});
+    await expect(run('members_remove',{group,member:b,mode:'delete'})).rejects.toMatchObject({status:409});
+    await run('members_remove',{group,member:b});
+    expect((await run('members_list',{group})).find((m:any)=>m.id===b).removed).toBeTruthy();
+    await run('members_remove',{group,member:b,mode:'restore'});
+
+    const ledger = await run('groups_export',{group});
+    expect(ledger.content).toContain('"Dinner, ""late"""');
+    expect(ledger.content).toContain("'=SUM(A1)");
+    expect(ledger.content.split('\r\n')[1]).toMatch(/26\.6[67],6\.6[67],-33\.33/);
+    const summary = await run('groups_export',{group,format:'summary'});
+    expect(summary.content).toMatch(/USD,Alex,active,60\.00,33\.3[34],26\.6[67]/);
+    const full = JSON.parse((await run('groups_export',{group,format:'json'})).content);
+    expect(full.entries[0].receiptIDs).toHaveLength(1);
+    await expect(run('groups_export',{group},outsider)).rejects.toMatchObject({status:404});
+
+    await run('profile_avatar',{avatar:'preset:ocean'});
+    await run('groups_archive',{group});
+    await run('groups_archive',{group,action:'restore'});
+    expect((await run('groups_leave',{group})).preview).toBe(true);
+
+    const preview = await run('import_splitwise',{csv:tripCSV,file:'buenos-aires-trip_2026-11-18_export.csv'});
+    expect(preview.preview).toBe(true);
+    const imported = await run('import_splitwise',{csv:tripCSV,file:'buenos-aires-trip_2026-11-18_export.csv',me:preview.members[0]});
+    expect(imported.inserted).toBeGreaterThan(0);
+    await expect(run('import_splitwise',{csv:tripCSV,me:'Nobody'})).rejects.toMatchObject({status:422});
   });
   it('serves stateless Streamable HTTP with the same token and rejects foreign origins', async () => {
     const token = await authorize('alex');

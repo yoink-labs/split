@@ -256,7 +256,7 @@ struct AccountView: View {
                         settingsRow(
                             icon: "dollarsign.arrow.circlepath",
                             title: "Free currency conversion",
-                            subtitle: "Rates from Frankfurter (ECB) and BCRA, or your own"
+                            subtitle: "Published rates from Frankfurter, or your own"
                         ) {
                             Image(systemName: "chevron.right").font(.caption2.weight(.bold)).foregroundStyle(.tertiary)
                         }

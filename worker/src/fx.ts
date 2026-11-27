@@ -1,21 +1,30 @@
 // Free currency conversion shared by the web client and its tests. Amounts are integer minor
 // units and rates are E8 fixed point (1 USD = 1,200 ARS is 120_000_000_000). No floating point
-// touches an amount. Rates come from Frankfurter v2: the ECB reference rate, or the BCRA
-// official rate whenever ARS is involved. Mirrors Split/Core/FX.swift.
+// touches an amount. Frankfurter v2 supplies reference rates.
 
 export const SCALE = 100_000_000n;
 export const FRESH_MS = 6 * 3600 * 1000;
-export type Source = 'Frankfurter' | 'BCRA' | 'Manual';
-export interface Quote { base: string; quote: string; rateE8: number; date: string; source: Source; fetchedAt: number }
-export interface Exchange { target: string; rateE8: number; date: string; source: Source }
+export type Source = 'Frankfurter' | 'Frankfurter blended' | 'BCRA' | 'Manual' | 'Trip' | 'Statement';
+export interface Quote { base: string; quote: string; rateE8: number; date: string; source: Source; fetchedAt: number; fallback?: boolean; saved?: boolean }
+export interface Exchange { target: string; rateE8: number; date: string; source: Source; statementAmount?: number }
 
 /** minor × rateE8 / 1e8, rounded half away from zero. BigInt, so large amounts never lose a cent. */
-export function convert(minor: number, rateE8: number): number {
+export function convert(minor: number, rateE8: number, fromDigits = 2, toDigits = 2): number {
   if (!Number.isSafeInteger(minor) || !Number.isSafeInteger(rateE8) || rateE8 <= 0) throw new Error('Invalid conversion.');
-  const negative = minor < 0, product = BigInt(Math.abs(minor)) * BigInt(rateE8);
-  const value = (product + SCALE / 2n) / SCALE;
+  const negative = minor < 0;
+  const product = BigInt(Math.abs(minor)) * BigInt(rateE8) * 10n ** BigInt(toDigits);
+  const divisor = SCALE * 10n ** BigInt(fromDigits);
+  const value = (product + divisor / 2n) / divisor;
   if (value > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error('Converted amount is too large.');
   return negative ? -Number(value) : Number(value);
+}
+
+/** The rate implied by the original total and the amount that posted. */
+export function impliedRate(original: number, charged: number, fromDigits = 2, toDigits = 2): number | null {
+  if (!Number.isSafeInteger(original) || original <= 0 || !Number.isSafeInteger(charged) || charged <= 0) return null;
+  const divisor = BigInt(original) * 10n ** BigInt(toDigits);
+  const value = (BigInt(charged) * SCALE * 10n ** BigInt(fromDigits) + divisor / 2n) / divisor;
+  return value >= 1n && value <= 10_000_000n * SCALE ? Number(value) : null;
 }
 
 /** A decimal rate ("1200", "0.00064433", 1552) to E8 units, rounded half up at the eighth place. */
@@ -35,23 +44,29 @@ export function rateE8(input: string | number): number | null {
 export function inverse(rate: number): number | null {
   if (!Number.isSafeInteger(rate) || rate <= 0) return null;
   const value = (10n ** 16n + BigInt(rate) / 2n) / BigInt(rate);
-  return value > 0n ? Number(value) : null;
+  return value > 0n && value <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(value) : null;
 }
 
 /** "1,200", "0.9031" or "0.000644" without floating-point drift. */
 export function rateText(rate: number): string {
   const whole = BigInt(rate) / SCALE, fraction = (BigInt(rate) % SCALE).toString().padStart(8, '0');
-  const places = whole >= 100n ? 2 : whole >= 1n ? 4 : 6;
+  const places = whole >= 100n ? 2 : whole >= 1n ? 4 : Math.max(6, fraction.search(/[1-9]/) + 3);
   const shown = fraction.slice(0, places).replace(/0+$/, '');
   return whole.toLocaleString('en-US') + (shown ? '.' + shown : '');
 }
 
-export const sourceFor = (base: string, quote: string): Source => (base === 'ARS' || quote === 'ARS' ? 'BCRA' : 'Frankfurter');
-export function quoteURL(base: string, quote: string, date?: string) {
+const ecbCurrencies = new Set('AUD BRL CAD CHF CNY CZK DKK EUR GBP HKD HUF IDR ILS INR ISK JPY KRW MXN MYR NOK NZD PHP PLN RON SEK SGD THB TRY USD ZAR'.split(' '));
+export function sourceFor(base: string, quote: string): Source {
+  if (base === 'ARS' || quote === 'ARS') return 'BCRA';
+  return ecbCurrencies.has(base) && ecbCurrencies.has(quote) ? 'Frankfurter' : 'Frankfurter blended';
+}
+export function quoteURL(base: string, quote: string, date?: string, source = sourceFor(base, quote)) {
   const params = new URLSearchParams();
   if (date) params.set('date', date);
-  params.set('providers', sourceFor(base, quote) === 'BCRA' ? 'bcra' : 'ecb');
-  return `https://api.frankfurter.dev/v2/rate/${base}/${quote}?${params}`;
+  if (source === 'BCRA') params.set('providers', 'bcra');
+  if (source === 'Frankfurter') params.set('providers', 'ecb');
+  const query = params.toString();
+  return `https://api.frankfurter.dev/v2/rate/${base}/${quote}${query ? '?' + query : ''}`;
 }
 
 /** "Nov 18" from "2026-11-18". */
@@ -61,7 +76,11 @@ export function shortDay(day: string) {
   return m ? `${months[Number(m[1]) - 1]} ${Number(m[2])}` : day;
 }
 export function sourceLabel(q: Pick<Quote, 'source' | 'date'>) {
-  const name = q.source === 'Frankfurter' ? 'Frankfurter · ECB' : q.source === 'BCRA' ? 'BCRA official' : 'Your rate';
+  const names: Record<Source, string> = {
+    Frankfurter: 'Frankfurter · ECB', 'Frankfurter blended': 'Frankfurter', BCRA: 'BCRA official',
+    Manual: 'Your rate', Trip: 'Trip rate', Statement: 'From statement amount',
+  };
+  const name = names[q.source];
   return q.date ? `${name}, ${shortDay(q.date)}` : name;
 }
 
@@ -69,12 +88,12 @@ export function sourceLabel(q: Pick<Quote, 'source' | 'date'>) {
  * Validates a Frankfurter v2 `/rate/{base}/{quote}` body. A weekend or holiday request returns the
  * previous business day, so any published date on or before the requested one is accepted.
  */
-export function decodeQuote(body: unknown, base: string, quote: string, requested: string | undefined, now: number): Quote | null {
+export function decodeQuote(body: unknown, base: string, quote: string, requested: string | undefined, now: number, source = sourceFor(base, quote)): Quote | null {
   const b = body as { base?: unknown; quote?: unknown; date?: unknown; rate?: unknown } | null;
   if (!b || b.base !== base || b.quote !== quote || typeof b.date !== 'string' || !/^\d{4}-\d\d-\d\d$/.test(b.date)) return null;
   if (requested && b.date > requested) return null;
   const units = typeof b.rate === 'number' || typeof b.rate === 'string' ? rateE8(b.rate) : null;
-  return units ? { base, quote, rateE8: units, date: b.date, source: sourceFor(base, quote), fetchedAt: now } : null;
+  return units ? { base, quote, rateE8: units, date: b.date, source, fetchedAt: now } : null;
 }
 
 export interface KeyValue { get(key: string): string | null; set(key: string, value: string): void }
@@ -127,10 +146,14 @@ export class FxCache {
     return reverse && r ? { ...reverse, base, quote, rateE8: r } : null;
   }
   private async fetchQuote(base: string, quote: string, date?: string): Promise<Quote> {
-    const res = await this.fetcher(quoteURL(base, quote, date));
-    const q = res.ok ? decodeQuote(await res.json(), base, quote, date, this.now()) : null;
-    if (!q) throw new Error('No published rate for this date. Enter your own rate.');
-    return q;
+    const source = sourceFor(base, quote);
+    const sources: Source[] = source === 'Frankfurter blended' ? [source] : [source, 'Frankfurter blended'];
+    for (const provider of sources) {
+      const res = await this.fetcher(quoteURL(base, quote, date, provider));
+      const q = res.ok ? decodeQuote(await res.json(), base, quote, date, this.now(), provider) : null;
+      if (q) return q;
+    }
+    throw new Error('No published rate is available. Enter your own rate.');
   }
   /** Latest published rate, reusing a fresh cache entry. Falls back to the cached one offline. */
   latest(base: string, quote: string, force = false): Promise<Quote | null> {
@@ -140,7 +163,7 @@ export class FxCache {
     if (running) return running;
     const task = this.fetchQuote(base, quote).then(q => {
       this.state.quotes[k] = q; this.offline = false; this.changed(); return q;
-    }, () => { this.offline = true; this.changed(); return this.cached(base, quote) ?? null; })
+    }, () => { this.offline = true; this.changed(); const cached = this.published(base, quote); return cached ? { ...cached, saved: true } : null; })
       .finally(() => this.inflight.delete(k));
     this.inflight.set(k, task);
     return task;
@@ -162,18 +185,15 @@ export class FxCache {
     this.inflight.set(key, task);
     return task;
   }
-  /** The rate for an expense date. Today or later uses the latest rate. Offline uses a cached rate published on or before the date. */
-  async forDate(base: string, quote: string, date: string, today: string): Promise<Quote> {
-    if (date >= today) {
-      const q = await this.latest(base, quote);
-      if (q && q.date <= date) return q;
-      throw new Error('No published rate is available offline. Enter your own rate.');
+  /** Prefer the charge day's quote, then fall back to the latest available reference rate. */
+  async forDate(base: string, quote: string, date: string, today: string, retry = false): Promise<Quote> {
+    if (date < today) {
+      const historic = await this.historical(base, quote, date, retry);
+      if (historic) return historic;
     }
-    const historic = await this.historical(base, quote, date, true);
-    if (historic) return historic;
-    const cached = this.cached(base, quote);
-    if (cached && cached.date <= date) { this.offline = true; return cached; }
-    throw new Error('No published rate for this date. Enter your own rate.');
+    const latest = await this.latest(base, quote, retry);
+    if (latest) return date < today ? { ...latest, fallback: true } : latest;
+    throw new Error('No published rate is available. Enter your own rate.');
   }
   /** Per-currency amounts summed into one currency. `missing` lists currencies without a known rate. */
   total(amounts: Record<string, number>, target: string) {

@@ -23,6 +23,7 @@ struct ExpenseGroup: Codable, Identifiable, Equatable {
     var description: String?
     var startDate: String?
     var endDate: String?
+    var tripRates: [String: Int64]?
     var symbol: String { kind == "trip" ? "airplane" : kind == "home" ? "house.fill" : "person.2.fill" }
     var isFriend: Bool { kind == "friend" }
 
@@ -154,7 +155,19 @@ enum LedgerError: LocalizedError {
     var errorDescription: String? { if case .invalid(let message) = self { return message }; return nil }
 }
 enum Money {
-    static let currencies = ["USD", "ARS", "EUR", "GBP", "BRL", "CAD", "AUD", "MXN"]
+    static let currencies = """
+    AED AFN ALL AMD ANG AOA ARS AUD AWG AZN BAM BBD BDT BHD BIF
+    BMD BND BOB BRL BSD BTN BWP BYN BZD CAD CDF CHF CLP CMD CNH
+    CNY COP CRC CUP CVE CZK DJF DKK DOP DZD EGP ERN ETB EUR FJD
+    FKP GBP GEL GGP GHS GIP GMD GNF GTQ GYD HKD HNL HTG HUF IDR
+    ILS IMP INR IQD IRR ISK JEP JMD JOD JPY KES KGS KHR KMF KPW
+    KRW KWD KYD KZT LAK LBP LKR LRD LSL LYD MAD MDL MGA MKD MMK
+    MNT MOP MRU MUR MVR MWK MXN MYR MZN NAD NGN NIO NOK NPR NZD
+    OMR PAB PEN PGK PHP PKR PLN PYG QAR RON RSD RUB RWF SAR SBD
+    SCR SDG SEK SGD SHP SLE SOS SRD SSP STN SVC SYP SZL THB TJS
+    TMT TND TOP TRY TTD TWD TZS UAH UGX USD UYU UZS VES VND VUV
+    WST XAF XCD XCG XDR XOF XPF YER ZAR ZMW ZWG
+    """.split(whereSeparator: \.isWhitespace).map(String.init)
     static let maxAmount: Int64 = 100_000_000_000
     /// Accept the user's decimal separator, with no ambiguous grouping separators.
     static func parse(_ text: String) -> Int64? {

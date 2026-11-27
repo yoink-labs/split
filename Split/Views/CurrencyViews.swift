@@ -4,6 +4,7 @@ struct ConverterView: View {
     var initialAmount: Int64? = nil
     var from: String? = nil
     var to: String? = nil
+    var initialDate: Date? = nil
 
     @EnvironmentObject private var fx: FXStore
     @Environment(\.dismiss) private var dismiss
@@ -17,6 +18,7 @@ struct ConverterView: View {
     @State private var loadedKey: [String] = []
     @State private var published: FXQuote?
     @State private var usingSavedRate = false
+    @State private var usingFallback = false
     @State private var editingRate = false
     @State private var ownRate = ""
     @State private var initialized = false
@@ -124,10 +126,13 @@ struct ConverterView: View {
                         Text("Your rate · saved on this device")
                             .font(.caption).foregroundStyle(.secondary)
                     } else {
-                        LabeledContent("Source", value: rate.source == "BCRA" ? "BCRA via Frankfurter" : "ECB via Frankfurter")
+                        LabeledContent("Source", value: rate.source == "BCRA" ? "BCRA via Frankfurter" : rate.source == "Frankfurter" ? "ECB via Frankfurter" : "Frankfurter")
                         LabeledContent("Published", value: Exchange.date(fromDay: rate.date)?.formatted(date: .abbreviated, time: .omitted) ?? rate.date)
                         if usingSavedRate {
                             Text("Showing a saved quote. The service couldn’t be reached.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        } else if usingFallback {
+                            Text("The charge-date quote was unavailable. Showing the latest published rate.")
                                 .font(.caption).foregroundStyle(.secondary)
                         } else if historical && day != rate.date {
                             Text("Showing the last published rate before the selected date.")
@@ -213,6 +218,10 @@ struct ConverterView: View {
         quote = to ?? fx.home
         base = from ?? (quote == "USD" ? "ARS" : "USD")
         amount = initialAmount.map { Money.input($0) } ?? "100"
+        if let initialDate, Exchange.localDay(initialDate) < Exchange.localDay(.now) {
+            date = initialDate
+            historical = true
+        }
         initialized = true
     }
 
@@ -225,11 +234,12 @@ struct ConverterView: View {
         forceNextLookup = false
         let result: FXQuote?
         let saved: Bool
+        var fallback = false
         if let selectedDay {
             result = try? await fx.quote(base: requestBase, target: requestQuote, date: selectedDay)
-            saved = result != nil && (selectedDay < Exchange.localDay(.now)
-                ? fx.cache.published(requestBase, requestQuote, day: selectedDay) == nil
-                : fx.offline)
+            fallback = result != nil && selectedDay < Exchange.localDay(.now)
+                && fx.cache.published(requestBase, requestQuote, day: selectedDay) == nil
+            saved = result != nil && fx.offline
         } else {
             await fx.refresh(currencies: [requestBase], into: requestQuote, force: force)
             result = fx.cache.published(requestBase, requestQuote)
@@ -238,6 +248,7 @@ struct ConverterView: View {
         guard !Task.isCancelled, lookupKey == key else { return }
         published = result
         usingSavedRate = saved
+        usingFallback = fallback
         loadedKey = key
     }
 }

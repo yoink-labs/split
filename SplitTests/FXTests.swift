@@ -92,10 +92,8 @@ final class FXTests: XCTestCase {
         XCTAssertEqual(restored.total(["USD": 1000], in: "ARS").amount, 1_552_000)
         let quote = try await restored.quote(base: "USD", target: "ARS", date: "2026-11-19")
         XCTAssertEqual(quote.date, "2026-11-17")
-        do {
-            _ = try await restored.quote(base: "USD", target: "ARS", date: "2026-11-01")
-            XCTFail("an older expense can't use a newer saved rate")
-        } catch {}
+        let fallback = try await restored.quote(base: "USD", target: "ARS", date: "2026-11-01")
+        XCTAssertEqual(fallback.date, "2026-11-17", "If the charge-date rate is unavailable, use the latest known rate")
         try? FileManager.default.removeItem(at: file)
     }
     @MainActor

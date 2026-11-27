@@ -10,6 +10,8 @@ is noted next to each release. The CLI is versioned separately with
 
 ## [Unreleased]
 
+- Redesigned the web currency converter with 161 currency codes, charge-date rates with a latest-rate fallback, trip and expense overrides, and a comparison with the amount posted on your statement.
+
 ## [0.9.0] - 2026-11-27
 
 TestFlight build 14.

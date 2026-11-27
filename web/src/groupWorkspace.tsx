@@ -27,13 +27,13 @@ import {
   type Group,
   type Person,
 } from "./data";
-import { convert, fx, rateText, sourceLabel, useRates, type Exchange } from "./fx";
+import { convert, fx, rateE8, rateInput, rateText, sourceLabel, useRates, type Exchange } from "./fx";
 import { CurrencySelect, RateField } from "./fxui";
 import { ReceiptsHub } from "./receiptsHub";
 import { Avatar, AvatarStack, BalanceBadge, CategoryIcon } from "./ui";
 
-type Tab = "overview" | "ledger" | "receipts" | "settle" | "people";
-const tabs = new Set<string>(["overview", "ledger", "receipts", "settle", "people"]);
+type Tab = "overview" | "ledger" | "receipts" | "settle" | "people" | "rates";
+const tabs = new Set<string>(["overview", "ledger", "receipts", "settle", "people", "rates"]);
 
 function ExpenseDrawer({
   g,
@@ -172,12 +172,11 @@ function ExpenseDrawer({
             {handledError && <p className="error-banner" role="alert">{handledError}</p>}
             {entry.exchange && (
               <p style={{ marginTop: 8, fontSize: 12.5, color: "var(--ink-2)" }}>
-                Settles as <b className="num">{money(settlementEntry(entry).amount, entry.exchange.target)}</b>{" "}
+                {entry.exchange.source === "Statement" ? "Statement charge" : "Settles as"} <b className="num">{money(settlementEntry(entry).amount, entry.exchange.target)}</b>{" "}
                 <span className="muted">
-                  at 1 {entry.currency} = {rateText(entry.exchange.rateE8)} {entry.exchange.target} (
-                  {entry.exchange.source === "Manual"
-                    ? "your manual rate"
-                    : sourceLabel(entry.exchange as Parameters<typeof sourceLabel>[0])}
+                  at 1 {entry.currency} ≈ {rateText(entry.exchange.rateE8)} {entry.exchange.target} (
+                  {sourceLabel(entry.exchange)}
+                  {entry.exchange.date > entry.createdAt.slice(0, 10) ? " · latest available" : ""}
                   )
                 </span>
               </p>
@@ -399,6 +398,7 @@ function SettlePaymentForm({
             label="Paid in"
             value={currency}
             onChange={(c) => {
+              setExchange(null);
               setCurrency(c);
               const q = c === owedIn ? null : fx.rate(owedIn, c);
               setText(c === owedIn ? (owed / 100).toFixed(2) : q ? (convert(owed, q.rateE8) / 100).toFixed(2) : "");
@@ -411,15 +411,64 @@ function SettlePaymentForm({
         )}
         {converts && (
           <RateField
+            key={currency}
             from={currency}
             to={g.currency}
             amount={typed}
             date={day.slice(0, 10)}
+            tripRate={g.tripRates?.[currency]}
             onChange={setExchange}
           />
         )}
       </Form>
     </div>
+  );
+}
+
+function TripRates({ group, canEdit }: { group: Group; canEdit: boolean }) {
+  const { save } = useLedger();
+  const [currency, setCurrency] = useState(() => Object.keys(group.tripRates ?? {})[0] ?? (group.currency === "USD" ? "EUR" : "USD"));
+  const rates = Object.entries(group.tripRates ?? {}).sort(([a], [b]) => a.localeCompare(b));
+  const current = group.tripRates?.[currency];
+
+  return (
+    <section className="card card-pad trip-rates" aria-labelledby="trip-rates-title">
+      <h2 id="trip-rates-title">Trip exchange rates</h2>
+      <p className="muted">Set a default for each currency you spend in. Each expense can use its own rate, and saved expenses keep the rate they used.</p>
+      {canEdit && (
+        <Form
+          key={currency + "|" + (current ?? "")}
+          label="Save trip rate"
+          submit={async (form) => {
+            const input = value(form, "rate");
+            const rate = rateE8(input);
+            if (input && !rate) throw new Error("Enter a positive exchange rate.");
+            await save(`/v1/groups/${group.id}/trip-rate`, { currency, target: group.currency, rateE8: rate });
+          }}
+        >
+          <div className="form-row">
+            <CurrencySelect label="Expense currency" value={currency} onChange={setCurrency} exclude={group.currency} />
+            <label className="field">
+              {group.currency} per 1 {currency}
+              <input type="text" name="rate" inputMode="decimal"
+                defaultValue={current ? rateInput(current) : ""} />
+              <small>Clear the rate and save to use published rates again.</small>
+            </label>
+          </div>
+        </Form>
+      )}
+      {rates.length > 0 && (
+        <ul className="trip-rate-list">
+          {rates.map(([code, rate]) => (
+            <li key={code} className="num">
+              {canEdit ? <button type="button" className="btn btn-sm btn-ghost" onClick={() => setCurrency(code)} aria-label={`Edit ${code} trip rate`}>
+                1 {code} = {rateText(rate)} {group.currency}
+              </button> : <>1 {code} = {rateText(rate)} {group.currency}</>}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }
 
@@ -436,7 +485,7 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
   const [query, setQuery] = useSearchParams();
 
   const selectedTab = query.get("tab") ?? "";
-  const tab = expenseID ? "ledger" : tabs.has(selectedTab) ? selectedTab as Tab : "overview";
+  const tab = expenseID ? "ledger" : tabs.has(selectedTab) && (selectedTab !== "rates" || g.kind === "trip") ? selectedTab as Tab : "overview";
   const homeMoney = useHomeMoney();
 
   // Ledger filters
@@ -610,6 +659,11 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
               <span className="ws-tab-badge">{suggestions.length}</span>
             )}
           </button>
+          {g.kind === "trip" && (
+            <button className="ws-tab" role="tab" aria-selected={tab === "rates"} onClick={() => setTab("rates")}>
+              Exchange rates
+            </button>
+          )}
           <button className="ws-tab" role="tab" aria-selected={tab === "people"} onClick={() => setTab("people")}>
             People & Settings
           </button>
@@ -973,7 +1027,9 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
         </div>
       )}
 
-      {/* TAB 5: PEOPLE, INVITES & SETTINGS */}
+      {tab === "rates" && <TripRates key={g.id} group={g} canEdit={activeMembers.some((m) => m.userID === user)} />}
+
+      {/* People, invites and settings */}
       {tab === "people" && (
         <div className="form-stack" style={{ gap: 20 }}>
           {/* People Grid */}

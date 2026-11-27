@@ -3,7 +3,7 @@ import { allocate, balances, entryPayers, moneyCompact, settlementEntry, type Ex
 import { convert, fx, type FxCache, today, useFxVersion, useHomeCurrency, useRates } from "./fx";
 
 function historicPair(entry: Expense) {
-  return [entry.currency, entry.exchange?.date ?? entry.createdAt.slice(0, 10)] as const;
+  return [entry.currency, entry.createdAt.slice(0, 10)] as const;
 }
 
 export function useLedgerRates(entries: Expense[], groupCurrencies: string[]) {

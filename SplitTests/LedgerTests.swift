@@ -20,6 +20,12 @@ final class LedgerTests: XCTestCase {
         let groupEntries=snapshot.entries.filter{$0.groupID==group.id}
         let exported=LedgerCSV.export(groupEntries,group:group)
         XCTAssertEqual(try LedgerCSV.parse(exported,defaultCurrency:"ARS").count,groupEntries.count)
+        let payer=try XCTUnwrap(group.members.first)
+        let posted=Exchange(target:"ARS",rateE8:175_000_000,date:"2025-01-10",source:"Statement",statementAmount:1_750)
+        let charge=LedgerEntry(groupID:group.id,title:"Card charge",amount:1_000,currency:"USD",paidBy:payer.id,
+            splits:[Portion(memberID:payer.id,amount:1_000)],exchange:posted,createdAt:"2025-01-10T12:00:00Z")
+        let postedCSV=LedgerCSV.export([charge],group:group)
+        XCTAssertEqual(try LedgerCSV.parse(postedCSV,defaultCurrency:"ARS").first?.exchange,posted)
         let splid="Date;Description;Amount;Paid by;Participants\n2025-02-01;Ride;10.01;Alex;Alex,Maya"
         XCTAssertEqual(try LedgerCSV.parse(splid,defaultCurrency:"USD")[0].splits.map(\.amount),[501,500])
     }

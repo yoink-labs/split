@@ -21,7 +21,8 @@ const storage = {
     }
   },
 };
-export const fx = new FxCache(storage, Date.now, (url) => fetch(url));
+export const fx = new FxCache(storage, Date.now, (url) => fetch(url, { signal: AbortSignal.timeout(8_000) }));
+export const rateInput = (rate: number) => (rate / 100_000_000).toFixed(8).replace(/\.?0+$/, "");
 
 const supported = (c: string | null | undefined): c is string =>
   !!c && (currencies as readonly string[]).includes(c);

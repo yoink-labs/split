@@ -191,7 +191,25 @@ function DemoLedger({ onExit }: { onExit: () => void }) {
         const b = body as Partial<Group>;
         setData((prev) => ({
           ...prev,
-          groups: prev.groups.map((g) => (g.id === gid ? { ...g, ...b } : g)),
+          groups: prev.groups.map((g) => g.id === gid
+            ? { ...g, ...b, tripRates: b.currency && b.currency !== g.currency ? undefined : g.tripRates }
+            : g),
+        }));
+        return { ok: true } as T;
+      }
+
+      const tripRate = path.match(/^\/v1\/groups\/([\w-]+)\/trip-rate$/);
+      if (tripRate && body) {
+        const { currency, rateE8 } = body as { currency: string; rateE8: number | null };
+        setData((prev) => ({
+          ...prev,
+          groups: prev.groups.map((group) => {
+            if (group.id !== tripRate[1]) return group;
+            const tripRates = { ...group.tripRates };
+            if (rateE8 === null) delete tripRates[currency];
+            else tripRates[currency] = rateE8;
+            return { ...group, tripRates };
+          }),
         }));
         return { ok: true } as T;
       }

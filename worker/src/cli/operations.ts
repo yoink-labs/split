@@ -96,7 +96,7 @@ function makeExpense(a: Args, group: Group, old?: Entry): Entry {
   const date = optionalDay(a.date, 'expense date');
   const createdAt = old?.createdAt ?? (date ? date + 'T12:00:00Z' : timestamp());
   if(old?.exchange && a.currency && a.currency!==old.currency && !a.rate) throw new InputError('Supply a new rate when changing a converted currency.');
-  const exchange=a.rate ? {target:group.currency,rateE8:Math.round(Number(a.rate)*1e8),source:'Manual',date:createdAt.slice(0,10)} : old?.exchange;
+  const exchange=a.rate ? {target:group.currency,rateE8:Math.round(Number(a.rate)*1e8),source:'Manual' as const,date:createdAt.slice(0,10)} : old?.exchange;
   let payers=old?.payers?.length ? (amount===old.amount ? old.payers
     : allocate(amount,old.payers.map(p=>p.amount)).map((value,i)=>({memberID:old.payers![i].memberID,amount:value}))) : undefined;
   if (a.payers) {

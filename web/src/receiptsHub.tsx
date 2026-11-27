@@ -1,3 +1,4 @@
+import { useHomeMoney } from "./homeMoney";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { useLedger } from "./context";
@@ -131,6 +132,7 @@ export function ReceiptsHub({
   initialEntryID?: string | null;
 }) {
   const { save, user } = useLedger();
+  const homeMoney = useHomeMoney();
   const receiptEntries = entries.filter((e) => e.bill || (e.receiptIDs && e.receiptIDs.length > 0));
   const [selectedID, setSelectedID] = useState<string>(
     () => initialEntryID || receiptEntries[0]?.id || "",
@@ -152,7 +154,7 @@ export function ReceiptsHub({
         <p className="muted" style={{ maxWidth: 440, margin: "0 auto 16px" }}>
           Add an itemized receipt or attach a receipt photo to an expense—or send a receipt photo to your local LLM via Split MCP.
         </p>
-        <Link className="btn btn-primary" to={`/g/${g.id}/new`}>
+        <Link className="btn btn-primary" to={`/g/${g.id}/new?receipt=1`}>
           + Add itemized receipt
         </Link>
       </div>
@@ -255,7 +257,7 @@ export function ReceiptsHub({
                   <div style={{ display: "flex", justifyContent: "space-between", gap: 6 }}>
                     <strong style={{ fontSize: 13 }}>{e.title}</strong>
                     <span className="num" style={{ fontSize: 12.5, fontWeight: 700 }}>
-                      {moneyCompact(e.amount, e.currency)}
+                      {homeMoney.entry(e)}
                     </span>
                   </div>
                   <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11.5 }}>
@@ -288,7 +290,7 @@ export function ReceiptsHub({
                 <div style={{ display: "flex", justifyContent: "space-between", gap: 6 }}>
                   <strong style={{ fontSize: 13 }}>{e.title}</strong>
                   <span className="num" style={{ fontSize: 12.5, fontWeight: 700 }}>
-                    {moneyCompact(e.amount, e.currency)}
+                    {homeMoney.entry(e)}
                   </span>
                 </div>
                 <span className="muted" style={{ fontSize: 11.5 }}>
@@ -313,7 +315,7 @@ export function ReceiptsHub({
               <h3 style={{ fontSize: 15 }}>{selected.title}</h3>
               <p className="muted" style={{ fontSize: 12, marginTop: 2 }}>
                 Paid by {memberName(g, selected.paidBy)} · {shortDate(selected.createdAt)} · Total{" "}
-                <b className="num">{moneyCompact(selected.amount, selected.currency)}</b>
+                <b className="num">{homeMoney.entry(selected, selected.amount)}</b>
               </p>
             </div>
             {bill?.closed ? (
@@ -342,7 +344,7 @@ export function ReceiptsHub({
             >
               <div>
                 <strong className="warn" style={{ fontSize: 13 }}>
-                  {unclaimedItems.length ? `${unclaimedItems.length} unclaimed · ${moneyCompact(unclaimedTotal, selected.currency)}` : "All items claimed"}
+                  {unclaimedItems.length ? `${unclaimedItems.length} unclaimed · ${homeMoney.entry(selected, unclaimedTotal)}` : "All items claimed"}
                 </strong>
                 {unclaimedItems.length > 0 && <p className="muted" style={{ fontSize: 12 }}>
                   Currently sitting on {memberName(g, selected.paidBy)} until claimed.
@@ -432,11 +434,11 @@ export function ReceiptsHub({
                       </div>
                       <div style={{ textAlign: "right" }}>
                         <strong className="num" style={{ fontSize: 13.5 }}>
-                          {moneyCompact(item.amount, selected.currency)}
+                          {homeMoney.entry(selected, item.amount)}
                         </strong>
                         {item.gross !== item.amount && (
                           <div className="muted num" style={{ fontSize: 11 }}>
-                            {moneyCompact(item.gross, selected.currency)} w/ tax & tip
+                            {homeMoney.entry(selected, item.gross)} w/ tax & tip
                           </div>
                         )}
                       </div>
@@ -473,7 +475,7 @@ export function ReceiptsHub({
                               <span>{m.name.split(" ")[0]}</span>
                               {myCents !== null && (
                                 <span className="num" style={{ fontSize: 11, opacity: 0.85 }}>
-                                  {moneyCompact(myCents, selected.currency)}
+                                  {homeMoney.entry(selected, myCents)}
                                 </span>
                               )}
                             </button>
@@ -509,15 +511,15 @@ export function ReceiptsHub({
               <div style={{ padding: "12px 16px", background: "var(--surface-2)", fontSize: 12.5 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
                   <span className="muted">Tax (proportional)</span>
-                  <b className="num">{moneyCompact(bill.tax, selected.currency)}</b>
+                  <b className="num">{homeMoney.entry(selected, bill.tax)}</b>
                 </div>
                 <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
                   <span className="muted">Tip (proportional)</span>
-                  <b className="num">{moneyCompact(bill.tip, selected.currency)}</b>
+                  <b className="num">{homeMoney.entry(selected, bill.tip)}</b>
                 </div>
                 <div style={{ display: "flex", justifyContent: "space-between", paddingTop: 6, borderTop: "1px solid var(--border)" }}>
                   <strong>Receipt Total</strong>
-                  <strong className="num">{moneyCompact(selected.amount, selected.currency)}</strong>
+                  <strong className="num">{homeMoney.entry(selected, selected.amount)}</strong>
                 </div>
               </div>
             </div>
@@ -530,7 +532,7 @@ export function ReceiptsHub({
                 {selected.splits.map((s) => (
                   <div className="row" key={s.memberID}>
                     <span>{memberName(g, s.memberID)}</span>
-                    <b className="num">{moneyCompact(s.amount, selected.currency)}</b>
+                    <b className="num">{homeMoney.entry(selected, s.amount)}</b>
                   </div>
                 ))}
               </div>

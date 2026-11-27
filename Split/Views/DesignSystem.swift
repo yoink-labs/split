@@ -23,8 +23,8 @@ enum Spacing {
 /// Corner radii, from small controls up to header cards.
 enum Radius {
     static let badge: CGFloat = 12
-    static let card: CGFloat = 18
-    static let header: CGFloat = 22
+    static let card: CGFloat = 14
+    static let header: CGFloat = 16
 }
 
 /// Minimum tap target from the HIG.
@@ -98,8 +98,8 @@ struct ActionBar<Content: View>: View {
 /// coral when they owe. The caption names the direction so colour is never
 /// the only signal.
 struct BalanceLabel: View {
-    var amount: Int64
-    var currency: String
+    @EnvironmentObject private var fx: FXStore
+    var amounts: [String: Int64]
     /// Caption when the amount is positive (money comes back) and negative.
     var positive = "gets back"
     var negative = "owes"
@@ -107,16 +107,21 @@ struct BalanceLabel: View {
     var font: Font = .splitAmount(16)
 
     var body: some View {
+        let result = fx.total(amounts, in: fx.home)
+        let amount = result.amount
+        let unsettled = amounts.values.contains { $0 != 0 }
         VStack(alignment: alignment, spacing: 1) {
-            Text(Money.text(abs(amount), currency))
+            Text(unsettled ? fx.homeTotalText(amounts, magnitude: true) : "Settled up")
                 .font(font)
-                .foregroundStyle(amount == 0 ? Palette.ink : amount > 0 ? Palette.positive : Palette.negative)
+                .foregroundStyle(!result.missing.isEmpty || amount == 0 ? Palette.ink : amount > 0 ? Palette.positive : Palette.negative)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
                 .contentTransition(.numericText())
-            Text(amount == 0 ? "settled" : amount > 0 ? positive : negative)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            if result.missing.isEmpty && amount != 0 {
+                Text(amount > 0 ? positive : negative)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
         .accessibilityElement(children: .combine)
     }
@@ -278,34 +283,33 @@ struct HeroHeader<Leading: View, Footer: View>: View {
 
 /// Net balances inside a `HeroHeader`, one line per currency.
 struct HeroBalances: View {
+    @EnvironmentObject private var fx: FXStore
     var balances: [(currency: String, amount: Int64)]
     var positive = "gets back"
     var negative = "owes"
 
-    private var open: [(currency: String, amount: Int64)] { balances.filter { $0.amount != 0 } }
-
     var body: some View {
-        if open.isEmpty {
+        let amounts = Dictionary(uniqueKeysWithValues: balances.map { ($0.currency, $0.amount) })
+        let result = fx.total(amounts, in: fx.home)
+        if amounts.values.allSatisfy({ $0 == 0 }) {
             Label("Settled up", systemImage: "checkmark.circle.fill")
                 .font(.headline)
                 .foregroundStyle(Palette.lime)
         } else {
-            VStack(alignment: .leading, spacing: Spacing.xxs) {
-                ForEach(open, id: \.currency) { item in
-                    HStack(alignment: .firstTextBaseline, spacing: Spacing.xs) {
-                        Text(Money.text(abs(item.amount), item.currency))
-                            .font(.splitAmount(open.count > 1 ? 22 : 28, weight: .bold))
-                            .foregroundStyle(item.amount > 0 ? Palette.lime : Palette.heroNegative)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.6)
-                            .contentTransition(.numericText())
-                        Text(item.amount > 0 ? positive : negative)
-                            .font(.subheadline)
-                            .foregroundStyle(Palette.onHero.opacity(0.7))
-                    }
-                    .accessibilityElement(children: .combine)
+            HStack(alignment: .firstTextBaseline, spacing: Spacing.xs) {
+                Text(fx.homeTotalText(amounts, magnitude: true))
+                    .font(.splitAmount(28, weight: .bold))
+                    .foregroundStyle(result.missing.isEmpty && result.amount < 0 ? Palette.heroNegative : Palette.lime)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+                    .contentTransition(.numericText())
+                if result.missing.isEmpty && result.amount != 0 {
+                    Text(result.amount > 0 ? positive : negative)
+                        .font(.subheadline)
+                        .foregroundStyle(Palette.onHero.opacity(0.7))
                 }
             }
+            .accessibilityElement(children: .combine)
         }
     }
 }

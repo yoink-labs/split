@@ -80,6 +80,8 @@ async function updateGroup(request:Request,env:Env,groupID:string) {
     if(b.currency!==group.currency) {
       const used=await env.DB.prepare('SELECT count(*) AS n FROM entries WHERE group_id=?').bind(groupID).first<{n:number}>();
       if((used?.n??0)>0) throw new HTTPError(409,"Delete this group's expenses before changing its currency.");
+      if(await env.DB.prepare("SELECT 1 FROM settlement_requests WHERE group_id=? AND status='pending' LIMIT 1").bind(groupID).first())
+        throw new HTTPError(409,'Resolve pending payments before changing the group currency.');
       currency=b.currency;
     }
   }

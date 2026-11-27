@@ -4,6 +4,7 @@ import SwiftUI
 /// shares, notes, reactions and comments. Reads the live entry from the store so
 /// edits, claims and likes appear immediately.
 struct EntryDetails: View {
+    @EnvironmentObject private var fx: FXStore
     private let initial: LedgerEntry
     var group: ExpenseGroup
     var embedded = false
@@ -41,6 +42,11 @@ struct EntryDetails: View {
     private var liveGroup: ExpenseGroup { store.group(group.id) ?? group }
     private var me: Person? { Analytics.me(in: liveGroup, userID: session.userID) }
     private var editable: Bool { entry.editable == true || store.isDemo }
+    private var canSetHandled: Bool {
+        entry.kind == "expense" && entry.allPayers.contains { payer in
+            liveGroup.members.contains { $0.id == payer.memberID && $0.userID == session.userID && $0.removed != true }
+        }
+    }
     private var canEdit: Bool { editable && entry.kind == "expense" && entry.bill?.closed != true }
     private var repeatAllowed: Bool {
         guard editable, !store.isDemo else { return false }
@@ -109,7 +115,7 @@ struct EntryDetails: View {
                         }
                     }
                     .id("comments")
-                    if editable { actionsCard }
+                    if editable || canSetHandled { actionsCard }
                     if let error { InlineError(text: error) }
                 }
                 .padding(16)
@@ -173,8 +179,12 @@ struct EntryDetails: View {
                     }
                     Spacer(minLength: 8)
                 }
-                AmountText(minor: entry.amount, currency: entry.currency, size: 34)
-                    .accessibilityLabel("Amount \(Money.text(entry.amount, entry.currency))")
+                AmountText(minor: entry.amount, currency: entry.currency, size: 34, entry: entry)
+                    .accessibilityLabel("Amount \(fx.entryText(entry, amount: entry.amount))")
+                if entry.currency != fx.home {
+                    Text("Charged \(Money.text(entry.amount, entry.currency))")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 HStack(alignment: .center, spacing: 8) {
                     Label(dateText, systemImage: "calendar")
                     Spacer(minLength: 8)
@@ -190,7 +200,7 @@ struct EntryDetails: View {
                             .font(.subheadline.weight(.medium))
                             .foregroundStyle(Palette.ink)
                         if entry.allPayers.count > 1 {
-                            Text("\(Money.text(entry.amount, entry.currency)) total")
+                            Text("\(fx.entryText(entry, amount: entry.amount)) total")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -217,16 +227,20 @@ struct EntryDetails: View {
 
     @ViewBuilder
     private var netBadge: some View {
-        if entry.kind == "settlement" {
+        if entry.isHandled {
+            Label("Already handled", systemImage: "checkmark.circle")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(Palette.positive)
+        } else if entry.kind == "settlement" {
             Text("Recorded")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(Palette.evergreen)
         } else if let me {
             let net = Ledger.net(entry, for: me.id)
             Text(net > 0
-                 ? "You lent \(Money.text(net, entry.currency))"
+                 ? "You lent \(fx.entryText(entry, amount: net))"
                  : net < 0
-                 ? "You owe \(Money.text(abs(net), entry.currency))"
+                 ? "You owe \(fx.entryText(entry, amount: abs(net)))"
                  : "Not involved")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(net > 0 ? Palette.positive : net < 0 ? Palette.negative : Palette.muted)
@@ -296,13 +310,13 @@ struct EntryDetails: View {
                                     .font(.subheadline.weight(.semibold))
                                     .foregroundStyle(Palette.ink)
                                 if entry.allPayers.count > 1 {
-                                    Text("paid \(Money.text(payer.amount, entry.currency))")
+                                    Text("paid \(fx.portionText(entry, memberID: payer.memberID, paid: true))")
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
                                 }
                             }
                             Spacer()
-                            AmountText(minor: payer.amount, currency: entry.currency, size: 15)
+                            Text(fx.portionText(entry, memberID: payer.memberID, paid: true)).font(.splitAmount(15))
                             Image(systemName: "chevron.right")
                                 .font(.caption2.weight(.bold))
                                 .foregroundStyle(.tertiary)
@@ -335,13 +349,13 @@ struct EntryDetails: View {
                                     .foregroundStyle(Palette.ink)
                                 if entry.kind == "expense",
                                    let payer = entry.allPayers.first(where: { $0.memberID == portion.memberID }) {
-                                    Text("paid \(Money.text(payer.amount, entry.currency))")
+                                    Text("paid \(fx.portionText(entry, memberID: payer.memberID, paid: true))")
                                         .font(.caption2)
                                         .foregroundStyle(.secondary)
                                 }
                             }
                             Spacer()
-                            AmountText(minor: portion.amount, currency: entry.currency, size: 15)
+                            Text(fx.portionText(entry, memberID: portion.memberID)).font(.splitAmount(15))
                             Image(systemName: "chevron.right")
                                 .font(.caption2.weight(.bold))
                                 .foregroundStyle(.tertiary)
@@ -359,7 +373,7 @@ struct EntryDetails: View {
                         .foregroundStyle(.secondary)
                 }
                 if let bill = entry.bill, bill.openCount > 0 {
-                    Text("\(bill.openCount) open \(bill.openCount == 1 ? "purchase" : "purchases") · \(Money.text(bill.openTotal, entry.currency)) still with the payer.")
+                    Text("\(bill.openCount) open \(bill.openCount == 1 ? "purchase" : "purchases") · \(fx.entryText(entry, amount: bill.openTotal)) still with the payer.")
                         .font(.caption)
                         .foregroundStyle(Palette.amber)
                         .fixedSize(horizontal: false, vertical: true)
@@ -427,7 +441,7 @@ struct EntryDetails: View {
     private var actionsCard: some View {
         Card {
             VStack(alignment: .leading, spacing: 10) {
-                SectionHeader(title: "This entry", subtitle: "Only the person who recorded it can change it.")
+                SectionHeader(title: "This entry")
                 FlowLayout(spacing: 8) {
                 if canEdit {
                     Button { editing = true } label: {
@@ -436,6 +450,15 @@ struct EntryDetails: View {
                     .buttonStyle(GhostButton())
                     .accessibilityIdentifier("entry-edit")
                     .accessibilityLabel("Edit this expense")
+                }
+                if canSetHandled {
+                    Button {
+                        Task { await toggleHandled() }
+                    } label: {
+                        Label(entry.isHandled ? "Include in balances" : "Mark as handled", systemImage: "checkmark.circle")
+                    }
+                    .buttonStyle(GhostButton())
+                    .disabled(working)
                 }
                 if repeatAllowed {
                     if repeatWorking {
@@ -472,21 +495,23 @@ struct EntryDetails: View {
                         .accessibilityLabel("Repeat schedule, \(entry.recurrence ?? "off")")
                     }
                 }
-                Button { deleting = true } label: {
-                    Label("Delete entry", systemImage: "trash")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(Palette.negative)
-                        .padding(.horizontal, 14)
-                        .frame(minHeight: 44)
-                        .background(Palette.negative.opacity(0.10))
-                        .clipShape(Capsule())
-                        .overlay(Capsule().stroke(Palette.negative.opacity(0.25), lineWidth: 1))
-                        .contentShape(Capsule())
+                if editable {
+                    Button { deleting = true } label: {
+                        Label("Delete entry", systemImage: "trash")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(Palette.negative)
+                            .padding(.horizontal, 14)
+                            .frame(minHeight: 44)
+                            .background(Palette.negative.opacity(0.10))
+                            .clipShape(Capsule())
+                            .overlay(Capsule().stroke(Palette.negative.opacity(0.25), lineWidth: 1))
+                            .contentShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(working)
+                    .accessibilityIdentifier("entry-delete")
+                    .accessibilityLabel("Delete this entry")
                 }
-                .buttonStyle(.plain)
-                .disabled(working)
-                .accessibilityIdentifier("entry-delete")
-                .accessibilityLabel("Delete this entry")
                 }
             }
         }
@@ -522,6 +547,15 @@ struct EntryDetails: View {
         } catch {
             self.error = error.localizedDescription
         }
+    }
+
+    private func toggleHandled() async {
+        guard !working else { return }
+        working = true
+        error = nil
+        defer { working = false }
+        do { try await store.setHandled(entry, handled: !entry.isHandled) }
+        catch { self.error = error.localizedDescription }
     }
 
     private func deleteEntry() async {

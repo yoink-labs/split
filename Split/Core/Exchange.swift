@@ -7,6 +7,13 @@ struct Exchange:Codable,Equatable {
     var source:String
     var rate:Decimal { Decimal(rateE8)/100_000_000 }
     func description(base:String)->String { "1 \(base) = \(NSDecimalNumber(decimal:rate).stringValue) \(target) · \(source) · \(date)" }
+    static func date(fromDay day: String) -> Date? {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.date(from: day)
+    }
+
     static func localDay(_ date:Date)->String {
         let formatter=DateFormatter();formatter.calendar=Calendar(identifier:.gregorian)
         formatter.locale=Locale(identifier:"en_US_POSIX");formatter.timeZone = .current;formatter.dateFormat="yyyy-MM-dd"
@@ -18,16 +25,17 @@ struct Exchange:Codable,Equatable {
               let d=Decimal(string:clean), d>0, d<=10_000_000 else { return nil }
         return NSDecimalNumber(decimal:d*100_000_000).int64Value
     }
-    func converting(_ e:LedgerEntry)throws->LedgerEntry {
-        var raw=Decimal(e.amount)*rate, rounded=Decimal()
-        NSDecimalRound(&rounded,&raw,0,.plain)
-        guard rounded>=1,rounded<=Decimal(Money.maxAmount) else { throw LedgerError.invalid("Check the converted amount.") }
+    func converting(_ e:LedgerEntry, maximumTotal: Int64 = Money.maxAmount)throws->LedgerEntry {
+        guard let amount = FXMath.convert(e.amount, rateE8: rateE8),
+              amount <= maximumTotal, amount >= (maximumTotal == Money.maxAmount ? 1 : 0) else {
+            throw LedgerError.invalid("Check the converted amount.")
+        }
         var output=e
-        output.amount=NSDecimalNumber(decimal:rounded).int64Value
-        let shares=try Ledger.allocate(total:output.amount,weights:e.splits.map(\.amount))
+        output.amount=amount
+        let shares = amount == 0 ? e.splits.map { _ in 0 } : try Ledger.allocate(total: amount, weights: e.splits.map(\.amount), maximumTotal: maximumTotal)
         output.splits=zip(e.splits,shares).map{Portion(memberID:$0.memberID,amount:$1)}
         if let payers=e.payers {
-            let converted=try Ledger.allocate(total:output.amount,weights:payers.map(\.amount))
+            let converted = amount == 0 ? payers.map { _ in 0 } : try Ledger.allocate(total: amount, weights: payers.map(\.amount), maximumTotal: maximumTotal)
             output.payers=zip(payers,converted).map{Payer(memberID:$0.memberID,amount:$1)}
         }
         output.exchange=nil;output.currency=target

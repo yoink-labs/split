@@ -3,18 +3,12 @@ import Charts
 
 /// Free spending insights for one group or every group at once.
 struct InsightsView: View {
+    @EnvironmentObject private var fx: FXStore
     var group: ExpenseGroup? = nil
-    var initialCurrency: String? = nil
 
     @EnvironmentObject private var store: ExpenseStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.horizontalSizeClass) private var size
-    @State private var pickedCurrency: String?
-
-    init(group: ExpenseGroup? = nil, initialCurrency: String? = nil) {
-        self.group = group
-        self.initialCurrency = initialCurrency
-    }
 
     private struct DayTotal: Identifiable, Equatable {
         var day: Int
@@ -27,7 +21,7 @@ struct InsightsView: View {
         var name: String
         var paid: Int64
         var share: Int64
-        var net: Int64
+        var balances: [String: Int64]
     }
 
     private static let dayParser: DateFormatter = {
@@ -37,37 +31,19 @@ struct InsightsView: View {
         return formatter
     }()
 
-    private var scopeEntries: [LedgerEntry] {
+    private var originalEntries: [LedgerEntry] {
         if let group { return store.entries(in: group) }
         let active = Set(store.groups.filter { !($0.archived ?? false) }.map(\.id))
         return store.entries.filter { active.contains($0.groupID) }
     }
 
-    private var availableCurrencies: [String] {
-        var values = Set(scopeEntries.map(\.settling.currency))
-        if let group {
-            values.insert(group.currency)
-        } else {
-            for group in store.groups where !(group.archived ?? false) { values.insert(group.currency) }
-        }
-        return values.sorted()
+    private var currency: String { fx.home }
+    private var scopeEntries: [LedgerEntry] { originalEntries.filter { $0.kind == "expense" }.compactMap(fx.homeEntry) }
+    private var missingRates: Bool {
+        originalEntries.contains { $0.kind == "expense" && fx.homeEntry($0) == nil }
     }
-
-    private var currency: String {
-        if let pickedCurrency, availableCurrencies.contains(pickedCurrency) { return pickedCurrency }
-        if let initialCurrency, availableCurrencies.contains(initialCurrency) { return initialCurrency }
-        if let group, currenciesWithData.contains(group.currency) { return group.currency }
-        if let first = currenciesWithData.first { return first }
-        if let group, availableCurrencies.contains(group.currency) { return group.currency }
-        return availableCurrencies.first ?? group?.currency ?? "USD"
-    }
-
-    private var currenciesWithData: [String] {
-        availableCurrencies.filter { Analytics.monthlyTotal(scopeEntries, currency: $0) > 0 }
-    }
-
-    private var currencyBinding: Binding<String> {
-        Binding(get: { currency }, set: { pickedCurrency = $0 })
+    private var usesEstimates: Bool {
+        originalEntries.contains { $0.kind == "expense" && $0.currency != fx.home }
     }
 
     private var monthly: [MonthTotal] {
@@ -90,23 +66,36 @@ struct InsightsView: View {
         categories.reduce(0) { $0 + $1.amount }
     }
 
+    private func netBalances(for entries: [LedgerEntry]) -> [String: [String: Int64]] {
+        Dictionary(uniqueKeysWithValues: Set(entries.map(\.settling.currency)).map {
+            ($0, Ledger.balances(entries, currency: $0))
+        })
+    }
+
+    private func estimatedSpend(_ amount: Int64) -> String {
+        (usesEstimates ? "≈ " : "") + Money.text(amount, currency)
+    }
+
     private var memberTotals: [MemberTotal] {
         var rows: [String: MemberTotal] = [:]
         let groups = group.map { [$0] } ?? store.groups.filter { !($0.archived ?? false) }
         for scope in groups {
-            let entries = group == nil ? store.entries(in: scope) : scopeEntries
+            let entries = scopeEntries.filter { $0.groupID == scope.id }
+            let currentBalances = netBalances(for: originalEntries.filter { $0.groupID == scope.id })
             for row in Analytics.personSpend(scope, entries: entries, currency: currency, people: scope.members) {
                 let key = Analytics.key(row.person)
-                var combined = rows[key] ?? MemberTotal(id: key, name: row.person.name, paid: 0, share: 0, net: 0)
+                var combined = rows[key] ?? MemberTotal(id: key, name: row.person.name, paid: 0, share: 0, balances: [:])
                 combined.name = row.person.name
                 combined.paid += row.paid
                 combined.share += row.share
-                combined.net += row.net
+                for (currency, values) in currentBalances {
+                    combined.balances[currency, default: 0] += values[row.person.id] ?? 0
+                }
                 rows[key] = combined
             }
         }
         return rows.values
-            .filter { $0.paid != 0 || $0.share != 0 || $0.net != 0 }
+            .filter { $0.paid != 0 || $0.share != 0 || $0.balances.values.contains { $0 != 0 } }
             .sorted { left, right in
                 if left.paid != right.paid { return left.paid > right.paid }
                 return left.name.localizedCaseInsensitiveCompare(right.name) == .orderedAscending
@@ -119,6 +108,7 @@ struct InsightsView: View {
 
     private var memberTableTotals: [MemberTotal] {
         guard let group else { return memberTotals }
+        let currentBalances = netBalances(for: originalEntries)
         return Analytics.personSpend(group, entries: scopeEntries, currency: currency, people: group.members)
             .map { row in
                 MemberTotal(
@@ -126,7 +116,7 @@ struct InsightsView: View {
                     name: row.person.name,
                     paid: row.paid,
                     share: row.share,
-                    net: row.net
+                    balances: currentBalances.mapValues { $0[row.person.id] ?? 0 }
                 )
             }
             .sorted { left, right in
@@ -190,7 +180,10 @@ struct InsightsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 header
-                if hasData {
+                if missingRates {
+                    ContentUnavailableView("Exchange rates unavailable", systemImage: "chart.bar.xaxis",
+                                           description: Text("Spending charts will appear when all rates are available."))
+                } else if hasData {
                     hero
                     LazyVGrid(
                         columns: [GridItem(.adaptive(minimum: 320), spacing: 14, alignment: .top)],
@@ -241,7 +234,7 @@ struct InsightsView: View {
                     .lineLimit(2)
             }
             Spacer(minLength: 8)
-            currencyPicker
+            Text(currency).font(.subheadline.monospaced()).foregroundStyle(.secondary)
         }
     }
 
@@ -251,24 +244,6 @@ struct InsightsView: View {
         return "\(count) \(count == 1 ? "person" : "people") · \(group.kind == "trip" ? "Trip" : group.kind == "home" ? "Home" : group.isFriend ? "One-to-one tab" : "Group")"
     }
 
-    private var currencyPicker: some View {
-        Picker("Currency", selection: currencyBinding) {
-            ForEach(availableCurrencies, id: \.self) { code in
-                Text(code).tag(code)
-            }
-        }
-        .pickerStyle(.menu)
-        .labelsHidden()
-        .disabled(availableCurrencies.count < 2)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        .frame(minHeight: 44)
-        .background(Palette.raised)
-        .clipShape(Capsule())
-        .overlay(Capsule().stroke(Palette.line, lineWidth: 1))
-        .accessibilityLabel("Insights currency")
-        .accessibilityValue(currency)
-    }
 
     private var hero: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -277,7 +252,7 @@ struct InsightsView: View {
                     Text("Total spent")
                         .font(.splitEyebrow)
                         .foregroundStyle(Palette.lime.opacity(0.72))
-                    Text(Money.text(total, currency))
+                    Text(estimatedSpend(total))
                         .font(.splitDisplay(36))
                         .foregroundStyle(Palette.lime)
                         .lineLimit(1)
@@ -299,7 +274,7 @@ struct InsightsView: View {
                         }
                         VStack(alignment: .trailing, spacing: 2) {
                             Text("Average expense").font(.splitEyebrow).foregroundStyle(Palette.lime.opacity(0.55))
-                            Text(Money.text(averageExpense, currency)).font(.splitAmount(15)).foregroundStyle(Palette.lime)
+                            Text(estimatedSpend(averageExpense)).font(.splitAmount(15)).foregroundStyle(Palette.lime)
                         }
                     }
                 } else {
@@ -348,7 +323,7 @@ struct InsightsView: View {
                             }
                         }
                         .accessibilityLabel("Day \(item.day)")
-                        .accessibilityValue(Money.text(item.amount, currency))
+                        .accessibilityValue(estimatedSpend(item.amount))
                     }
                     .chartYScale(domain: 0...(maxDaily * 1.18))
                     .chartYAxis(.hidden)
@@ -379,7 +354,7 @@ struct InsightsView: View {
                                 .foregroundStyle(.secondary)
                         }
                         .accessibilityLabel(monthLabel(item.month))
-                        .accessibilityValue(Money.text(item.amount, currency))
+                        .accessibilityValue(estimatedSpend(item.amount))
                     }
                     .chartYScale(domain: 0...(maxMonthly * 1.18))
                     .chartYAxis(.hidden)
@@ -399,7 +374,7 @@ struct InsightsView: View {
             VStack(alignment: .leading, spacing: 14) {
                 SectionHeader(
                     title: "By category",
-                    subtitle: categoryTotal > 0 ? "Share of \(Money.text(categoryTotal, currency))" : "No categories yet"
+                    subtitle: categoryTotal > 0 ? "Share of \(estimatedSpend(categoryTotal))" : "No categories yet"
                 )
                 if categories.isEmpty {
                     Text("Expenses will be grouped by category here.")
@@ -458,26 +433,27 @@ struct InsightsView: View {
                     }
                     Divider().gridCellColumns(4)
                     ForEach(memberTableTotals) { row in
+                        let net = fx.total(row.balances, in: currency)
                         GridRow {
                             Text(row.name)
                                 .font(.subheadline)
                                 .lineLimit(1)
-                            Text(Money.input(row.paid))
+                            Text(estimatedSpend(row.paid))
                                 .font(.splitAmount(12))
                                 .lineLimit(1)
                                 .minimumScaleFactor(0.65)
-                            Text(Money.input(row.share))
+                            Text(estimatedSpend(row.share))
                                 .font(.splitAmount(12))
                                 .lineLimit(1)
                                 .minimumScaleFactor(0.65)
-                            Text(netText(row.net))
+                            Text(fx.homeTotalText(row.balances, signed: true))
                                 .font(.splitAmount(12))
                                 .lineLimit(1)
                                 .minimumScaleFactor(0.65)
-                                .foregroundStyle(row.net == 0 ? Color.secondary : row.net > 0 ? Palette.positive : Palette.negative)
+                                .foregroundStyle(!net.missing.isEmpty || net.amount == 0 ? Color.secondary : net.amount > 0 ? Palette.positive : Palette.negative)
                         }
                         .accessibilityElement(children: .ignore)
-                        .accessibilityLabel("\(row.name), paid \(Money.text(row.paid, currency)), share \(Money.text(row.share, currency)), net \(Money.text(row.net, currency, signed: true))")
+                        .accessibilityLabel("\(row.name), paid \(estimatedSpend(row.paid)), share \(estimatedSpend(row.share)), net \(fx.homeTotalText(row.balances, signed: true))")
                     }
                 }
                 Text("Paid and share count expenses only. Net includes payments recorded in this group.")
@@ -499,7 +475,7 @@ struct InsightsView: View {
                     .foregroundStyle(Palette.ink)
                     .lineLimit(1)
                 Spacer(minLength: 6)
-                Text(Money.text(item.amount, currency))
+                Text(estimatedSpend(item.amount))
                     .font(.splitAmount(13))
                     .foregroundStyle(Palette.ink)
                     .lineLimit(1)
@@ -521,7 +497,7 @@ struct InsightsView: View {
         }
         .padding(.vertical, 2)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(item.meta.name), \(percent) percent, \(Money.text(item.amount, currency))")
+        .accessibilityLabel("\(item.meta.name), \(percent) percent, \(estimatedSpend(item.amount))")
     }
 
     private func memberRow(_ row: MemberTotal) -> some View {
@@ -535,13 +511,13 @@ struct InsightsView: View {
                         .foregroundStyle(Palette.ink)
                         .lineLimit(1)
                     Spacer(minLength: 6)
-                    Text(Money.text(row.paid, currency))
+                    Text(estimatedSpend(row.paid))
                         .font(.splitAmount(13))
                         .foregroundStyle(Palette.ink)
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
                 }
-                Text("Share \(Money.text(row.share, currency)) · Net \(Money.text(row.net, currency, signed: true))")
+                Text("Share \(estimatedSpend(row.share)) · Net \(fx.homeTotalText(row.balances, signed: true))")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -559,7 +535,7 @@ struct InsightsView: View {
         }
         .padding(.vertical, 2)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(row.name), paid \(Money.text(row.paid, currency)), share \(Money.text(row.share, currency)), net \(Money.text(row.net, currency, signed: true))")
+        .accessibilityLabel("\(row.name), paid \(estimatedSpend(row.paid)), share \(estimatedSpend(row.share)), net \(fx.homeTotalText(row.balances, signed: true))")
     }
 
     private func compact(_ minor: Int64) -> String {
@@ -567,11 +543,6 @@ struct InsightsView: View {
         if value >= 1_000_000 { return String(format: "%.1fM", value / 1_000_000) }
         if value >= 1_000 { return String(format: "%.0fk", value / 1_000) }
         return String(format: "%.0f", value)
-    }
-
-    private func netText(_ minor: Int64) -> String {
-        guard minor != 0 else { return Money.input(0) }
-        return (minor > 0 ? "+" : "−") + Money.input(abs(minor))
     }
 
     private func monthLabel(_ storage: String) -> String {

@@ -36,3 +36,7 @@ In App Store Connect, confirm that the same version and build finished processin
 Start with the standard email signup and verification flow. For repeat cross-account checks, run `scripts/qa/clerk-ticket.mjs alex` or `maya` through `ade secrets exec --env CLERK_SECRET_KEY`. It checks the tagged QA identity before issuing a five-minute sign-in ticket in ignored, owner-only lane storage. The Debug launch argument `-splitQATicketFile` accepts the file path. Release omits this hook.
 
 The [usability audit](USABILITY.md) records the baseline and [the gallery](../screenshots/README.md) shows the revised UI.
+
+## App Store listing
+
+For the next public App Store release, set the English App Store Connect name to **Split** and the subtitle to **Split expenses** under App Information. Keep the existing bundle ID and app icon.

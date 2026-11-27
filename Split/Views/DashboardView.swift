@@ -23,9 +23,13 @@ struct DashboardView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: Spacing.section) {
-                    BalanceHero(net: dashboard.net, owed: dashboard.owed, owe: dashboard.owe, subtitle: "Your balance across \(dashboard.groups.count) \(dashboard.groups.count == 1 ? "group" : "groups")",
-                                approx: Dictionary(dashboard.net.map { ($0.currency, $0.amount) }, uniquingKeysWith: +))
+                    BalanceHero(
+                        owed: dashboard.owed,
+                        owe: dashboard.owe,
+                        subtitle: "Your balance across \(dashboard.groups.count) \(dashboard.groups.count == 1 ? "group" : "groups")"
+                    )
                     quickActions
+                    PendingSettlementsView()
                     if balanceReminders, !dashboard.people.isEmpty { reminderCard }
                     if store.isDemo {
                         Label("Sample data · changes stay in this preview", systemImage: "sparkles")

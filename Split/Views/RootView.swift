@@ -3,18 +3,44 @@ import SwiftUI
 struct RootView: View {
     @EnvironmentObject var session: SessionStore
     @EnvironmentObject var store: ExpenseStore
+    @EnvironmentObject private var fx: FXStore
     @State private var showInvite = false
+    private var rateCurrencies: Set<String> {
+        Set((store.entries + store.pendingSettlements).flatMap { [$0.currency, $0.exchange?.target ?? $0.currency] })
+            .union(store.groups.map(\.currency))
+    }
+
+    private var historyKey: [String] {
+        let pairs = (store.entries + store.pendingSettlements).compactMap { entry -> String? in
+            guard entry.currency != fx.home, entry.exchange?.target != fx.home else { return nil }
+            return "\(entry.currency)|\(entry.exchange?.date ?? entry.day)"
+        }
+        return [fx.home] + Set(pairs).sorted()
+    }
+
     var body: some View {
         Group {
             if session.loading {
-                ProgressView("Opening Split…")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(AppBackground())
+                ZStack {
+                    Color("SplitLaunchGreen").ignoresSafeArea()
+                    Image("SplitLaunchMark")
+                        .accessibilityLabel("Split")
+                    ProgressView()
+                        .tint(Color(hex: 0x12382B))
+                        .accessibilityLabel("Opening Split")
+                        .offset(y: 100)
+                }
             } else if session.userID == nil {
                 WelcomeView()
             } else {
                 MainView()
             }
+        }
+        .task(id: [fx.home] + rateCurrencies.sorted()) {
+            await fx.refresh(currencies: rateCurrencies, into: fx.home)
+        }
+        .task(id: historyKey) {
+            await fx.displayHistory(store.entries + store.pendingSettlements, into: fx.home)
         }
         .onChange(of: store.pendingInvite) { _, token in showInvite = token != nil && session.userID != nil && !session.isDemo }
         .onChange(of: session.userID) { _, id in showInvite = store.pendingInvite != nil && id != nil && !session.isDemo }
@@ -89,17 +115,12 @@ struct WelcomeView: View {
                 .resizable()
                 .frame(width: 44, height: 44)
                 .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
-                .accessibilityLabel("Split logo")
-            Text("split")
-                .font(.splitDisplay(31))
-                .foregroundStyle(Palette.evergreen)
-            Spacer(minLength: 8)
-            if size == .regular {
-                Text("BY YOINK LABS")
-                    .font(.system(size: 10, weight: .semibold))
-                    .tracking(1.6)
-                    .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Split").font(.splitDisplay(27)).foregroundStyle(Palette.ink)
+                Text("Split expenses").font(.caption).foregroundStyle(.secondary)
             }
+            Spacer(minLength: 8)
             TipTheDevsButton { showTipJar = true }
         }
     }

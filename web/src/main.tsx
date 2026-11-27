@@ -1,3 +1,4 @@
+import { SplitLogo } from "./ui";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { startAppearance } from "./appearance";
 import { createRoot } from "react-dom/client";
@@ -288,12 +289,47 @@ function DemoLedger({ onExit }: { onExit: () => void }) {
       }
 
       // Create entry
+      const paymentResponse = path.match(/^\/v1\/settlements\/([\w-]+)\/(approve|decline|cancel)$/);
+      if (paymentResponse) {
+        const [, id, action] = paymentResponse;
+        const entry = data.settlementRequests?.find((payment) => payment.id === id);
+        const group = data.groups.find((item) => item.id === entry?.groupID);
+        const me = group?.members.find((member) => member.userID === DEMO_USER);
+        if (!entry || !me || (action === "cancel" ? entry.paidBy !== me.id : entry.splits[0]?.memberID !== me.id)) {
+          throw new Error("This payment request is unavailable.");
+        }
+        setData((prev) => ({
+          ...prev,
+          settlementRequests: prev.settlementRequests?.filter((payment) => payment.id !== id),
+          entries: action === "approve" ? [entry, ...prev.entries] : prev.entries,
+        }));
+        return { ok: true } as T;
+      }
+
+      if (path === "/v1/settlements" && body) {
+        const payment = body as Expense;
+        setData((prev) => ({
+          ...prev,
+          settlementRequests: [payment, ...(prev.settlementRequests ?? []).filter((entry) => entry.id !== payment.id)],
+        }));
+        return { ok: true, status: "pending" } as T;
+      }
       if (path === "/v1/entries" && body) {
         const b = body as Expense & { photos?: { id: string; data: string }[] };
         const receiptIDs = storePhotos(b.photos);
         const { photos: _p, ...rest } = b;
         const next: Expense = { ...rest, editable: true, ...(receiptIDs.length ? { receiptIDs } : {}) };
         setData((prev) => ({ ...prev, entries: [next, ...prev.entries] }));
+        return { ok: true } as T;
+      }
+
+      const handled = path.match(/^\/v1\/entries\/([\w-]+)\/handled$/);
+      if (handled && body) {
+        const setting = (body as { handled: boolean }).handled;
+        setData((prev) => ({
+          ...prev,
+          entries: prev.entries.map((entry) => entry.id === handled[1] ? { ...entry, handled: setting || undefined } : entry),
+        }));
         return { ok: true } as T;
       }
 
@@ -378,7 +414,7 @@ function DemoLedger({ onExit }: { onExit: () => void }) {
 
       throw new Error("This action is unavailable in the demo workspace.");
     },
-    [data.groups, data.entries],
+    [data.groups, data.entries, data.settlementRequests],
   );
 
   const save = useCallback(async (path: string, body: unknown) => {
@@ -426,10 +462,10 @@ function SignIn({ onDemo }: { onDemo: () => void }) {
     <div className="auth-page">
       <div className="auth-card">
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <span className="brand-mark" style={{ width: 32, height: 32, fontSize: 15 }}>S</span>
+          <SplitLogo size={32} />
           <div>
             <h1 style={{ fontSize: 20, fontWeight: 800, letterSpacing: "-0.03em" }}>Split</h1>
-            <p className="muted" style={{ fontSize: 12.5 }}>Shared trips, receipts & group finances</p>
+            <p className="muted" style={{ fontSize: 12.5 }}>Split expenses</p>
           </div>
         </div>
         <button className="btn btn-primary" onClick={onDemo}>

@@ -1,3 +1,5 @@
+import { memberBalances, useHomeMoney } from "./homeMoney";
+import { PendingPayments } from "./settlements";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { CATEGORIES, categoryMeta } from "./categories";
@@ -14,7 +16,6 @@ import {
   memberPath,
   minor,
   money,
-  moneyCompact,
   monthHeading,
   settlementEntry,
   shortDate,
@@ -26,8 +27,8 @@ import {
   type Group,
   type Person,
 } from "./data";
-import { convert, fx, rateText, sourceLabel, type Exchange } from "./fx";
-import { Approx, ApproxNote, CurrencySelect, RateField, useShowIn } from "./fxui";
+import { convert, fx, rateText, sourceLabel, useRates, type Exchange } from "./fx";
+import { CurrencySelect, RateField } from "./fxui";
 import { ReceiptsHub } from "./receiptsHub";
 import { Avatar, AvatarStack, BalanceBadge, CategoryIcon } from "./ui";
 
@@ -45,11 +46,14 @@ function ExpenseDrawer({
   onClose: () => void;
   onOpenReceipt: (id: string) => void;
 }) {
-  const { request, save } = useLedger();
+  const { request, save, user } = useLedger();
+  const homeMoney = useHomeMoney();
   const nav = useNavigate();
   const [comments, setComments] = useState<ExpenseComment[]>([]);
   const [commentText, setCommentText] = useState("");
   const [busy, setBusy] = useState(false);
+  const [handledBusy, setHandledBusy] = useState(false);
+  const [handledError, setHandledError] = useState("");
 
   useEffect(() => {
     let alive = true;
@@ -64,6 +68,22 @@ function ExpenseDrawer({
   }, [request, entry.id]);
 
   const payers = entryPayers(entry);
+  const canSetHandled = entry.kind === "expense" && payers.some((payer) =>
+    g.members.some((person) => person.id === payer.memberID && person.userID === user && !person.removed),
+  );
+
+  async function toggleHandled() {
+    if (handledBusy) return;
+    setHandledBusy(true);
+    setHandledError("");
+    try {
+      await save(`/v1/entries/${entry.id}/handled`, { handled: !entry.handled });
+    } catch (error) {
+      setHandledError(error instanceof Error ? error.message : "Could not update this expense.");
+    } finally {
+      setHandledBusy(false);
+    }
+  }
   const openCount = entry.bill?.items.filter((i) => !i.memberIDs.length).length ?? 0;
 
   async function toggleLike() {
@@ -108,6 +128,7 @@ function ExpenseDrawer({
               </h3>
               <p className="muted" style={{ fontSize: 12 }}>
                 {dateText(entry.createdAt)} {entry.category ? `· ${entry.category}` : ""}
+                {entry.handled && " · Already handled"}
               </p>
             </div>
           </div>
@@ -121,7 +142,7 @@ function ExpenseDrawer({
           <div className="card card-pad" style={{ background: "var(--bg)" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10 }}>
               <div style={{ fontSize: 26, fontWeight: 800, letterSpacing: "-0.03em" }} className="num">
-                {money(entry.amount, entry.currency)}
+                {homeMoney.entry(entry)}
               </div>
               <div style={{ display: "flex", gap: 6 }}>
                 <button className="btn btn-xs" onClick={toggleLike}>
@@ -143,6 +164,12 @@ function ExpenseDrawer({
               </div>
             </div>
 
+            {canSetHandled && (
+              <button className="btn btn-sm" style={{ marginTop: 10 }} disabled={handledBusy} onClick={() => void toggleHandled()}>
+                {entry.handled ? "Include in balances" : "Mark as handled"}
+              </button>
+            )}
+            {handledError && <p className="error-banner" role="alert">{handledError}</p>}
             {entry.exchange && (
               <p style={{ marginTop: 8, fontSize: 12.5, color: "var(--ink-2)" }}>
                 Settles as <b className="num">{money(settlementEntry(entry).amount, entry.exchange.target)}</b>{" "}
@@ -206,7 +233,7 @@ function ExpenseDrawer({
                       <Avatar name={m?.name ?? "?"} avatarURL={m?.avatarURL} size={26} />
                       <strong style={{ fontSize: 13.5, color: "var(--ink)" }}>{m?.name ?? "Member"}</strong>
                     </span>
-                    <b className="num" style={{ color: "var(--ink)" }}>{moneyCompact(p.amount, entry.currency)}</b>
+                    <b className="num" style={{ color: "var(--ink)" }}>{homeMoney.portion(entry, p.memberID, true)}</b>
                   </Link>
                 );
               })}
@@ -227,7 +254,7 @@ function ExpenseDrawer({
                       <Avatar name={m?.name ?? "?"} avatarURL={m?.avatarURL} size={26} />
                       <strong style={{ fontSize: 13.5, color: "var(--ink)" }}>{m?.name ?? "Member"}</strong>
                     </span>
-                    <b className="num" style={{ color: "var(--ink)" }}>{moneyCompact(s.amount, entry.currency)}</b>
+                    <b className="num" style={{ color: "var(--ink)" }}>{homeMoney.portion(entry, s.memberID)}</b>
                   </Link>
                 );
               })}
@@ -314,9 +341,12 @@ function SettlePaymentForm({
 }) {
   const { save } = useLedger();
   const [currency, setCurrency] = useState(owedIn);
+  const homeMoney = useHomeMoney();
+  useRates([currency], homeMoney.home);
   const [text, setText] = useState((owed / 100).toFixed(2));
   const [exchange, setExchange] = useState<Exchange | null>(null);
   const [day] = useState(() => stamp());
+  const [paymentID] = useState(() => crypto.randomUUID());
   const converts = currency !== g.currency && !open.includes(currency);
 
   let typed: number | null = null;
@@ -329,7 +359,7 @@ function SettlePaymentForm({
   return (
     <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid var(--border)" }}>
       <Form
-        label="Record payment"
+        label="Request approval"
         submit={async () => {
           const amount = minor(text);
           if (amount <= 0) throw new Error("Enter a payment greater than zero.");
@@ -337,8 +367,8 @@ function SettlePaymentForm({
             throw new Error("Enter an amount up to the outstanding balance.");
           if (converts && !exchange)
             throw new Error("Wait for the rate, or enter your own rate.");
-          await save("/v1/entries", {
-            id: crypto.randomUUID(),
+          await save("/v1/settlements", {
+            id: paymentID,
             groupID: g.id,
             title: "Settle-up payment",
             amount,
@@ -353,6 +383,7 @@ function SettlePaymentForm({
           onDone();
         }}
       >
+        <p className="muted">Enter the payment you already made. The recipient confirms it before balances update.</p>
         <div className="form-row">
           <label className="field">
             Amount paid
@@ -370,11 +401,14 @@ function SettlePaymentForm({
             onChange={(c) => {
               setCurrency(c);
               const q = c === owedIn ? null : fx.rate(owedIn, c);
-              setText(((c === owedIn ? owed : q ? convert(owed, q.rateE8) : owed) / 100).toFixed(2));
+              setText(c === owedIn ? (owed / 100).toFixed(2) : q ? (convert(owed, q.rateE8) / 100).toFixed(2) : "");
               if (c !== owedIn) void fx.latest(owedIn, c);
             }}
           />
         </div>
+        {typed !== null && typed > 0 && currency !== homeMoney.home && (
+          <small className="muted">{homeMoney.totalText({ [currency]: typed })}</small>
+        )}
         {converts && (
           <RateField
             from={currency}
@@ -403,7 +437,7 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
 
   const selectedTab = query.get("tab") ?? "";
   const tab = expenseID ? "ledger" : tabs.has(selectedTab) ? selectedTab as Tab : "overview";
-  const [target, setTarget] = useShowIn();
+  const homeMoney = useHomeMoney();
 
   // Ledger filters
   const [search, setSearch] = useState("");
@@ -453,12 +487,18 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
     () => [...new Set([g.currency, ...converted.map((e) => e.currency)])],
     [g.currency, converted],
   );
-  const primaryStats = useMemo(
-    () => breakdown(converted, g.members, g.currency),
-    [converted, g.members, g.currency],
+  const projected = entries.map(homeMoney.project);
+  const missingSpend = projected.some((entry, index) => !entry && entries[index].kind === "expense");
+  const homeEntries = projected.filter((entry): entry is Expense => entry !== null);
+  const foreignSpend = entries.some((entry) => entry.kind === "expense" && entry.currency !== homeMoney.home);
+  const spending = breakdown(homeEntries, g.members, homeMoney.home);
+  const spendText = (amount: number) => missingSpend ? "Rate unavailable" : homeMoney.format(amount, foreignSpend);
+  const myStats = me ? spending.members.find((member) => member.id === me.id) : undefined;
+  const myBalances = me ? memberBalances(entries, me.id) : {};
+  const myNet = homeMoney.total(myBalances);
+  const suggestions = codes.flatMap((currency) =>
+    breakdown(converted, g.members, currency).settlements.map((transfer) => ({ ...transfer, currency })),
   );
-
-  const myStats = me ? primaryStats.members.find((m) => m.id === me.id) : undefined;
   const openReceiptsCount = entries.filter((e) => e.bill && !e.bill.closed && e.bill.items.some((i) => !i.memberIDs.length)).length;
   const openItemsCount = entries.reduce(
     (sum, e) => sum + (e.bill && !e.bill.closed ? e.bill.items.filter((i) => !i.memberIDs.length).length : 0),
@@ -566,15 +606,14 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
           </button>
           <button className="ws-tab" role="tab" aria-selected={tab === "settle"} onClick={() => setTab("settle")}>
             Settle up
-            {primaryStats.settlements.length > 0 && (
-              <span className="ws-tab-badge">{primaryStats.settlements.length}</span>
+            {suggestions.length > 0 && (
+              <span className="ws-tab-badge">{suggestions.length}</span>
             )}
           </button>
           <button className="ws-tab" role="tab" aria-selected={tab === "people"} onClick={() => setTab("people")}>
             People & Settings
           </button>
         </div>
-        <CurrencySelect label="Show in" value={target} onChange={setTarget} />
       </div>
 
       {/* TAB 1: OVERVIEW & CHARTS */}
@@ -583,28 +622,24 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
           <div className="kpi-grid">
             <div className="kpi">
               <div className="kpi-label">Total group spend</div>
-              <div className="kpi-val">{moneyCompact(primaryStats.total, g.currency)}</div>
+              <div className="kpi-val">{spendText(spending.total)}</div>
               <div className="kpi-sub">
                 {entries.filter((e) => e.kind === "expense").length} expenses
-                {target !== g.currency && (
-                  <Approx amounts={{ [g.currency]: primaryStats.total }} target={target} note={false} />
-                )}
+
               </div>
             </div>
             <div className="kpi">
               <div className="kpi-label">Your total share</div>
-              <div className="kpi-val">{moneyCompact(myStats?.share ?? 0, g.currency)}</div>
-              <div className="kpi-sub">You paid {moneyCompact(myStats?.paid ?? 0, g.currency)}</div>
+              <div className="kpi-val">{spendText(myStats?.share ?? 0)}</div>
+              <div className="kpi-sub">You paid {spendText(myStats?.paid ?? 0)}</div>
             </div>
             <div className="kpi">
               <div className="kpi-label">Your net balance</div>
-              <div className={"kpi-val " + ((myStats?.net ?? 0) > 0 ? "pos" : (myStats?.net ?? 0) < 0 ? "neg" : "")}>
-                {(myStats?.net ?? 0) === 0
-                  ? "Settled"
-                  : ((myStats?.net ?? 0) > 0 ? "+" : "−") + moneyCompact(Math.abs(myStats?.net ?? 0), g.currency)}
+              <div className={"kpi-val " + (!myNet.missing.length && myNet.amount > 0 ? "pos" : !myNet.missing.length && myNet.amount < 0 ? "neg" : "")}>
+                {homeMoney.totalText(myBalances)}
               </div>
               <div className="kpi-sub">
-                {(myStats?.net ?? 0) > 0 ? "You are owed" : (myStats?.net ?? 0) < 0 ? "You owe" : "All square"}
+                {!myNet.missing.length && (myNet.amount > 0 ? "You are owed" : myNet.amount < 0 ? "You owe" : "")}
               </div>
             </div>
             <button type="button" className="kpi kpi-action" onClick={() => setTab("receipts")}>
@@ -620,22 +655,23 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
             </button>
           </div>
 
-          <div className="grid-2">
+          {foreignSpend && <p className="muted">Spending in {homeMoney.home} uses estimated exchange rates.</p>}
+          {missingSpend ? <p className="muted">Spending charts are unavailable until all exchange rates are available.</p> : <div className="grid-2">
             <PaidVsShareChart
               g={g}
-              entries={entries}
-              currency={g.currency}
+              entries={homeEntries}
+              currency={homeMoney.home}
               onSelectMember={(mid) => nav(memberPath(g, mid))}
             />
             <CategoryChart
-              entries={entries}
-              currency={g.currency}
+              entries={homeEntries}
+              currency={homeMoney.home}
               onSelectCategory={(cat) => setTab("ledger", { cat })}
             />
-          </div>
+          </div>}
 
           <div className="grid-sidebar-r">
-            <TimelineChart g={g} entries={entries} currency={g.currency} />
+            {!missingSpend && <TimelineChart g={g} entries={homeEntries} currency={homeMoney.home} />}
             <div className="card">
               <div className="card-head">
                 <h3>Who owes whom</h3>
@@ -643,20 +679,23 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
                   Full graph ›
                 </button>
               </div>
-              {primaryStats.settlements.length ? (
+              {suggestions.length ? (
                 <div>
-                  {primaryStats.settlements.map((t) => (
-                    <div className="row" key={t.from + "-" + t.to}>
+                  {suggestions.map((t) => (
+                    <div className="row" key={t.currency + "-" + t.from + "-" + t.to}>
                       <span style={{ fontSize: 13 }}>
                         <strong>{memberName(g, t.from)}</strong> → <strong>{memberName(g, t.to)}</strong>
                       </span>
-                      <b className="num">{moneyCompact(t.amount, g.currency)}</b>
+                      <div style={{ textAlign: "right" }}>
+                        <b className="num">{homeMoney.totalText({ [t.currency]: t.amount })}</b>
+                        {t.currency !== homeMoney.home && <div className="muted">Pay {money(t.amount, t.currency)}</div>}
+                      </div>
                     </div>
                   ))}
                 </div>
               ) : (
                 <div className="card-pad">
-                  <p className="muted" style={{ fontSize: 13 }}>Everyone is settled up in {g.currency}.</p>
+                  <p className="muted" style={{ fontSize: 13 }}>Everyone is settled up.</p>
                 </div>
               )}
             </div>
@@ -721,16 +760,12 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
             </div>
           ) : (
             groupedLedger.map(([bucket, items]) => {
-              const bucketTotal = items
-                .filter((e) => e.kind === "expense")
-                .map(settlementEntry)
-                .filter((e) => e.currency === g.currency)
-                .reduce((s, e) => s + e.amount, 0);
+              const bucketTotal = items.some((entry) => entry.kind === "expense") ? homeMoney.spend(items) : "";
               return (
                 <div className="day-group" key={bucket}>
                   <div className="day-heading">
                     <span>{g.kind === "trip" ? dayHeading(bucket) : monthHeading(bucket)}</span>
-                    <span className="num">{bucketTotal > 0 ? moneyCompact(bucketTotal, g.currency) : ""}</span>
+                    <span className="num">{bucketTotal}</span>
                   </div>
                   <div className="ledger-list">
                     {items.map((e) => {
@@ -739,7 +774,7 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
                       const open = e.bill && !e.bill.closed ? e.bill.items.filter((i) => !i.memberIDs.length).length : 0;
                       const myPaid = me ? payers.filter((p) => p.memberID === me.id).reduce((s, p) => s + p.amount, 0) : 0;
                       const myShare = me ? e.splits.find((s) => s.memberID === me.id)?.amount ?? 0 : 0;
-                      const myDelta = myPaid - myShare;
+                      const myDelta = e.handled ? 0 : myPaid - myShare;
                       const participants = e.splits
                         .map((s) => g.members.find((m) => m.id === s.memberID))
                         .filter((m): m is Person => Boolean(m));
@@ -758,6 +793,7 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
                                   ? `${memberName(g, e.paidBy)} → ${memberName(g, e.splits[0]?.memberID ?? "")}`
                                   : e.title}
                               </span>
+                              {e.handled && <span className="tag tag-pos">Handled</span>}
                               {open > 0 && <span className="tag tag-warn">{open} open</span>}
                               {!open && (e.bill || e.receiptIDs?.length) && <span className="tag">Receipt</span>}
                               {e.recurrence && <span className="tag tag-primary">{e.recurrence}</span>}
@@ -781,18 +817,17 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
                             <strong className={myDelta > 0 ? "pos" : myDelta < 0 ? "neg" : "muted"}>
                               {isSettle
                                 ? "payment"
+                                : e.handled
+                                  ? "handled"
                                 : myDelta === 0
                                   ? "not involved"
-                                  : (myDelta > 0 ? "+" : "−") + moneyCompact(Math.abs(myDelta), e.currency)}
+                                  : (myDelta > 0 ? "+" : "−") + homeMoney.entry(e, Math.abs(myDelta))}
                             </strong>
                             <small>{!isSettle && myDelta !== 0 ? (myDelta > 0 ? "you lent" : "your share") : ""}</small>
                           </div>
 
                           <div className="ledger-amount">
-                            <strong>{moneyCompact(e.amount, e.currency)}</strong>
-                            {e.exchange && (
-                              <small>≈ {moneyCompact(settlementEntry(e).amount, e.exchange.target)}</small>
-                            )}
+                            <strong>{homeMoney.entry(e)}</strong>
                           </div>
                         </button>
                       );
@@ -813,6 +848,7 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
       {/* TAB 4: SETTLE UP & MONEY FLOW GRAPH */}
       {tab === "settle" && (
         <div className="form-stack" style={{ gap: 20 }}>
+          <PendingPayments group={g} />
           {codes.map((currency) => {
             const stats = breakdown(converted, g.members, currency);
             return (
@@ -845,15 +881,18 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
                                   <strong>{memberName(g, t.from)}</strong> → <strong>{memberName(g, t.to)}</strong>
                                 </div>
                                 <div className="num" style={{ fontSize: 16, fontWeight: 750, marginTop: 2 }}>
-                                  {money(t.amount, currency)}
+                                  {homeMoney.totalText({ [currency]: t.amount })}
+                                  {currency !== homeMoney.home && <small className="muted"> · Pay {money(t.amount, currency)}</small>}
                                 </div>
                               </div>
-                              <button
-                                className="btn btn-sm btn-primary"
-                                onClick={() => setSettlingKey(isOpen ? null : key)}
-                              >
-                                {isOpen ? "Close" : "Record payment"}
-                              </button>
+                              {t.from === me?.id && (
+                                <button
+                                  className="btn btn-sm btn-primary"
+                                  onClick={() => setSettlingKey(isOpen ? null : key)}
+                                >
+                                  {isOpen ? "Close" : "Request approval"}
+                                </button>
+                              )}
                             </div>
 
                             {pay && (pay.venmo || pay.paypal || pay.mercado || pay.alias) && (
@@ -864,7 +903,7 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
                                   </a>
                                 )}
                                 {pay.paypal && (
-                                  <a className="btn btn-xs" href={`https://paypal.me/${pay.paypal}/${(t.amount / 100).toFixed(2)}`} target="_blank" rel="noreferrer">
+                                  <a className="btn btn-xs" href={`https://paypal.me/${pay.paypal}/${(t.amount / 100).toFixed(2)}${currency}`} target="_blank" rel="noreferrer">
                                     PayPal.me/{pay.paypal}
                                   </a>
                                 )}
@@ -906,7 +945,6 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
             );
           })}
 
-          {codes.length > 1 && <ApproxNote codes={codes} target={target} />}
 
           {/* Recorded Settlement History */}
           {entries.some((e) => e.kind === "settlement") && (
@@ -924,7 +962,10 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
                       </strong>
                       <div className="muted" style={{ fontSize: 12 }}>{dateText(e.createdAt)}</div>
                     </div>
-                    <b className="num pos">{money(e.amount, e.currency)}</b>
+                    <div style={{ textAlign: "right" }}>
+                      <b className="num pos">{homeMoney.entry(e)}</b>
+                      {e.currency !== homeMoney.home && <div className="muted">Sent {money(e.amount, e.currency)}</div>}
+                    </div>
                   </div>
                 ))}
             </div>
@@ -945,7 +986,9 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
             </div>
             <div>
               {g.members.map((m) => {
-                const st = primaryStats.members.find((x) => x.id === m.id);
+                const st = spending.members.find((x) => x.id === m.id);
+                const amounts = memberBalances(entries, m.id);
+                const net = homeMoney.total(amounts);
                 const isMe = m.userID === user;
                 return (
                   <div className="row" key={m.id}>
@@ -962,12 +1005,12 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
                           {m.removed && <span className="tag tag-warn">Archived entity</span>}
                         </div>
                         <div className="muted num" style={{ fontSize: 12 }}>
-                          Paid {moneyCompact(st?.paid ?? 0, g.currency)} · Share {moneyCompact(st?.share ?? 0, g.currency)}
+                          Paid {spendText(st?.paid ?? 0)} · Share {spendText(st?.share ?? 0)}
                         </div>
                       </div>
                     </Link>
                     <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                      <BalanceBadge amount={st?.net ?? 0} currency={g.currency} />
+                      <BalanceBadge amount={net.amount} currency={homeMoney.home} display={Object.values(amounts).some(Boolean) ? homeMoney.totalText(amounts, true) : undefined} />
                       {!isMe && (
                         <button
                           type="button"

@@ -1,3 +1,4 @@
+import { PendingPayments } from "./settlements";
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { AVATAR_PRESETS } from "./categories";
@@ -12,55 +13,57 @@ import {
   memberPath,
   membersGroups,
   money,
-  moneyCompact,
   settlementEntry,
   shortDate,
   tripRangeText,
   type Expense,
   type Group,
 } from "./data";
-import { useHomeCurrency } from "./fx";
-import { Approx, CurrencySelect, useShowIn } from "./fxui";
+import { fx, useHomeCurrency } from "./fx";
+import { CurrencySelect } from "./fxui";
+import { memberBalances, useHomeMoney } from "./homeMoney";
 import { Avatar, AvatarStack, BalanceBadge, CategoryIcon, EmptyState, TIP_URL } from "./ui";
 
 export function HomeOverview() {
   const { data, user } = useLedger();
-  const [target, setTarget] = useShowIn();
+  const [target] = useHomeCurrency();
+  const homeMoney = useHomeMoney();
+  const activeGroups = data.groups.filter((group) => !group.archived);
+  const owed: Record<string, number> = {};
+  const owe: Record<string, number> = {};
 
-  const net: Record<string, number> = {};
-  let owedToYou = 0;
-  let youOwe = 0;
-
-  for (const g of data.groups) {
+  for (const g of activeGroups) {
     const me = g.members.find((p) => p.userID === user);
     if (!me) continue;
     const entries = data.entries.filter((e) => e.groupID === g.id);
-    for (const c of new Set([g.currency, ...entries.map((e) => settlementEntry(e).currency)])) {
-      const amt = balances(entries, c)[me.id] ?? 0;
-      net[c] = (net[c] ?? 0) + amt;
-      if (c === g.currency) {
-        if (amt > 0) owedToYou += amt;
-        if (amt < 0) youOwe += Math.abs(amt);
-      }
+    for (const currency of new Set(entries.map((entry) => settlementEntry(entry).currency))) {
+      const amount = balances(entries, currency)[me.id] ?? 0;
+      if (amount > 0) owed[currency] = (owed[currency] ?? 0) + amount;
+      if (amount < 0) owe[currency] = (owe[currency] ?? 0) - amount;
     }
   }
+
+  const incoming = fx.total(owed, target);
+  const outgoing = fx.total(owe, target);
+  const incomingApproximate = Object.keys(owed).some((currency) => currency !== target);
+  const outgoingApproximate = Object.keys(owe).some((currency) => currency !== target);
+  const approximate = incomingApproximate || outgoingApproximate;
+  const missing = incoming.missing.length > 0 || outgoing.missing.length > 0;
+  const net = incoming.amount - outgoing.amount;
+  const formatBalance = (amount: number, estimate: boolean) =>
+    (estimate ? "≈ " : "") + money(amount, target);
 
   const openReceipts = data.entries.filter(
     (e) => e.bill && !e.bill.closed && e.bill.items.some((i) => !i.memberIDs.length),
   );
-  const trips = data.groups.filter((g) => !g.archived && g.kind === "trip");
-  const longTerm = data.groups.filter((g) => !g.archived && g.kind !== "trip");
-  const openCurrencies = Object.keys(net).sort().filter((c) => net[c]);
+  const trips = activeGroups.filter((g) => g.kind === "trip");
+  const longTerm = activeGroups.filter((g) => g.kind !== "trip");
 
   const renderGroupCard = (g: Group) => {
     const entries = data.entries.filter((e) => e.groupID === g.id);
     const me = g.members.find((p) => p.userID === user);
-    const bal = me ? balances(entries, g.currency)[me.id] ?? 0 : 0;
-    const totalSpent = entries
-      .filter((e) => e.kind === "expense")
-      .map(settlementEntry)
-      .filter((e) => e.currency === g.currency)
-      .reduce((s, e) => s + e.amount, 0);
+    const amounts = me ? memberBalances(entries, me.id) : {};
+    const bal = homeMoney.total(amounts);
     const openCount = entries.filter((e) => e.bill && !e.bill.closed && e.bill.items.some((i) => !i.memberIDs.length)).length;
     const range = tripRangeText(g.startDate, g.endDate);
     const activeMembers = g.members.filter((m) => !m.removed);
@@ -80,14 +83,14 @@ export function HomeOverview() {
               </p>
             )}
           </div>
-          <BalanceBadge amount={bal} currency={g.currency} positive="owed" negative="you owe" />
+          <BalanceBadge amount={bal.amount} currency={target} display={Object.values(amounts).some(Boolean) ? homeMoney.totalText(amounts, true) : undefined} positive="owed" negative="you owe" />
         </div>
 
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: 10, borderTop: "1px solid var(--border)" }}>
           <AvatarStack people={activeMembers} size={24} />
           <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5 }}>
             {openCount > 0 && <span className="tag tag-warn">{openCount} open receipt</span>}
-            <span className="muted num">Spent <b style={{ color: "var(--ink)" }}>{moneyCompact(totalSpent, g.currency)}</b></span>
+            <span className="muted num">Spent <b style={{ color: "var(--ink)" }}>{homeMoney.spend(entries)}</b></span>
           </div>
         </div>
       </Link>
@@ -104,7 +107,6 @@ export function HomeOverview() {
           </p>
         </div>
         <div className="head-actions">
-          <CurrencySelect label="Show in" value={target} onChange={setTarget} />
           <Link className="btn btn-sm" to="/import/splitwise">
             Import Splitwise
           </Link>
@@ -122,32 +124,32 @@ export function HomeOverview() {
         />
       ) : (
         <div className="form-stack" style={{ gap: 22 }}>
+          <PendingPayments />
           <div className="kpi-grid">
             <div className="kpi">
               <div className="kpi-label">Overall net balance</div>
-              <div className="kpi-val">
-                {openCurrencies.length ? (
-                  <span className={net[openCurrencies[0]] > 0 ? "pos" : "neg"}>
-                    {net[openCurrencies[0]] > 0 ? "+" : "−"}
-                    {moneyCompact(Math.abs(net[openCurrencies[0]]), openCurrencies[0])}
-                  </span>
-                ) : (
-                  <span className="pos">All settled</span>
-                )}
+              <div className={"kpi-val " + (!missing && net < 0 ? "neg" : "")}>
+                {missing ? "Unavailable" : formatBalance(net, approximate)}
               </div>
-              <div className="kpi-sub">
-                {openCurrencies.length > 0 && <Approx amounts={net} target={target} signed prefix="≈ Total" note={false} />}
-              </div>
+              {approximate && (
+                <div className="kpi-sub">
+                  {missing
+                    ? "Some exchange rates are unavailable."
+                    : (fx.offline ? "Approximate · Using saved rates" : "Approximate · Available exchange rates")}
+                </div>
+              )}
             </div>
             <div className="kpi">
-              <div className="kpi-label">You are owed</div>
-              <div className="kpi-val pos">{moneyCompact(owedToYou, "USD")}</div>
-              <div className="kpi-sub">Across active groups</div>
+              <div className="kpi-label">You’re owed</div>
+              <div className="kpi-val pos">
+                {incoming.missing.length ? "Unavailable" : formatBalance(incoming.amount, incomingApproximate)}
+              </div>
             </div>
             <div className="kpi">
               <div className="kpi-label">You owe</div>
-              <div className="kpi-val neg">{moneyCompact(youOwe, "USD")}</div>
-              <div className="kpi-sub">Across active groups</div>
+              <div className="kpi-val neg">
+                {outgoing.missing.length ? "Unavailable" : formatBalance(outgoing.amount, outgoingApproximate)}
+              </div>
             </div>
             <div className="kpi">
               <div className="kpi-label">Open receipts</div>
@@ -325,7 +327,7 @@ export function MemberScreen() {
   const { data, user } = useLedger();
   const { gid, mid } = useParams();
   const [query, setQuery] = useSearchParams();
-  const [target, setTarget] = useShowIn();
+  const homeMoney = useHomeMoney();
 
   const g = data.groups.find((x) => x.id === gid);
   const p = g?.members.find((x) => x.id === mid);
@@ -346,12 +348,16 @@ export function MemberScreen() {
   const net: Record<string, number> = {};
   const paid: Record<string, number> = {};
   const share: Record<string, number> = {};
+  let missingSpend = false, foreignSpend = false;
 
   for (const s of statements) {
     const entries = data.entries.filter((e) => e.groupID === s.group.id);
     for (const c of new Set(entries.map((e) => settlementEntry(e).currency)))
       net[c] = (net[c] ?? 0) + (balances(entries, c)[s.person.id] ?? 0);
-    for (const e of s.all.filter((e) => e.kind === "expense").map(settlementEntry)) {
+    for (const original of s.all.filter((e) => e.kind === "expense")) {
+      foreignSpend ||= original.currency !== homeMoney.home;
+      const e = homeMoney.project(original);
+      if (!e) { missingSpend = true; continue; }
       paid[e.currency] =
         (paid[e.currency] ?? 0) +
         entryPayers(e)
@@ -363,14 +369,11 @@ export function MemberScreen() {
     }
   }
 
-  const fmtMap = (m: Record<string, number>) =>
-    Object.keys(m)
-      .sort()
-      .filter((c) => m[c])
-      .map((c) => moneyCompact(m[c], c))
-      .join(" · ") || "—";
-
-  const open = Object.keys(net).sort().filter((c) => net[c]);
+  const fmtMap = (amounts: Record<string, number>) => missingSpend
+    ? "Rate unavailable"
+    : homeMoney.format(amounts[homeMoney.home] ?? 0, foreignSpend);
+  const combined = homeMoney.total(net);
+  const hasOpen = Object.values(net).some(Boolean);
   const setParam = (k: string, v: string | null) => {
     const next = new URLSearchParams(query);
     if (v === null) next.delete(k);
@@ -393,7 +396,6 @@ export function MemberScreen() {
           </div>
         </div>
         <div className="head-actions">
-          <CurrencySelect label="Show in" value={target} onChange={setTarget} />
           <Link className="btn btn-sm" to={`/g/${g.id}`}>
             Back to {g.name}
           </Link>
@@ -412,16 +414,12 @@ export function MemberScreen() {
         <div className="kpi">
           <div className="kpi-label">Net balance</div>
           <div className="kpi-val">
-            {open.length ? (
-              <span className={net[open[0]] > 0 ? "pos" : "neg"}>
-                {net[open[0]] > 0 ? "+" : "−"}
-                {moneyCompact(Math.abs(net[open[0]]), open[0])}
+            {hasOpen ? (
+              <span className={combined.missing.length ? "muted" : combined.amount > 0 ? "pos" : "neg"}>
+                {homeMoney.totalText(net, true)}
               </span>
-            ) : (
-              <span className="pos">Settled up</span>
-            )}
+            ) : <span className="pos">Settled up</span>}
           </div>
-          {open.length > 0 && <Approx amounts={net} target={target} signed prefix="≈" note={false} />}
         </div>
       </div>
 
@@ -464,7 +462,6 @@ export function MemberScreen() {
             </h3>
             <div className="ledger-list">
               {rows.map((e: Expense) => {
-                const myShare = e.splits.find((x) => x.memberID === s.person.id)?.amount ?? 0;
                 const myPaid = entryPayers(e)
                   .filter((x) => x.memberID === s.person.id)
                   .reduce((n, x) => n + x.amount, 0);
@@ -479,17 +476,18 @@ export function MemberScreen() {
                     <div>
                       <div className="ledger-title">{e.title}</div>
                       <div className="ledger-meta">
-                        {shortDate(e.createdAt)} · Paid by {memberName(s.group, e.paidBy)}
+                        {shortDate(e.createdAt)} · Paid by {memberName(s.group, e.paidBy)}{e.handled && " · Handled"}
+                        {e.kind === "settlement" && e.currency !== homeMoney.home && ` · Sent ${money(e.amount, e.currency)}`}
                       </div>
                     </div>
                     <div className="ledger-amount">
                       <strong className={myPaid > 0 ? "pos" : "muted"}>
-                        {myPaid > 0 ? `Paid ${moneyCompact(myPaid, e.currency)}` : "—"}
+                        {myPaid > 0 ? `Paid ${homeMoney.portion(e, s.person.id, true)}` : "—"}
                       </strong>
                     </div>
                     <div className="ledger-amount">
-                      <strong>{moneyCompact(myShare, e.currency)}</strong>
-                      <small>of {moneyCompact(e.amount, e.currency)}</small>
+                      <strong>{homeMoney.portion(e, s.person.id)}</strong>
+                      <small>of {homeMoney.entry(e, e.amount)}</small>
                     </div>
                   </Link>
                 );
@@ -938,7 +936,7 @@ export function Account() {
       <div className="card card-pad form-stack">
         <div className="form-row">
           <label className="field">
-            Home currency (Show in default)
+            Home currency
             <select value={home} onChange={(e) => setHome(e.target.value)}>
               {currencies.map((c) => (
                 <option key={c}>{c}</option>

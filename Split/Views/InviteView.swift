@@ -1,5 +1,6 @@
 import SwiftUI
 import CoreImage.CIFilterBuiltins
+import CryptoKit
 
 struct InviteView: View {
     var group: ExpenseGroup
@@ -12,9 +13,13 @@ struct InviteView: View {
     @State private var copied: String?
     @State private var busy: String?
     @State private var errors: [String: String] = [:]
+    @State private var active: [ActiveInvite] = []
+    @State private var inviteToRevoke: ActiveInvite?
+    @State private var inviteError: String?
+    @State private var revoking = false
     private var current: ExpenseGroup { store.group(group.id) ?? group }
-    private var placeholders: [Person] { current.members.filter { $0.userID == nil } }
-    private var joined: [Person] { current.members.filter { $0.userID != nil } }
+    private var placeholders: [Person] { current.members.filter { $0.userID == nil && $0.removed != true } }
+    private var joined: [Person] { current.members.filter { $0.userID != nil && $0.removed != true } }
 
     var body: some View {
         NavigationStack {
@@ -22,12 +27,12 @@ struct InviteView: View {
                 Group {
                     if sizeClass == .regular {
                         HStack(alignment: .top, spacing: 20) {
-                            groupInvite.frame(maxWidth: 380)
+                            inviteColumn.frame(maxWidth: 380)
                             peopleColumn
                         }
                     } else {
                         VStack(spacing: 18) {
-                            groupInvite
+                            inviteColumn
                             peopleColumn
                         }
                     }
@@ -41,6 +46,17 @@ struct InviteView: View {
             .navigationTitle(Text(verbatim: "People & invites"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+            .task { await loadInvites() }
+            .refreshable { await store.sync(); await loadInvites() }
+            .alert("Revoke this invitation?", isPresented: Binding(
+                get: { inviteToRevoke != nil },
+                set: { if !$0 { inviteToRevoke = nil } }
+            ), presenting: inviteToRevoke) { invite in
+                Button("Revoke invite", role: .destructive) { Task { await revoke(invite) } }
+                Button("Cancel", role: .cancel) {}
+            } message: { _ in
+                Text("The link and code will stop working immediately.")
+            }
             .sheet(isPresented: $adding) {
                 MemberEditor { draft in _ = try await store.addMember(groupID: group.id, draft: draft) }
             }
@@ -48,6 +64,68 @@ struct InviteView: View {
     }
 
     // MARK: - Group invitation
+
+    private var inviteColumn: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            groupInvite
+            if !active.isEmpty {
+                SectionHeader(title: "Active invites")
+                Card {
+                    ForEach(active) { invite in
+                        HStack {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(invite.memberName.map { "For " + $0 } ?? "General group invite")
+                                    .font(.subheadline.weight(.semibold))
+                                Text("Expires \(invite.expirationDate.formatted(date: .abbreviated, time: .omitted))")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Button(role: .destructive) { inviteToRevoke = invite } label: {
+                                Image(systemName: "trash")
+                                    .frame(minWidth: HitTarget.minimum, minHeight: HitTarget.minimum)
+                            }
+                            .accessibilityLabel(invite.memberName.map { "Revoke invite for " + $0 } ?? "Revoke group invite")
+                            .disabled(revoking)
+                        }
+                        if invite.id != active.last?.id { Divider() }
+                    }
+                }
+            }
+            if let inviteError {
+                InlineError(text: inviteError)
+                Button("Reload invitations") { Task { await loadInvites() } }
+                    .buttonStyle(GhostButton())
+            }
+        }
+    }
+
+    private func loadInvites() async {
+        do {
+            active = try await store.activeInvites(groupID: current.id)
+            inviteError = nil
+        } catch where !SyncFailure.isCancellation(error) {
+            inviteError = error.localizedDescription
+        } catch {}
+    }
+
+    private func revoke(_ invite: ActiveInvite) async {
+        guard !revoking else { return }
+        revoking = true
+        defer { revoking = false }
+        do {
+            try await store.revokeInvite(invite, groupID: current.id)
+            let key = invite.memberID ?? "group"
+            if let url = links[key] {
+                let digest = SHA256.hash(data: Data(url.lastPathComponent.utf8)).map { String(format: "%02x", $0) }.joined()
+                if digest == invite.id { links[key] = nil }
+            }
+            active.removeAll { $0.id == invite.id }
+            inviteError = nil
+        } catch {
+            inviteError = error.localizedDescription
+        }
+    }
 
     private var groupInvite: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -123,7 +201,7 @@ struct InviteView: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("People · \(current.members.count)").font(.headline).foregroundStyle(Palette.ink)
+                    Text("People · \(joined.count + placeholders.count)").font(.headline).foregroundStyle(Palette.ink)
                     Text(placeholders.isEmpty ? "Everyone has joined." : "Send a personal link so a placeholder can claim their history.")
                         .font(.caption).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -215,7 +293,8 @@ struct InviteView: View {
             errors[key] = nil
             Task {
                 defer { busy = nil }
-                do { links[key] = try await store.invite(group: current, memberID: member?.id) }
+                do { links[key] = try await store.invite(group: current, memberID: member?.id)
+                await loadInvites() }
                 catch { errors[key] = error.localizedDescription }
             }
         } label: {

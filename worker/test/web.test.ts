@@ -1,3 +1,6 @@
+import { projectHomeEntry } from "../../web/src/homeMoney";
+import { FxCache } from "../src/fx";
+import { parseReceiptText } from "../../web/src/receiptText";
 import { env } from "cloudflare:test";
 import { expect, it } from "vitest";
 import { validParty, handle } from "../src/index";
@@ -30,6 +33,7 @@ it("binds a browser snapshot to the caller", async () => {
     userID: "qa-viewer",
     groups: [],
     entries: [],
+    settlementRequests: [],
   });
 });
 it("scopes placeholder statements by seat and links signed-in seats across shared groups", () => {
@@ -70,4 +74,43 @@ it("scopes placeholder statements by seat and links signed-in seats across share
   };
   expect(memberEntries([e, { ...e, groupID: "two" }], "one", "b")).toEqual([e]);
   expect(minor("10,01")).toBe(1001);
+});
+
+it("reads receipt prices as minor units without counting summaries twice", () => {
+  const result = parseReceiptText([
+    "Pizza   $24.00", "Ensalada   1.234,50", "Tax   2.60", "Propina   5,00",
+    "SUBTOTAL 1258.50", "TOTAL 1266.10", "Discount -1.00", "Visa card 1266.10"
+  ].join("\n"));
+  expect(result).toEqual({
+    items: [{title:"Pizza",amount:2400},{title:"Ensalada",amount:123450}],
+    tax:260, tip:500
+  });
+});
+
+it("prefers original and frozen home amounts, and caches published historic rates for legacy expenses", async () => {
+  const saved = new Map<string, string>();
+  const storage = { get: (key: string) => saved.get(key) ?? null, set: (key: string, value: string) => { saved.set(key, value); } };
+  let requests = 0;
+  const cache = new FxCache(storage, () => 0, async () => {
+    requests++;
+    return { ok: true, json: async () => ({ base: "EUR", quote: "USD", date: "2026-11-13", rate: 1.1 }) };
+  });
+  const entry: Expense = {
+    id: "dinner01", groupID: "friends01", title: "Dinner", amount: 101, currency: "EUR", paidBy: "person1",
+    kind: "expense", splitMode: "equal", createdAt: "2026-11-15T12:00:00Z", editable: true,
+    splits: [{ memberID: "person1", amount: 50 }, { memberID: "person2", amount: 51 }],
+  };
+  cache.setManual("EUR", "USD", 900_000_000);
+  expect(projectHomeEntry(entry, "USD", cache)?.amount).toBe(909);
+  await Promise.all([cache.historical("EUR", "USD", "2026-11-15"), cache.historical("EUR", "USD", "2026-11-15")]);
+  const reloaded = new FxCache(storage, () => 0, async () => { throw new Error("offline"); });
+  expect((await reloaded.historical("EUR", "USD", "2026-11-15"))?.rateE8).toBe(110_000_000);
+  expect(requests).toBe(1);
+  const projected = projectHomeEntry(entry, "USD", reloaded);
+  expect(projected?.amount).toBe(111);
+  expect(projected?.splits.map((split) => split.amount)).toEqual([55, 56]);
+  const frozen = { ...entry, exchange: { target: "USD", rateE8: 200_000_000, date: "2026-11-15", source: "Manual" } };
+  expect(projectHomeEntry(frozen, "USD", reloaded)?.amount).toBe(202);
+  expect(projectHomeEntry(frozen, "EUR", reloaded)).toMatchObject({ amount: 101, currency: "EUR", exchange: undefined });
+  expect(frozen.exchange.rateE8).toBe(200_000_000);
 });

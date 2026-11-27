@@ -6,8 +6,9 @@ import { HTTPError, json, body, optionalDay } from './http';
 import { deviceRoute, deviceIdentity, manageDevices } from './cli/devices';
 import { cliRoute } from './cli/routes';
 import { createRemoteJWKSet, jwtVerify } from 'jose';
-import { currencies, InputError, validID, validateEntry } from './ledger';
+import { currencies, entryPayers, InputError, validID, validateEntry } from './ledger';
 import { importSplitwise } from './splitwiseImport';
+import { pendingSettlements, proposeSettlement, respondToSettlement } from './settlements';
 const jwks = createRemoteJWKSet(new URL('https://clerk.yoinklabs.dev/.well-known/jwks.json'));
 interface Member {id:string; groupID:string; userID:string|null; name:string; email?:string; phone?:string; payment?:string; removedAt?:string|null; avatarURL?:string|null}
 export function validParty(azp: unknown, webOrigin: string) {
@@ -100,7 +101,9 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
         .bind(userID).all<SnapshotEntryRow>()).results;
     }
     if(entries.length>5000)throw new HTTPError(409,'This beta supports up to 5,000 entries. Export support is coming.');
-    return json({userID,...(avatarURL ? {avatarURL} : {}),groups:all,entries:entries.map(e=>({...resolveEntry(JSON.parse(e.payload),aliases), recurrence:e.recurrence,receiptIDs:JSON.parse(e.photos),editable:e.author===userID,
+    const settlementRequests=(await pendingSettlements(env.DB,userID))
+      .map(row => resolveEntry(JSON.parse(row.payload),aliases));
+    return json({userID,settlementRequests,...(avatarURL ? {avatarURL} : {}),groups:all,entries:entries.map(e=>({...resolveEntry(JSON.parse(e.payload),aliases), recurrence:e.recurrence,receiptIDs:JSON.parse(e.photos),editable:e.author===userID,
       commentCount:Number(e.commentCount),likeCount:Number(e.likeCount),likedByMe:Boolean(e.likedByMe)}))});
   }
   if(path==='/v1/import/splitwise' && request.method==='POST') return importSplitwise(env.DB,userID,await body(request,2_000_000));
@@ -134,20 +137,54 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
     await env.DB.batch(inserts);
     return json({ok:true},201);
   }
-  if(path==='/v1/entries' && request.method==='POST') {
+  const settlementResponse=path.match(/^\/v1\/settlements\/([\w-]+)\/(approve|decline|cancel)$/);
+  if(settlementResponse && request.method==='POST') {
+    const [,id,action]=settlementResponse;
+    if(action==='approve' || action==='decline' || action==='cancel') return respondToSettlement(env.DB,id,action,userID);
+  }
+  if((path==='/v1/entries' || path==='/v1/settlements') && request.method==='POST') {
     const b=await body(request,1_650_000); if(!validID(b.groupID)) throw new InputError('Invalid group.');
     await member(env,b.groupID,userID);
     const e=validateEntry(b,(await members(env,b.groupID)).map(m=>m.id)), payload=JSON.stringify(e);
+    if(path==='/v1/settlements' && e.kind!=='settlement') throw new InputError('Choose a payment to confirm.');
     if(e.bill?.closed) throw new InputError('New receipts start open.');
     if(e.exchange && e.exchange.target!==await env.DB.prepare('SELECT currency FROM groups WHERE id=?').bind(e.groupID).first('currency')) throw new InputError('Use the group settlement currency.');
-    // DO NOTHING is safe under concurrent retries; compare after insertion.
-    await env.DB.batch([env.DB.prepare('INSERT INTO entries VALUES (?,?,?,?,?) ON CONFLICT(id) DO NOTHING').bind(e.id,e.groupID,userID,payload,new Date().toISOString()), ...attachments(env.DB,e,userID,payload,b.photos)]);
+    if(e.kind==='settlement') {
+      if(b.photos!==undefined) throw new InputError('Attach receipt photos to an expense.');
+      return proposeSettlement(env.DB,e,userID);
+    }
+    // Reserve pending payment IDs so approval can never collide with an expense.
+    await env.DB.batch([env.DB.prepare('INSERT INTO entries SELECT ?,?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM settlement_requests WHERE id=?) ON CONFLICT(id) DO NOTHING').bind(e.id,e.groupID,userID,payload,new Date().toISOString(),e.id), ...attachments(env.DB,e,userID,payload,b.photos)]);
     const saved=await env.DB.prepare('SELECT author,payload FROM entries WHERE id=?').bind(e.id).first<{author:string;payload:string}>();
     if(saved?.author!==userID||saved.payload!==payload)throw new HTTPError(409,'An entry already uses this ID.');
     return json({ok:true});
   }
   if (path==='/v1/people/search' && request.method==='POST') {
     return json(await lookup(env.DB,userID,(await body(request)).query));
+  }
+  const handled=path.match(/^\/v1\/entries\/([\w-]+)\/handled$/);
+  if(handled && request.method==='POST') {
+    const b=await body(request);
+    if(typeof b.handled!=='boolean') throw new InputError('Choose whether the expense was already handled.');
+    const row=await env.DB.prepare(`SELECT e.payload,e.group_id AS groupID,m.id AS viewer FROM entries e
+      JOIN members m ON m.group_id=e.group_id AND m.user_id=? AND m.removed_at IS NULL
+      WHERE e.id=? AND e.id NOT IN (SELECT entry_id FROM deleted_entries)`)
+      .bind(userID,handled[1]).first<{payload:string;groupID:string;viewer:string}>();
+    if(!row) throw new HTTPError(404,'Expense unavailable.');
+    const entry=JSON.parse(row.payload);
+    if(entry.kind!=='expense') throw new InputError('Only expenses can be marked as already handled.');
+    const aliases=new Map((await env.DB.prepare(`SELECT a.member_id,a.canonical_id FROM member_aliases a
+      JOIN members m ON m.id=a.canonical_id WHERE m.group_id=?`).bind(row.groupID)
+      .all<{member_id:string;canonical_id:string}>()).results.map(a=>[a.member_id,a.canonical_id]));
+    if(!entryPayers(resolveEntry(entry,aliases)).some(p=>p.memberID===row.viewer))
+      throw new HTTPError(403,'Only a payer can change whether this expense is handled.');
+    if(Boolean(entry.handled)===b.handled) return json({ok:true});
+    // Keep the stored entry in canonical key order so normal edit retries still match.
+    const updated=validateEntry({...entry,handled:b.handled},(await members(env,row.groupID)).map(m=>m.id),entry.bill);
+    const saved=await env.DB.prepare(`UPDATE entries SET payload=? WHERE id=? AND payload=?
+      AND id NOT IN (SELECT entry_id FROM deleted_entries)`).bind(JSON.stringify(updated),handled[1],row.payload).run();
+    if(!saved.meta.changes) throw new HTTPError(409,'This expense changed. Refresh and try again.');
+    return json({ok:true});
   }
   const revise=path.match(/^\/v1\/entries\/([\w-]+)\/(edit|delete)$/);
   if (revise && request.method==='POST') {
@@ -168,9 +205,16 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
     const canonical=resolveEntry(old,aliases);
     let payload: string | undefined;
     if (!deleting) {
+      if (old.kind==='settlement') throw new InputError('Payments cannot be edited.');
       const updated=validateEntry(b.entry,ids,canonical.bill);
       if(updated.id!==revise[1] || updated.groupID!==saved.group_id || updated.createdAt!==old.createdAt || updated.kind!==old.kind)
         throw new InputError('Invalid edit.');
+      if(Boolean(updated.handled)!==Boolean(canonical.handled)) {
+        const viewer=(await env.DB.prepare('SELECT id FROM members WHERE group_id=? AND user_id=? AND removed_at IS NULL')
+          .bind(saved.group_id,userID).first<{id:string}>())?.id;
+        if(!entryPayers(canonical).some(p=>p.memberID===viewer))
+          throw new HTTPError(403,'Only a payer can change whether this expense is handled.');
+      }
       if(updated.exchange && updated.exchange.target!==await env.DB.prepare('SELECT currency FROM groups WHERE id=?').bind(saved.group_id).first('currency')) throw new InputError('Use the group settlement currency.');
       if((updated.exchange || updated.bill) && await env.DB.prepare('SELECT 1 FROM recurring WHERE entry_id=?').bind(updated.id).first()) throw new InputError('Stop the recurring schedule before itemizing or converting this expense.');
       payload=JSON.stringify(updated);

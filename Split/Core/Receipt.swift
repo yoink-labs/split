@@ -8,6 +8,15 @@ struct Purchase: Codable, Identifiable, Equatable {
     var amount: Int64
     var memberIDs: [String] = []
     var roundingSeats: [String]?
+    var shares: [String: Int64]?
+    var roundingWeights: [Int64]?
+
+    func portions(gross: Int64, payer: String) throws -> [Portion] {
+        let people = roundingSeats ?? (memberIDs.isEmpty ? [payer] : memberIDs)
+        let weights = roundingSeats == nil ? people.map { shares?[$0] ?? 100 } : roundingWeights ?? people.map { _ in 1 }
+        let amounts = try Ledger.allocate(total: gross, weights: weights)
+        return zip(people, amounts).map { Portion(memberID: $0, amount: $1) }
+    }
 }
 struct ReceiptBill: Codable, Equatable {
     var items: [Purchase] = []
@@ -28,19 +37,29 @@ struct ReceiptBill: Codable, Equatable {
     func split(payer: String) throws -> [Portion] {
         var result: [Portion] = []
         for (item,amount) in zip(items,try gross()) {
-            let people = item.roundingSeats ?? (item.memberIDs.isEmpty ? [payer] : item.memberIDs)
-            let shares = try Ledger.allocate(total:amount,weights:people.map { _ in 1 })
-            for (id,share) in zip(people,shares) {
-                if let index = result.firstIndex(where:{ $0.memberID == id }) { result[index].amount += share }
-                else { result.append(Portion(memberID:id,amount:share)) }
+            for portion in try item.portions(gross: amount, payer: payer) {
+                if let index = result.firstIndex(where: { $0.memberID == portion.memberID }) {
+                    result[index].amount += portion.amount
+                } else {
+                    result.append(portion)
+                }
             }
         }
         return result
     }
 }
 struct ReceiptPhoto: Codable, Identifiable { var id = UUID().uuidString; var data: Data }
+
+struct ReceiptDraft: Codable, Identifiable {
+    var id = UUID().uuidString
+    let groupID: String
+    var title = ""
+    var photos: [ReceiptPhoto] = []
+    var capturedAt = Date()
+}
+
 enum ReceiptReader {
-    static func scan(_ data: Data) throws -> (ReceiptPhoto,ReceiptBill) {
+    private static func prepare(_ data: Data) throws -> (ReceiptPhoto, CGImage) {
         guard let source = CGImageSourceCreateWithData(data as CFData,nil),
               let cg = CGImageSourceCreateThumbnailAtIndex(source,0,[
                 kCGImageSourceCreateThumbnailFromImageAlways:true,kCGImageSourceCreateThumbnailWithTransform:true,
@@ -52,6 +71,33 @@ enum ReceiptReader {
             if let candidate = image.jpegData(compressionQuality:quality), candidate.count <= 245760 { jpeg=candidate; break }
         }
         guard let jpeg else { throw LedgerError.invalid("This photo is too large. Crop to the receipt and try again.") }
+        return (ReceiptPhoto(data: jpeg), cg)
+    }
+
+    static func photo(_ data: Data) throws -> ReceiptPhoto {
+        try prepare(data).0
+    }
+
+    static func scan(_ data: Data) throws -> (ReceiptPhoto, ReceiptBill) {
+        let (photo, cg) = try prepare(data)
+        return (photo, recognize(cg))
+    }
+
+    static func readDraft(_ photos: [ReceiptPhoto]) -> ReceiptBill {
+        var bill = ReceiptBill()
+        for photo in photos {
+            if Task.isCancelled { break }
+            guard let source = CGImageSourceCreateWithData(photo.data as CFData, nil),
+                  let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { continue }
+            let suggestion = recognize(image)
+            bill.items.append(contentsOf: suggestion.items.prefix(50 - bill.items.count))
+            bill.tax += suggestion.tax
+            bill.tip += suggestion.tip
+        }
+        return bill
+    }
+
+    private static func recognize(_ cg: CGImage) -> ReceiptBill {
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
         try? VNImageRequestHandler(cgImage:cg).perform([request])
@@ -62,7 +108,7 @@ enum ReceiptReader {
             else { rows.append([word]) }
         }
         let lines = rows.map { $0.sorted { $0.boundingBox.minX < $1.boundingBox.minX }.compactMap { $0.topCandidates(1).first?.string }.joined(separator:" ") }
-        return (ReceiptPhoto(data:jpeg),suggest(lines))
+        return suggest(lines)
     }
     static func suggest(_ lines:[String]) -> ReceiptBill {
         var bill = ReceiptBill()

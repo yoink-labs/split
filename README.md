@@ -1,6 +1,6 @@
-# Split by Yoink Labs
+# Split
 
-# Split by Yoink Labs
+Split expenses
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
@@ -37,11 +37,11 @@ width. The web client shares the same Worker, groups and cent allocations.
   group, lets you match names to yourself, existing members or placeholders,
   and confirms the balances equal Splitwise's own **Total balance** rows to the
   cent before anything is saved. [How it works](docs/SPLITWISE_IMPORT.md)
-- **Free currency conversion.** Expenses in another currency show the converted
-  amount and the rate for that day, from Frankfurter (ECB) or the BCRA official
-  rate for pesos, and you can enter your own rate for the blue dollar.
-  **Show in** converts Home, group and member totals to your home currency.
-  Settle up in any currency. No Pro tier, no API key, no paywall.
+- **Free currency conversion.** Choose your **Home currency** in Account to see
+  expenses, receipts, spending and balances in one currency. Foreign expenses
+  use a saved rate or a published historical rate when available. Open balances
+  use recent rates. Expense details and settle-up show the original currency
+  so you can confirm what was charged or paid.
 
 ## What’s new in 0.7
 
@@ -76,18 +76,19 @@ width. The web client shares the same Worker, groups and cent allocations.
 - **Create or join.** Start a group on your own. Open **People → Create group invite** to share a link or copy a code. Multiple people can use it for seven days. Create a fresh invitation at any time. In **Groups → Join group**, paste either the code or the full link.
 - **Add people.** Find a Split account by exact email or username. Name searches are limited to people with whom you already share a group. Select **Placeholder** to add someone by name, with optional email or phone. This works during group creation, from People, and while composing an expense.
 - **Claim history.** Send a placeholder’s personal invite, or let the person sign in with the matching verified primary email. Split preserves earlier expenses and payments. If they already joined the group separately, both records resolve to one member. Phone numbers are optional contact information. They do not prove ownership.
-- **Record an expense.** Tap **Add an expense**, enter the amount and save. The group currency, you as payer, and an equal split are preselected. Add a description or choose exact amounts, percentages, or shares. Tap a saved entry for the breakdown. Its author can edit an expense or delete an entry.
-- **Read a receipt.** Add up to four photos from the library or camera. Vision suggests editable names, prices, tax and tip on the device. Review the suggestions, correct them or add items by hand. You can also keep photos on a regular split. Group members can tap a thumbnail to open the full-size receipt.
+- **Record an expense.** Tap **Add an expense**, enter the amount and save. The group currency, you as payer, and an equal split are preselected. Add a description or choose exact amounts, percentages, or shares. Tap a saved entry for the breakdown. Its author can edit an expense or delete an entry. Choose **Already handled** for an expense that belongs in spending history without an outstanding balance. A payer can change that status from the saved expense.
+- **Save a receipt for later.** Open a group’s **Receipts** tab and tap **Capture receipt**. Name the receipt, take a photo or pick one from Photos, then tap **Save draft**. Open the draft from the same tab when you’re ready to turn it into an expense. Drafts stay on the device, and photos sync with the group once the expense is saved.
+- **Read a receipt.** Add up to four photos from the library or camera. Split suggests editable names, prices, tax and tip locally on iOS and in the browser. Review the suggestions, correct them or add items by hand. You can also keep photos on a regular split. Group members can tap a thumbnail to open the full-size receipt.
 - **Claim purchases.** Open an item and select one person or several, including placeholders. The item’s price and proportional tax and tip are shared evenly. Unclaimed costs stay with the payer and appear in the open total. Tap the open-purchases filter in the group to find them. Pull to refresh for other people’s claims. The payer can close a receipt, distributing all remaining items to everyone or selected people. If the payer is a placeholder, the person who recorded the expense can close it.
 - **Explore group spending.** Open **Balances** for totals in each currency, expand a category or month, or tap a person for expenses they paid or shared. Paid and share measure spending. Net includes recorded payments.
-- **Settle up.** Balances suggest payments in the settlement currency or the original currency for entries without a conversion. Record a full or partial payment after money changes hands. Split records payments and does not transfer funds.
+- **Settle up.** Balances suggest payments in the settlement currency or the original currency for entries without a conversion. Request approval for a full or partial payment after money changes hands. The recipient confirms receipt and only then do balances update. Split never transfers funds.
 - **Use another device.** A Clerk session syncs your groups. **You → Connected computers** approves and revokes CLI/MCP access. The signed-out preview uses fictional data on the device.
 
 Supported currencies are USD, ARS, EUR, GBP, BRL, CAD, AUD, and MXN. Amounts use integer minor units. Largest-remainder allocation preserves every cent.
 
 ## Split on the web
 
-[Open Split](https://split.yoinklabs.dev) and sign in with your Yoink account. Create or join a group, add an expense, attach receipt photos, enter line items, claim purchases, or record a payment from Balances. The browser uses the same group memberships and cent allocations as the iOS app. The browser accepts manual receipt items. iOS also offers on-device OCR.
+[Open Split](https://split.yoinklabs.dev) and sign in with your Yoink account. Create or join a group, add an expense, attach receipt photos, enter line items, claim purchases, or record a payment from Balances. The browser uses the same group memberships and cent allocations as the iOS app. Both clients suggest line items from photos on the device and let you correct the results and assign each item to people in the group.
 
 On either client, tap **You** or a person in a group to see their charges. People with several shared groups get a group picker. Tap a charge for the original receipt, purchases and each person's share, then choose another person under **Split with**. A placeholder has its own statement in that group. [Member navigation plan](docs/plans/member-drilldown.md) · [iOS and web screenshots](screenshots/split-drilldown)
 

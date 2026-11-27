@@ -87,6 +87,8 @@ export async function importSplitwise(db: D1Database, user: string, b: Record<st
   };
 
   const records: [string, string, string][] = [], copies = new Map<string, number>();
+  const importedPayments: string[] = [];
+  const hasOtherAccounts = roster.some(member => member.userID && member.userID !== user);
   for (const row of rows) {
     if (!row || typeof row !== 'object' || typeof row.day !== 'string' || !/^\d{4}-\d\d-\d\d$/.test(row.day)) throw new InputError('Invalid import row.');
     const payment = row.payment === true;
@@ -101,7 +103,15 @@ export async function importSplitwise(db: D1Database, user: string, b: Record<st
     const fingerprint = await digest(e), ordinal = copies.get(fingerprint) ?? 0;
     copies.set(fingerprint, ordinal + 1);
     e.id = await digest([group, fingerprint, ordinal]);
+    if (payment && hasOtherAccounts) importedPayments.push(e.id);
     records.push([e.id, JSON.stringify(e), e.createdAt]);
+  }
+  if (importedPayments.length) {
+    const known = await db.prepare(`SELECT count(*) AS n FROM entries
+      WHERE group_id=? AND id IN (SELECT value FROM json_each(?))`)
+      .bind(group, JSON.stringify(importedPayments)).first<number>('n');
+    if (known !== importedPayments.length)
+      throw new InputError('Import payment history into a new group or request approval from Settle up.');
   }
   // One statement inserts every entry, so the import is all-or-nothing and stays within D1's per-request query budget.
   statements.push(db.prepare(`INSERT INTO entries(id,group_id,author,payload,created_at)

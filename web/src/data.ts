@@ -55,6 +55,7 @@ export interface Snapshot {
   avatarURL?: string | null;
   groups: Group[];
   entries: Expense[];
+  settlementRequests?: Expense[];
 }
 
 export interface ExpenseComment {
@@ -256,6 +257,7 @@ export function rawTransfers(entries: Expense[], currency: string) {
     pair.set(key, (pair.get(key) ?? 0) + signed);
   };
   for (const raw of entries) {
+    if (raw.handled) continue;
     const e = settlementEntry(raw);
     if (e.currency !== currency) continue;
     const payers = entryPayers(e);
@@ -300,6 +302,8 @@ export function buildGroupCSV(g: Group, entries: Expense[]): string {
     "Settlement Currency",
     "Settlement Amount",
     "Paid By",
+    "Split With",
+    "Expense Status",
     ...g.members.map((m) => m.name),
   ];
   const rows = entries
@@ -314,7 +318,7 @@ export function buildGroupCSV(g: Group, entries: Expense[]): string {
       const memberNets = g.members.map((m) => {
         const paid = payers.filter((p) => p.memberID === m.id).reduce((s, p) => s + p.amount, 0);
         const share = se.splits.find((s) => s.memberID === m.id)?.amount ?? 0;
-        const net = paid - share;
+        const net = e.handled ? 0 : paid - share;
         return net / 100;
       });
       return [
@@ -329,6 +333,8 @@ export function buildGroupCSV(g: Group, entries: Expense[]): string {
         se.currency,
         (se.amount / 100).toFixed(2),
         payerText,
+        se.splits.map((split) => `${memberName(g, split.memberID)} (${(split.amount / 100).toFixed(2)})`).join("; "),
+        e.handled ? "Handled" : "",
         ...memberNets,
       ];
     });

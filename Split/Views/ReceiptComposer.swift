@@ -1,5 +1,4 @@
 import SwiftUI
-import PhotosUI
 
 struct PriceField: View {
     var title: String
@@ -36,79 +35,11 @@ struct ReceiptComposer: View {
     /// the saved expense so the Worker's stale-claim check cannot reject a
     /// price or item edit.
     var chipsEditable: Bool = true
-    @State private var picks: [PhotosPickerItem] = []
-    @State private var camera = false
     @State private var message: String?
-    private var remaining: Int { max(0, 4 - existing - photos.count) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            SectionHeader(title: "Receipt", subtitle: remaining > 0 ? "Up to \(remaining) more \(remaining == 1 ? "photo" : "photos")" : "Photo limit reached")
-            if remaining > 0 && !processing {
-                HStack(spacing: 8) {
-                    PhotosPicker(selection: $picks, maxSelectionCount: remaining, matching: .images) {
-                        Label("Add photos", systemImage: "photo.on.rectangle")
-                    }
-                    .buttonStyle(GhostButton())
-                    .onChange(of: picks) { _, items in
-                        guard !items.isEmpty else { return }
-                        Task {
-                            processing = true
-                            defer { processing = false; picks = [] }
-                            do {
-                                for pick in items {
-                                    guard let data = try await pick.loadTransferable(type: Data.self) else {
-                                        throw LedgerError.invalid("Couldn’t load this photo.")
-                                    }
-                                    try await append(data)
-                                }
-                            } catch { message = error.localizedDescription }
-                        }
-                    }
-                    if UIImagePickerController.isSourceTypeAvailable(.camera) {
-                        Button { camera = true } label: { Label("Camera", systemImage: "camera") }
-                            .buttonStyle(GhostButton())
-                    }
-                    Spacer(minLength: 0)
-                }
-            }
-            if processing {
-                HStack(spacing: 8) {
-                    ProgressView()
-                    Text("Reading receipt…").font(.subheadline).foregroundStyle(.secondary)
-                }
-                .frame(minHeight: 44, alignment: .leading)
-            }
-            if !photos.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(photos) { photo in
-                            if let image = UIImage(data: photo.data) {
-                                Image(uiImage: image)
-                                    .resizable()
-                                    .scaledToFill()
-                                    .frame(width: 68, height: 82)
-                                    .clipped()
-                                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                                    .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Palette.line, lineWidth: 1))
-                                    .overlay(alignment: .topTrailing) {
-                                        Button { photos.removeAll { $0.id == photo.id } } label: {
-                                            Image(systemName: "xmark.circle.fill")
-                                                .font(.system(size: 20))
-                                                .symbolRenderingMode(.palette)
-                                                .foregroundStyle(.white, .black.opacity(0.55))
-                                                .frame(width: 44, height: 44, alignment: .topTrailing)
-                                                .padding(2)
-                                                .contentShape(Rectangle())
-                                        }
-                                        .buttonStyle(.plain)
-                                        .accessibilityLabel("Remove receipt photo")
-                                    }
-                            }
-                        }
-                    }
-                }
-            }
+            ReceiptPhotoPicker(photos: $photos, processing: $processing, existing: existing, onScan: applyScan)
             if let message {
                 Text(message).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
@@ -117,18 +48,6 @@ struct ReceiptComposer: View {
                     .tint(Palette.evergreen)
                     .font(.subheadline.weight(.medium))
             }
-        }
-        .sheet(isPresented: $camera) {
-            ReceiptCamera { data in
-                camera = false
-                guard let data else { return }
-                Task {
-                    processing = true
-                    defer { processing = false }
-                    do { try await append(data) } catch { message = error.localizedDescription }
-                }
-            }
-            .ignoresSafeArea()
         }
         if itemized {
             VStack(alignment: .leading, spacing: 12) {
@@ -193,6 +112,8 @@ struct ReceiptComposer: View {
         for index in bill.items.indices {
             bill.items[index].memberIDs = ids
             bill.items[index].roundingSeats = nil
+            bill.items[index].roundingWeights = nil
+            bill.items[index].shares = nil
         }
     }
 
@@ -203,6 +124,8 @@ struct ReceiptComposer: View {
         let order = members.map(\.id)
         item.wrappedValue.memberIDs = ids.sorted { (order.firstIndex(of: $0) ?? .max) < (order.firstIndex(of: $1) ?? .max) }
         item.wrappedValue.roundingSeats = nil
+        item.wrappedValue.roundingWeights = nil
+        item.wrappedValue.shares = item.wrappedValue.shares?.filter { ids.contains($0.key) }
     }
 
     @ViewBuilder private func lineItem(_ item: Binding<Purchase>) -> some View {
@@ -235,7 +158,7 @@ struct ReceiptComposer: View {
                 .accessibilityLabel("Remove " + (value.title.isEmpty ? "line item" : value.title))
             }
             if !members.isEmpty {
-                FlowLayout(spacing: 6, lineSpacing: 0) {
+                FlowLayout(spacing: 6, lineSpacing: 6) {
                     ForEach(members) { person in
                         PersonChip(
                             name: person.name,
@@ -283,35 +206,13 @@ struct ReceiptComposer: View {
         .frame(maxWidth: .infinity)
     }
 
-    private func append(_ data: Data) async throws {
-        let (photo, suggestion) = try await Task.detached(priority: .userInitiated) { try ReceiptReader.scan(data) }.value
-        photos.append(photo)
+    private func applyScan(_ suggestion: ReceiptBill) {
         if !bill.closed {
-            itemized = true
+            if !suggestion.items.isEmpty { itemized = true }
             bill.items.append(contentsOf: suggestion.items.prefix(50 - bill.items.count))
             bill.tax += suggestion.tax
             bill.tip += suggestion.tip
-            message = suggestion.items.isEmpty ? "No prices recognized. Add items by hand or turn off line-item splitting." : "Review the suggested items and prices."
-        }
-    }
-}
-
-private struct ReceiptCamera: UIViewControllerRepresentable {
-    var complete: (Data?) -> Void
-    func makeCoordinator() -> Coordinator { Coordinator(complete) }
-    func makeUIViewController(context: Context) -> UIImagePickerController {
-        let picker = UIImagePickerController()
-        picker.sourceType = .camera
-        picker.delegate = context.coordinator
-        return picker
-    }
-    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {}
-    final class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
-        let complete: (Data?) -> Void
-        init(_ complete: @escaping (Data?) -> Void) { self.complete = complete }
-        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) { complete(nil) }
-        func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
-            complete((info[.originalImage] as? UIImage)?.jpegData(compressionQuality: 0.9))
+            message = suggestion.items.isEmpty ? "No prices recognized. Turn on line-item splitting to enter items by hand." : "Review the suggested items and prices."
         }
     }
 }

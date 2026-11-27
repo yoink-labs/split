@@ -1,5 +1,4 @@
-// Currency conversion UI: the "Show in" picker, approximate totals, the composer
-// rate line and the standalone converter. All rates are free (Frankfurter, BCRA).
+// Currency selection, the composer rate line, and the standalone converter.
 import { useEffect, useRef, useState } from "react";
 import { currencies, minor, money } from "./data";
 import {
@@ -11,7 +10,6 @@ import {
   today,
   useFxVersion,
   useHomeCurrency,
-  useRates,
   type Exchange,
   type Quote,
 } from "./fx";
@@ -37,76 +35,6 @@ export function CurrencySelect({
       </select>
     </label>
   );
-}
-
-/** "Show in" defaults to the home currency set under You. */
-export function useShowIn(): [string, (c: string) => void] {
-  const [home] = useHomeCurrency();
-  const [chosen, setChosen] = useState<string | null>(null);
-  return [chosen ?? home, setChosen];
-}
-
-function rateNote(quotes: Quote[]) {
-  const unique = [...new Map(quotes.map((q) => [q.source + q.date, q])).values()];
-  const label = unique.map(sourceLabel).join(" · ");
-  const old = quotes.some((q) => q.fetchedAt && Date.now() - q.fetchedAt > 24 * 3600 * 1000);
-  return (old || fx.offline ? "Saved rates · " : "") + label;
-}
-
-/** "≈ USD 123.45" for a set of per-currency amounts, clearly approximate. */
-export function Approx({
-  amounts,
-  target,
-  signed = false,
-  prefix = "≈",
-  className = "approx",
-  note = true,
-  positive,
-  negative,
-}: {
-  amounts: Record<string, number>;
-  target: string;
-  signed?: boolean;
-  prefix?: string;
-  className?: string;
-  /** Show the "Approximate, at today's rate · source" line. Lists show it once instead. */
-  note?: boolean;
-  /** Words after the amount, e.g. "gets back" / "owes". Signs are dropped when given. */
-  positive?: string;
-  negative?: string;
-}) {
-  const codes = Object.keys(amounts).filter((c) => amounts[c]);
-  useRates(codes, target);
-  if (!codes.length || (codes.length === 1 && codes[0] === target && note)) return null;
-  const { amount, missing, quotes } = fx.total(amounts, target);
-  if (missing.length === codes.length)
-    return <small className={className}>Rates unavailable offline</small>;
-  const worded = positive !== undefined && amount !== 0;
-  const tone = amount > 0 ? "pos" : amount < 0 ? "neg" : "";
-  return (
-    <p className={className + " " + tone}>
-      <b>
-        {prefix} {signed && !worded && amount ? (amount > 0 ? "+" : "−") : ""}
-        {money(signed || worded ? Math.abs(amount) : amount, target)}
-      </b>
-      {worded && <small className="approx-word">{amount > 0 ? positive : negative}</small>}
-      {note && (
-        <small>
-          Approximate, at today’s rate · {rateNote(quotes)}
-          {missing.length ? ` · ${missing.join(", ")} not included` : ""}
-        </small>
-      )}
-    </p>
-  );
-}
-
-/** One shared "Approximate, at today's rate · source, date" line for a list of converted amounts. */
-export function ApproxNote({ codes, target }: { codes: string[]; target: string }) {
-  const foreign = codes.filter((c) => c !== target);
-  useRates(foreign, target);
-  const { quotes } = fx.total(Object.fromEntries(foreign.map((c) => [c, 1])), target);
-  if (!quotes.length) return null;
-  return <small className="approx-note">Approximate, in {target} at today’s rate · {rateNote(quotes)}. Settle up in any currency below.</small>;
 }
 
 /**
@@ -221,7 +149,7 @@ export function RateField({
   );
 }
 
-/** A small standalone converter. */
+/** Reference-rate lookup shared by the Account page and expense form. */
 export function Converter({
   from: initialFrom,
   to: initialTo,
@@ -233,74 +161,155 @@ export function Converter({
 }) {
   const [home] = useHomeCurrency();
   const [to, setTo] = useState(initialTo ?? home);
-  const [from, setFrom] = useState(
-    initialFrom ?? (home !== (initialTo ?? home) ? home : (initialTo ?? home) === "USD" ? "ARS" : "USD"),
-  );
-  const [text, setText] = useState(initialAmount ? (initialAmount / 100).toFixed(2) : "100");
+  const [from, setFrom] = useState(initialFrom ?? ((initialTo ?? home) === "USD" ? "ARS" : "USD"));
+  const [text, setText] = useState(initialAmount != null ? (initialAmount / 100).toFixed(2) : "100");
+  const [historical, setHistorical] = useState(false);
+  const [date, setDate] = useState(today);
+  const [revision, setRevision] = useState(0);
+  const forceNextLookup = useRef(false);
+  const [lookup, setLookup] = useState<{ key: string; quote: Quote | null; saved: boolean }>();
   const [own, setOwn] = useState("");
+  const [editing, setEditing] = useState(false);
   useFxVersion();
+
+  const currentDay = today();
+  const selectedDay = historical ? date : "";
+  const validDate = !historical || (/^\d{4}-\d\d-\d\d$/.test(date) && date <= currentDay);
+  const key = [from, to, historical, selectedDay, revision].join("|");
   useEffect(() => {
-    if (from !== to) void fx.latest(from, to);
-    const m = fx.manual(from, to);
-    setOwn(m ? rateText(m).replace(/,/g, "") : "");
-  }, [from, to]);
-  let parsed: number | null = null;
+    if (from === to || !validDate) return;
+    let active = true;
+    const force = forceNextLookup.current;
+    forceNextLookup.current = false;
+    async function load() {
+      let quote: Quote | null = null;
+      let saved = false;
+      try {
+        if (selectedDay && selectedDay < currentDay) {
+          quote = await fx.forDate(from, to, selectedDay, currentDay);
+          saved = fx.published(from, to, selectedDay) === null;
+        } else {
+          quote = await fx.latest(from, to, force);
+          saved = fx.offline;
+        }
+      } catch {
+        // The UI offers retry and a custom rate when no quote is available.
+      }
+      if (active) setLookup({ key, quote, saved });
+    }
+    void load();
+    return () => { active = false; };
+  }, [key, from, to, validDate, selectedDay, currentDay, revision]);
+
+  const pending = from !== to && validDate && lookup?.key !== key;
+  const current = lookup?.key === key ? lookup : undefined;
+  const latest = !historical && from !== to ? fx.rate(from, to) : null;
+  const manual = latest?.source === "Manual" ? latest : null;
+  const quote = from === to ? fx.rate(from, to) : manual ?? current?.quote;
+  const customRate = rateE8(own);
+  let result: number | null = null;
   try {
-    parsed = minor(text);
+    if (quote) result = convert(minor(text), quote.rateE8);
   } catch {
-    parsed = null;
+    // Blank, invalid, or unsupported amounts have no estimate.
   }
-  const q = fx.rate(from, to);
-  const result = q && parsed !== null ? convert(parsed, q.rateE8) : null;
+
+  function changePair(base: string, target: string) {
+    setFrom(base);
+    setTo(target);
+    setEditing(false);
+    setOwn("");
+  }
+
   return (
     <div className="converter">
-      <div className="columns">
-        <label>
-          Amount
-          <input inputMode="decimal" value={text} onChange={(e) => setText(e.target.value)} />
+      <div className="card card-pad converter-amount">
+        <div className="converter-pair">
+          <CurrencySelect label="From" value={from} onChange={(code) => changePair(code, to)} />
+          <button type="button" className="btn converter-swap" aria-label="Swap currencies" onClick={() => changePair(to, from)}>⇄</button>
+          <CurrencySelect label="To" value={to} onChange={(code) => changePair(from, code)} />
+        </div>
+        <label className="field">
+          Amount in {from}
+          <input type="text" inputMode="decimal" value={text} onChange={(event) => setText(event.target.value)} />
         </label>
-        <CurrencySelect label="From" value={from} onChange={setFrom} />
-      </div>
-      <button
-        type="button"
-        className="secondary swap"
-        aria-label="Swap currencies"
-        onClick={() => {
-          setFrom(to);
-          setTo(from);
-        }}
-      >
-        ⇅ Swap
-      </button>
-      <CurrencySelect label="To" value={to} onChange={setTo} />
-      <div className="summary">
-        <small>{from === to ? "Same currency" : "Converted"}</small>
-        <h2>{result !== null ? money(result, to) : "—"}</h2>
-        {q && from !== to ? (
-          <small>
-            1 {from} = {rateText(q.rateE8)} {to} · {sourceLabel(q)}
-            {fx.offline && q.source !== "Manual" ? " · saved rate" : ""}
-          </small>
-        ) : from !== to ? (
-          <small>Looking up the rate…</small>
-        ) : null}
+        <div className="converter-result" aria-live="polite">
+          <span>{from === to ? `Amount in ${to}` : `Estimated amount in ${to}`}</span>
+          <output className="num">{result === null ? "—" : (from === to ? "" : "≈ ") + money(result, to)}</output>
+        </div>
       </div>
       {from !== to && (
-        <label>
-          Your rate (optional, for example the ARS blue rate)
-          <input
-            inputMode="decimal"
-            value={own}
-            placeholder={q && q.source !== "Manual" ? rateText(q.rateE8).replace(/,/g, "") : ""}
-            onChange={(e) => {
-              setOwn(e.target.value);
-              fx.setManual(from, to, e.target.value.trim() ? rateE8(e.target.value) : null);
-            }}
-          />
-          <small>Leave empty to use the published rate. Your rate stays on this device.</small>
-        </label>
+        <section className="card card-pad converter-rate" aria-label="Exchange rate">
+          <div className="converter-rate-head">
+            <h2>Exchange rate</h2>
+            <div className="seg" role="group" aria-label="Rate date">
+              <button type="button" aria-pressed={!historical} onClick={() => setHistorical(false)}>Latest</button>
+              <button type="button" aria-pressed={historical} onClick={() => setHistorical(true)}>By date</button>
+            </div>
+          </div>
+          {historical && (
+            <label className="field">
+              Rate date
+              <input type="date" max={currentDay} value={date} onChange={(event) => setDate(event.target.value)} />
+            </label>
+          )}
+          <div className="converter-quote" aria-live="polite">
+            {quote ? (
+              <>
+                <strong className="num">1 {from} = {rateText(quote.rateE8)} {to}</strong>
+                {manual ? <p className="muted">Your rate · saved on this device</p> : (
+                  <>
+                    <dl className="converter-details">
+                      <dt>Source</dt><dd>{quote.source === "BCRA" ? "BCRA via Frankfurter" : "ECB via Frankfurter"}</dd>
+                      <dt>Published</dt>
+                      <dd><time dateTime={quote.date}>{new Date(quote.date + "T00:00:00").toLocaleDateString(undefined, { dateStyle: "medium" })}</time></dd>
+                    </dl>
+                    {current?.saved ? (
+                      <p className="muted">Showing a saved quote. The service couldn’t be reached.</p>
+                    ) : historical && quote.date !== selectedDay ? (
+                      <p className="muted">Showing the last published rate before the selected date.</p>
+                    ) : null}
+                  </>
+                )}
+              </>
+            ) : <p className="muted">{!validDate ? "Choose today or an earlier date." : pending ? "Getting the exchange rate…" : "No published rate was available for this lookup."}</p>}
+          </div>
+          {!manual && (!historical || (validDate && !pending && !quote)) && (
+            <button type="button" className="btn btn-sm" disabled={pending} onClick={() => {
+              forceNextLookup.current = !historical;
+              setRevision((value) => value + 1);
+            }}>
+              {historical ? "Retry lookup" : "Refresh rate"}
+            </button>
+          )}
+          <p className="muted">Reference rates are estimates. Your card or bank may charge a different rate or fees.</p>
+        </section>
       )}
-      <small>Free: ECB reference rates via Frankfurter, BCRA official rates for ARS.</small>
+      {from !== to && !historical && (
+        <details className="card card-pad converter-manual" open={editing} onToggle={(event) => {
+          const open = event.currentTarget.open;
+          if (open && !editing) setOwn(manual ? (manual.rateE8 / 100_000_000).toFixed(8).replace(/0+$/, "").replace(/\.$/, "") : "");
+          setEditing(open);
+        }}>
+          <summary>{manual ? "Edit your rate" : "Enter your own rate"}</summary>
+          <label className="field">
+            How many {to} for 1 {from}?
+            <input type="text" inputMode="decimal" value={own} onChange={(event) => setOwn(event.target.value)} />
+          </label>
+          <p className="muted">Used for balance estimates on this device. Saved expenses keep their original rates.</p>
+          <div className="converter-actions">
+            <button type="button" className="btn btn-sm btn-primary" disabled={customRate === null} onClick={() => {
+              fx.setManual(from, to, customRate);
+              setEditing(false);
+            }}>Save rate</button>
+            {manual && <button type="button" className="btn btn-sm" onClick={() => {
+              fx.setManual(from, to, null);
+              setEditing(false);
+              setRevision((value) => value + 1);
+            }}>Use published rate</button>}
+          </div>
+        </details>
+      )}
     </div>
   );
 }
@@ -344,11 +353,9 @@ export function ConverterDialog({
 
 export function ConverterScreen() {
   return (
-    <>
-      <h1>Currency converter</h1>
-      <section className="panel">
-        <Converter />
-      </section>
-    </>
+    <div className="converter-page">
+      <div className="page-head"><h1 className="page-title">Currency converter</h1></div>
+      <Converter />
+    </div>
   );
 }

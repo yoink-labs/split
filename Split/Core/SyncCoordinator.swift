@@ -56,7 +56,7 @@ enum SnapshotMerge {
         let entryIDs = Set(entries.map(\.id))
         entries += unique(local.entries.filter { pendingIDs.contains($0.id) && !entryIDs.contains($0.id) })
 
-        return Snapshot(groups: groups, entries: ordered(entries))
+        return Snapshot(groups: groups, entries: ordered(entries), settlementRequests: remote.settlementRequests)
     }
 
     /// Newest first, with the id as a tie-breaker so equal timestamps keep a

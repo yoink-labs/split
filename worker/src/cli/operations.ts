@@ -107,7 +107,7 @@ function makeExpense(a: Args, group: Group, old?: Entry): Entry {
   return validateEntry({ id: old?.id ?? crypto.randomUUID(), groupID: group.id, title: a.title ?? old?.title,
     amount, currency: a.currency ?? old?.currency ?? group.currency, paidBy: a.payers && !a.payer ? a.payers[0].member : payer,
     exchange, bill, category:a.category??old?.category, splits, kind: 'expense', splitMode: mode, createdAt,
-    payers, notes: a.notes ?? old?.notes }, ids,old?.bill);
+    payers, notes: a.notes ?? old?.notes, handled: old?.handled }, ids,old?.bill);
 }
 
 export async function operate(name: string, input: unknown, env: Env, user: string, handle: LedgerHandler) {
@@ -200,7 +200,8 @@ export async function operate(name: string, input: unknown, env: Env, user: stri
     const photos = name === 'expenses_add' && a.photos?.length
       ? a.photos.map(data => ({ id: crypto.randomUUID(), data }))
       : undefined;
-    await ledger('/v1/entries', photos ? { ...entry, photos } : entry);
+    const result = await ledger<{status?: string}>(name === 'settle_up' ? '/v1/settlements' : '/v1/entries', photos ? { ...entry, photos } : entry);
+    if (name === 'settle_up') return { ...entry, status: result.status };
     return photos ? { ...entry, receiptIDs: photos.map(p => p.id) } : entry;
   }
   if (name === 'expenses_edit' || name === 'expenses_delete') {

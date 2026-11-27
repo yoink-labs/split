@@ -1,16 +1,9 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { useLedger } from "./context";
-import { balances, moneyCompact, settlementEntry, type Group } from "./data";
-import { Avatar } from "./ui";
-
-function groupNet(g: Group, entries: ReturnType<typeof useLedger>["data"]["entries"], user: string) {
-  const me = g.members.find((m) => m.userID === user);
-  if (!me) return null;
-  const gEntries = entries.filter((e) => e.groupID === g.id);
-  const bal = balances(gEntries, g.currency)[me.id] ?? 0;
-  return { amount: bal, currency: g.currency };
-}
+import { type Group } from "./data";
+import { memberBalances, useHomeMoney, useLedgerRates } from "./homeMoney";
+import { SplitLogo, Avatar } from "./ui";
 
 const accountLinks = [
   { to: "/you", label: "Account & avatar", hint: "Profile, theme, payment handles" },
@@ -77,6 +70,8 @@ function AccountMenu({ name, avatarURL, onNavigate }: { name: string; avatarURL?
 
 export function AppShell({ children }: { children: ReactNode }) {
   const { data, user, userName, userAvatar, demo, exitDemo, refresh, checking } = useLedger();
+  useLedgerRates([...data.entries, ...(data.settlementRequests ?? [])], data.groups.map((group) => group.currency));
+  const homeMoney = useHomeMoney();
   const loc = useLocation();
   const [navOpen, setNavOpen] = useState(false);
 
@@ -86,9 +81,11 @@ export function AppShell({ children }: { children: ReactNode }) {
   const archived = data.groups.filter((g) => g.archived);
 
   const renderGroupLink = (g: Group) => {
-    const net = groupNet(g, data.entries, user);
+    const me = g.members.find((member) => member.userID === user);
+    const amounts = me ? memberBalances(data.entries.filter((entry) => entry.groupID === g.id), me.id) : {};
+    const net = homeMoney.total(amounts);
     const active = loc.pathname.startsWith("/g/" + g.id);
-    const dotClass = !net || net.amount === 0 ? "nav-dot" : net.amount > 0 ? "nav-dot pos" : "nav-dot neg";
+    const dotClass = net.missing.length || net.amount === 0 ? "nav-dot" : net.amount > 0 ? "nav-dot pos" : "nav-dot neg";
     return (
       <Link
         key={g.id}
@@ -100,9 +97,9 @@ export function AppShell({ children }: { children: ReactNode }) {
         <span className="nav-item-main">
           <span className="nav-item-name">{g.name}</span>
           <span className="nav-item-sub">
-            {!net || net.amount === 0
-              ? "Settled"
-              : (net.amount > 0 ? "+" : "−") + moneyCompact(Math.abs(net.amount), net.currency)}
+            {Object.values(amounts).some(Boolean)
+              ? homeMoney.totalText(amounts, true)
+              : "Settled"}
           </span>
         </span>
       </Link>
@@ -115,7 +112,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       <aside className={"sidebar" + (navOpen ? " open" : "")}>
         <div className="sidebar-head">
           <Link to="/" className="brand-link" onClick={() => setNavOpen(false)}>
-            <span className="brand-mark">S</span>
+            <SplitLogo />
             <span>Split</span>
           </Link>
           <div style={{ display: "flex", gap: 4 }}>
@@ -207,9 +204,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             ☰ Menu
           </button>
           <Link to="/" className="brand-link" style={{ fontSize: 15 }}>
-            <span className="brand-mark" style={{ width: 22, height: 22, fontSize: 11 }}>
-              S
-            </span>
+            <SplitLogo size={22} />
             <span>Split</span>
           </Link>
           <Link to="/new" className="btn btn-primary btn-sm">

@@ -2,6 +2,7 @@ import SwiftUI
 
 /// Global search across groups, people and the ledger. Free, like everything else.
 struct SearchView: View {
+    @EnvironmentObject private var fx: FXStore
     var showsClose = true
     @EnvironmentObject private var store: ExpenseStore
     @Environment(\.dismiss) private var dismiss
@@ -297,9 +298,9 @@ struct SearchView: View {
             Text("Settled")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(Palette.evergreen)
-        } else if let currency = summary.currencies.first(where: { (summary.mine[$0] ?? 0) != 0 }) {
-            let amount = summary.mine[currency] ?? 0
-            Text(Money.text(abs(amount), currency))
+        } else {
+            let amount = fx.total(summary.mine, in: fx.home).amount
+            Text(fx.homeTotalText(summary.mine, magnitude: true))
                 .font(.splitAmount(14))
                 .foregroundStyle(amount > 0 ? Palette.positive : Palette.negative)
                 .lineLimit(1)

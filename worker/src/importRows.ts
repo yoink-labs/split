@@ -30,11 +30,12 @@ export async function importRows(db:D1Database,group:string,user:string,b:Record
     if(!row || typeof row!=='object' || !Array.isArray(row.splits) || row.splits.length>50 || !/^\d{4}-\d\d-\d\d$/.test(row.day)) throw new InputError('Invalid CSV row.');
     if(row.exchange && row.exchange.target!==settle) throw new InputError('CSV rate must target the group settlement currency.');
     if(row.sourceGroup===group && existing.has(row.sourceID)) continue;
+    if(row.payment) throw new InputError('Request approval for payments from Settle up. This import accepts expenses.');
     const paidBy=await resolve(row.payer), splits=[];
     for(const s of row.splits) splits.push({memberID:await resolve(s.name),amount:s.amount});
     splits.sort((a,b)=>a.memberID<b.memberID?-1:1);
     const e:Entry=validateEntry({id:'csv-entry',groupID:group,title:row.title,paidBy,amount:row.amount,currency:row.currency,kind:row.payment?'settlement':'expense',
-      exchange:row.exchange,category:row.payment?undefined:row.category,splitMode:'exact',createdAt:row.day+'T12:00:00Z',splits},[...names.values()]);
+      exchange:row.exchange,category:row.category,handled:row.handled,splitMode:'exact',createdAt:row.day+'T12:00:00Z',splits},[...names.values()]);
     const fingerprint=await digest(e), ordinal=copies.get(fingerprint)??0;copies.set(fingerprint,ordinal+1);
     e.id=await digest([group,fingerprint,ordinal]);
     entries.push(db.prepare('INSERT INTO entries VALUES (?,?,?,?,?) ON CONFLICT(id) DO NOTHING').bind(e.id,group,user,JSON.stringify(e),e.createdAt));

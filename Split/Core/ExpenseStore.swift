@@ -2,6 +2,19 @@ import SwiftUI
 import Network
 import ClerkKit
 
+struct ActiveInvite: Decodable, Identifiable {
+    let id: String
+    let memberID: String?
+    let memberName: String?
+    let expiresAt: Double
+
+    var expirationDate: Date { Date(timeIntervalSince1970: expiresAt / 1000) }
+}
+
+private struct ActiveInviteResponse: Decodable {
+    let invites: [ActiveInvite]
+}
+
 @MainActor final class ExpenseStore: ObservableObject {
     @Published private(set) var state = DiskState()
     @Published private(set) var syncing = false
@@ -31,6 +44,8 @@ import ClerkKit
     }()
     var groups: [ExpenseGroup] { state.snapshot.groups }
     var entries: [LedgerEntry] { SnapshotMerge.ordered(state.snapshot.entries) }
+    var unsentPayments: [LedgerEntry] { state.unsentPayments ?? [] }
+    var pendingSettlements: [LedgerEntry] { state.snapshot.settlementRequests ?? [] }
     var pending: Int { state.outbox.count }
     var isDemo: Bool { demo }
     init() {
@@ -63,18 +78,34 @@ import ClerkKit
         guard let scope else { return }
         if demo { state.snapshot = Fixtures.snapshot(); demoComments = Fixtures.comments(); hasLoaded = true }
         else {
-            do { let url = try file(for: scope); if FileManager.default.fileExists(atPath: url.path) { state = try JSONDecoder().decode(DiskState.self, from: Data(contentsOf: url)); hasLoaded = true } }
-            catch { self.error = "Could not open your saved expenses. Your existing file has been kept."; self.scope = nil; return }
+            do {
+                let url = try file(for: scope)
+                if FileManager.default.fileExists(atPath: url.path) {
+                    var loaded = try JSONDecoder().decode(DiskState.self, from: Data(contentsOf: url))
+                    if let userID, loaded.migrateQueuedPayments(userID: userID) {
+                        try persist(loaded)
+                    } else {
+                        state = loaded
+                    }
+                    hasLoaded = true
+                }
+            } catch {
+                self.error = "Could not open your saved expenses. Your existing file has been kept."
+                self.scope = nil
+                return
+            }
             await sync()
         }
     }
     func entries(in group: ExpenseGroup) -> [LedgerEntry] { entries.filter { $0.groupID == group.id } }
     func group(_ id: String) -> ExpenseGroup? { groups.first { $0.id == id } }
-    func create(name: String, kind: String, currency: String, people: [MemberDraft], userID: String, displayName: String) throws {
+    func create(name: String, kind: String, currency: String, people: [MemberDraft], userID: String, displayName: String,
+                description: String = "", start: Date? = nil, end: Date? = nil) throws {
         guard scope != nil else { throw LedgerError.invalid("Sign in again before adding a group.") }
         let id = UUID().uuidString
         let members = [Person(groupID: id, userID: userID, name: displayName)] + people.map { Person(id:$0.id, groupID:id, userID:$0.userID, name:$0.name, email:$0.email, phone:$0.phone) }
-        let group = ExpenseGroup(id: id, name: name, kind: kind, currency: currency, members: members)
+        var group = ExpenseGroup(id: id, name: name, kind: kind, currency: currency, members: members)
+        try group.setMetadata(description: description, start: start, end: end)
         var next = state; next.snapshot.groups.insert(group, at: 0)
         if !demo { next.outbox.append(OutboxItem(id: id, path: "/v1/groups", body: try JSONEncoder().encode(group))) }
         try persist(next); Task { await sync() }
@@ -124,7 +155,11 @@ import ClerkKit
             // Changes can arrive while a request is suspended. Never replace pending local work.
             let merged = SnapshotMerge.merge(remote: remote, local: state.snapshot, pendingIDs: Set(state.outbox.map(\.id)))
             // Publishing an identical snapshot would still redraw every list; skip it.
-            if merged != state.snapshot { try persist(DiskState(snapshot: merged, outbox: state.outbox)) }
+            if merged != state.snapshot {
+                var next = state
+                next.snapshot = merged
+                try persist(next)
+            }
             if error != nil { error = nil }
         } catch {
             guard current == generation, !SyncFailure.isCancellation(error) else { return }
@@ -161,18 +196,27 @@ import ClerkKit
         return try JSONDecoder().decode([SplitUser].self, from:result)
     }
 
-    func updateGroup(_ group: ExpenseGroup, name: String, currency: String, simplify: Bool) async throws {
+    func updateGroup(_ group: ExpenseGroup, name: String, currency: String, simplify: Bool,
+                     description: String, start: Date?, end: Date?) async throws {
         let clean = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !clean.isEmpty, clean.count <= 80 else { throw LedgerError.invalid("Give the group a name of up to 80 characters.") }
+        var updated = group
+        try updated.setMetadata(description: description, start: start, end: end)
+        updated.name = clean
+        updated.currency = currency
+        updated.simplify = simplify
         if demo {
             guard let index = groups.firstIndex(where: { $0.id == group.id }) else { throw LedgerError.invalid("Group unavailable.") }
             var next = state
-            next.snapshot.groups[index].name = clean
-            next.snapshot.groups[index].currency = currency
-            next.snapshot.groups[index].simplify = simplify
+            next.snapshot.groups[index] = updated
             try persist(next)
         } else {
-            _ = try await groupAction(group.id, "update", ["name": clean, "currency": currency, "simplify": simplify])
+            _ = try await groupAction(group.id, "update", [
+                "name": clean, "currency": currency, "simplify": simplify,
+                "description": updated.description ?? "",
+                "startDate": (updated.startDate as Any?) ?? NSNull(),
+                "endDate": (updated.endDate as Any?) ?? NSNull()
+            ])
         }
     }
 
@@ -342,6 +386,46 @@ import ClerkKit
         return SplitwiseResult(groupID: groupID, created: created, inserted: inserted, duplicates: request.rows.count - inserted)
     }
 
+    func requestSettlement(_ entry: LedgerEntry) async throws {
+        if demo {
+            var next = state
+            next.snapshot.settlementRequests = [entry] + pendingSettlements.filter { $0.id != entry.id }
+            try persist(next)
+            return
+        }
+        _ = try await post("/v1/settlements", JSONEncoder().encode(entry))
+        try await waitForSync()
+        await sync()
+    }
+
+    func respond(to entry: LedgerEntry, with response: SettlementResponse) async throws {
+        if demo {
+            var next = state
+            next.snapshot.settlementRequests?.removeAll { $0.id == entry.id }
+            if response == .approve { next.snapshot.entries.append(entry) }
+            try persist(next)
+            return
+        }
+        _ = try await post("/v1/settlements/\(entry.id)/\(response.rawValue)", Data("{}".utf8))
+        try await waitForSync()
+        await sync()
+    }
+
+    func setHandled(_ entry: LedgerEntry, handled: Bool) async throws {
+        if demo {
+            var next = state
+            guard let index = next.snapshot.entries.firstIndex(where: { $0.id == entry.id }) else {
+                throw LedgerError.invalid("Expense unavailable.")
+            }
+            next.snapshot.entries[index].handled = handled ? true : nil
+            try persist(next)
+            return
+        }
+        _ = try await post("/v1/entries/\(entry.id)/handled", JSONEncoder().encode(["handled": handled]))
+        try await waitForSync()
+        await sync()
+    }
+
     func change(_ original: LedgerEntry, to replacement: LedgerEntry?) async throws {
         guard demo || original.editable == true else { throw LedgerError.invalid("Only the person who recorded this entry can change it.") }
         if demo {
@@ -355,6 +439,28 @@ import ClerkKit
             try await waitForSync()
             await sync()
         }
+    }
+
+    func receiptDrafts(in groupID: String) -> [ReceiptDraft] {
+        let savedIDs = Set(state.snapshot.entries.filter { $0.groupID == groupID }.map(\.id))
+        return (state.receiptDrafts ?? []).filter { $0.groupID == groupID && !savedIDs.contains($0.id) }
+            .sorted { $0.capturedAt > $1.capturedAt }
+    }
+
+    func saveReceiptDraft(_ draft: ReceiptDraft) throws {
+        guard scope != nil, group(draft.groupID) != nil else { throw LedgerError.invalid("Group unavailable.") }
+        var next = state
+        var drafts = next.receiptDrafts ?? []
+        drafts.removeAll { $0.id == draft.id }
+        drafts.append(draft)
+        next.receiptDrafts = drafts
+        try persist(next)
+    }
+
+    func removeReceiptDraft(_ id: String) throws {
+        var next = state
+        next.receiptDrafts?.removeAll { $0.id == id }
+        try persist(next)
     }
 
     func saveReceipted(_ entry: LedgerEntry, original: LedgerEntry?, photos: [ReceiptPhoto]) async throws {
@@ -388,23 +494,58 @@ import ClerkKit
         if demo, let data=demoPhotos[id] { return data }
         return try await request(path:"/v1/entries/\(entry)/receipts/\(id)")
     }
-    func claim(_ entry:LedgerEntry,item:Purchase?,people:[String]) async throws {
+    func claim(_ entry: LedgerEntry, item: Purchase?, people: [String], shares: [String: Int64] = [:]) async throws {
         guard var bill=entry.bill, !bill.closed else { throw LedgerError.invalid("This receipt is closed.") }
         if demo {
             var updated=entry
-            if let item, let index=bill.items.firstIndex(where:{$0.id==item.id}) { bill.items[index].memberIDs=people; bill.items[index].roundingSeats=nil }
-            else { for i in bill.items.indices where bill.items[i].memberIDs.isEmpty { bill.items[i].memberIDs=people }; bill.closed=true }
+            if let item {
+                guard let index = bill.items.firstIndex(where: { $0.id == item.id }) else {
+                    throw LedgerError.invalid("This purchase is unavailable.")
+                }
+                var updatedItem = bill.items[index]
+                var weights = updatedItem.shares ?? [:]
+                weights.merge(shares) { _, new in new }
+                weights = weights.filter { people.contains($0.key) && $0.value != 100 }
+                if Set(people) != Set(updatedItem.memberIDs) || !shares.isEmpty {
+                    updatedItem.roundingSeats = nil
+                    updatedItem.roundingWeights = nil
+                }
+                updatedItem.memberIDs = people
+                updatedItem.shares = weights.isEmpty ? nil : weights
+                bill.items[index] = updatedItem
+            } else {
+                for index in bill.items.indices where bill.items[index].memberIDs.isEmpty {
+                    bill.items[index].memberIDs = people
+                }
+                bill.closed = true
+            }
             updated.bill=bill; updated.splits=try bill.split(payer:entry.paidBy)
             try await change(entry,to:updated)
         } else {
             var data:[String:Any]=["memberIDs":people]
-            if let item { data["itemID"]=item.id; data["original"]=item.memberIDs;data["mergeEdits"]=true }
+            if let item {
+                data["itemID"] = item.id
+                data["original"] = item.memberIDs
+                data["mergeEdits"] = true
+                if !shares.isEmpty { data["shares"] = shares }
+            }
             let action=item == nil ? "close" : "claim"
             do { _ = try await post("/v1/entries/\(entry.id)/\(action)",JSONSerialization.data(withJSONObject:data)) }
             catch { await sync(); throw error }
             try await waitForSync()
             await sync()
         }
+    }
+
+    func activeInvites(groupID: String) async throws -> [ActiveInvite] {
+        guard !demo else { return [] }
+        let result = try await request(path: "/v1/groups/\(groupID)/invites")
+        return try JSONDecoder().decode(ActiveInviteResponse.self, from: result).invites
+    }
+
+    func revokeInvite(_ invite: ActiveInvite, groupID: String) async throws {
+        guard !demo else { return }
+        _ = try await post("/v1/groups/\(groupID)/invites/\(invite.id)/revoke", Data("{}".utf8))
     }
 
     func invite(group: ExpenseGroup, memberID: String? = nil) async throws -> URL {

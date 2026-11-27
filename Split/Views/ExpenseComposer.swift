@@ -6,6 +6,7 @@ import Foundation
 struct AddExpenseView: View {
     var group: ExpenseGroup
     var original: LedgerEntry? = nil
+    var draft: ReceiptDraft? = nil
     var onSaved: (() -> Void)? = nil
 
     @EnvironmentObject var store: ExpenseStore
@@ -20,6 +21,7 @@ struct AddExpenseView: View {
     @State private var purchaseDate = Date()
     @State private var category = ""
     @State private var notes = ""
+    @State private var handled = false
     @State private var payers: [Payer] = []
     @State private var payerText: [String: String] = [:]
     @State private var mode: SplitMode = .equal
@@ -29,6 +31,7 @@ struct AddExpenseView: View {
     @State private var photos: [ReceiptPhoto] = []
     @State private var itemized = false
     @State private var reading = false
+    @State private var draftScanNote: String?
     @State private var rateText = ""
     @State private var manualRate = false
     @State private var quote: Exchange?
@@ -45,12 +48,29 @@ struct AddExpenseView: View {
     @State private var width: CGFloat = 0
 
     private var current: ExpenseGroup { store.group(group.id) ?? group }
+    private var availableMembers: [Person] {
+        let historical = Set((original?.allPayers.map(\.memberID) ?? []) + (original?.splits.map(\.memberID) ?? []))
+        return current.members.filter { $0.removed != true || historical.contains($0.id) }
+    }
+    private var payersInMenu: [Person] {
+        availableMembers.sorted { left, right in
+            let leftIsMe = left.userID == session.userID
+            let rightIsMe = right.userID == session.userID
+            return leftIsMe == rightIsMe ? left.name.localizedStandardCompare(right.name) == .orderedAscending : leftIsMe
+        }
+    }
+    private var canSetHandled: Bool {
+        guard let original else { return true }
+        return original.allPayers.contains { payer in
+            current.members.contains { $0.id == payer.memberID && $0.userID == session.userID && $0.removed != true }
+        }
+    }
     private var showExchange: Bool { !currency.isEmpty && currency != group.currency }
     private var quoteDate: String {
         original.map { String($0.createdAt.prefix(10)) } ?? Exchange.localDay(purchaseDate)
     }
     private var people: [String] {
-        current.members.filter { selected.contains($0.id) }.map(\.id)
+        availableMembers.filter { selected.contains($0.id) }.map(\.id)
     }
     private var totalAmount: Int64? {
         if itemized { return bill.total > 0 ? bill.total : nil }
@@ -170,12 +190,12 @@ struct AddExpenseView: View {
                             VStack(spacing: 16) {
                                 amountCard
                                 detailsCard
+                                receiptCard
                                 if showExchange { exchangeCard }
                                 payersCard
                                 if itemized { receiptSplitCard } else { splitCard }
                                 categoryCard
                                 notesCard
-                                receiptCard
                                 if repeatAllowed { repeatCard }
                             }
                         }
@@ -212,6 +232,7 @@ struct AddExpenseView: View {
             }
             .interactiveDismissDisabled(saving)
             .onAppear(perform: initialize)
+            .task { await scanDraft() }
         }
     }
 
@@ -247,6 +268,11 @@ struct AddExpenseView: View {
                         .accessibilityIdentifier("expense-amount")
                         .accessibilityLabel("Amount in \(currency)")
                 }
+                if let total = totalAmount, total > 0, currency != fx.home, group.currency != fx.home || convertedTotal == nil {
+                    Text(fx.homeText(total, currency: currency))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 if totalAmount != nil, currency != group.currency, let converted = convertedTotal {
                     HStack(spacing: 6) {
                         Image(systemName: "arrow.triangle.2.circlepath")
@@ -261,6 +287,7 @@ struct AddExpenseView: View {
                 }
             }
         }
+        .task(id: [currency, fx.home]) { await fx.refresh(currencies: [currency], into: fx.home) }
     }
 
     private var currencyMenu: some View {
@@ -282,22 +309,26 @@ struct AddExpenseView: View {
                 }
             }
         } label: {
-            HStack(spacing: 5) {
-                Text(currency.isEmpty ? group.currency : currency)
-                    .font(.subheadline.weight(.bold))
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(.caption2.weight(.bold))
-            }
-            .padding(.horizontal, 12)
-            .frame(minHeight: 44)
-            .foregroundStyle(Palette.ink)
-            .background(Palette.raised)
-            .clipShape(Capsule())
-            .overlay(Capsule().stroke(Palette.line, lineWidth: 1))
-            .contentShape(Capsule())
+            composerPickerLabel(currency.isEmpty ? group.currency : currency, expands: false)
         }
         .accessibilityIdentifier("expense-currency")
         .accessibilityLabel("Currency, \(currency)")
+    }
+
+    private func composerPickerLabel(_ title: String, expands: Bool = true) -> some View {
+        HStack(spacing: 10) {
+            Text(title).font(.subheadline.weight(.semibold))
+                .frame(maxWidth: expands ? .infinity : nil, alignment: .leading)
+            Image(systemName: "chevron.down")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 12)
+        .frame(minHeight: 44)
+        .foregroundStyle(Palette.ink)
+        .background(Palette.raised, in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Palette.line))
+        .contentShape(Rectangle())
     }
 
     // MARK: - Details
@@ -323,7 +354,7 @@ struct AddExpenseView: View {
                         .foregroundStyle(title.count > 120 ? Palette.negative : .secondary)
                         .frame(maxWidth: .infinity, alignment: .trailing)
                 }
-                Rectangle().fill(Palette.line).frame(height: 1)
+                Divider()
                 DatePicker("Date", selection: $purchaseDate, in: ...Date(), displayedComponents: .date)
                     .font(.subheadline.weight(.medium))
                     .disabled(original != nil)
@@ -333,6 +364,30 @@ struct AddExpenseView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+                Divider()
+                Button {
+                    handled.toggle()
+                } label: {
+                    HStack(alignment: .top, spacing: 12) {
+                        Image(systemName: handled ? "checkmark.square.fill" : "square")
+                            .font(.title3)
+                            .foregroundStyle(handled ? Palette.evergreen : .secondary)
+                            .accessibilityHidden(true)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("Already handled").font(.subheadline.weight(.semibold))
+                            Text("Keep the expense in spending history without adding it to balances.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(minHeight: HitTarget.minimum, alignment: .topLeading)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(!canSetHandled)
+                .accessibilityValue(handled ? "On" : "Off")
+                .accessibilityAddTraits(handled ? .isSelected : [])
             }
         }
     }
@@ -469,24 +524,9 @@ struct AddExpenseView: View {
     private var payersCard: some View {
         Card {
             VStack(alignment: .leading, spacing: 12) {
-                HStack(alignment: .firstTextBaseline) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Paid by").font(.headline).foregroundStyle(Palette.ink)
-                        Text(payers.count > 1 ? "What each person put in" : "One payer is the simplest split")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer(minLength: 8)
-                    Button { addPayer() } label: {
-                        Label("Add", systemImage: "plus")
-                            .font(.subheadline.weight(.semibold))
-                            .frame(minHeight: 44)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(Palette.evergreen)
-                    .accessibilityIdentifier("expense-add-payer")
-                    .accessibilityLabel("Add another payer")
+                Text("Paid by").font(.headline).foregroundStyle(Palette.ink)
+                if payers.count > 1 {
+                    Text("Enter how much each person paid.").font(.caption).foregroundStyle(.secondary)
                 }
                 if payers.isEmpty {
                     Text("This group has no members to choose from yet.")
@@ -501,6 +541,9 @@ struct AddExpenseView: View {
                     }
                 }
                 if payers.count > 1 {
+                    Button("Add another payer", systemImage: "person.badge.plus") { addPayer() }
+                        .buttonStyle(GhostButton())
+                        .disabled(payers.count == availableMembers.count)
                     HStack(spacing: 8) {
                         Text("Paid \(payerSum.map { Money.text($0, currency) } ?? "—") of \(totalAmount.map { Money.text($0, currency) } ?? "—")")
                             .font(.caption.weight(.semibold))
@@ -522,9 +565,25 @@ struct AddExpenseView: View {
         return HStack(spacing: 12) {
             Avatar(name: name, size: 36)
             VStack(alignment: .leading, spacing: 5) {
-                Text(displayName(payer.memberID))
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(Palette.ink)
+                Menu {
+                    ForEach(payersInMenu.filter { member in
+                        member.id == payer.memberID || !payers.contains { $0.memberID == member.id }
+                    }) { member in
+                        Button {
+                            changePayer(payer, to: member.id)
+                        } label: {
+                            Label(displayName(member.id), systemImage: member.id == payer.memberID ? "checkmark" : "person")
+                        }
+                    }
+                    if payers.count == 1 && availableMembers.count > 1 {
+                        Divider()
+                        Button("Multiple people…", systemImage: "person.2", action: addPayer)
+                            .accessibilityIdentifier("expense-add-payer")
+                    }
+                } label: {
+                    composerPickerLabel(displayName(payer.memberID))
+                }
+                .accessibilityLabel("Paid by \(displayName(payer.memberID))")
                 if payers.count > 1 {
                     HStack(spacing: 4) {
                         TextField("0.00", text: payerBinding(payer.memberID))
@@ -564,8 +623,16 @@ struct AddExpenseView: View {
         }
     }
 
+    private func changePayer(_ payer: Payer, to id: String) {
+        guard id != payer.memberID,
+              let index = payers.firstIndex(where: { $0.memberID == payer.memberID }) else { return }
+        payers[index].memberID = id
+        payerText[id] = payerText.removeValue(forKey: payer.memberID)
+        error = nil
+    }
+
     private func addPayer() {
-        guard let person = current.members.first(where: { member in
+        guard let person = availableMembers.first(where: { member in
             !payers.contains(where: { $0.memberID == member.id })
         }) else {
             error = "Everyone in this group is already a payer."
@@ -607,27 +674,38 @@ struct AddExpenseView: View {
     private var splitCard: some View {
         Card {
             VStack(alignment: .leading, spacing: 12) {
-                SectionHeader(title: "Split", subtitle: mode.detail)
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(SplitMode.allCases, id: \.self) { option in
-                            ExpenseChoiceChip(title: option.title, selected: mode == option) {
-                                mode = option
-                                values = [:]
-                                error = nil
-                            }
-                            .accessibilityIdentifier("expense-split-mode-\(option.rawValue)")
+                Text("Split with").font(.headline).foregroundStyle(Palette.ink)
+                Menu {
+                    ForEach(SplitMode.allCases, id: \.self) { option in
+                        Button {
+                            guard mode != option else { return }
+                            mode = option
+                            values = [:]
+                            error = nil
+                        } label: {
+                            Label(option.title, systemImage: option == mode ? "checkmark" : "person.2")
                         }
+                        .accessibilityIdentifier("expense-split-mode-\(option.rawValue)")
                     }
-                    .padding(.vertical, 2)
+                } label: {
+                    composerPickerLabel(mode.title)
+                }
+                .accessibilityLabel("Split method, \(mode.title)")
+                Text(mode.detail).font(.caption).foregroundStyle(.secondary)
+                if !availableMembers.isEmpty {
+                    Button(selected.count == availableMembers.count ? "Clear everyone" : "Select everyone") {
+                        selected = selected.count == availableMembers.count ? [] : Set(availableMembers.map(\.id))
+                    }
+                    .font(.subheadline.weight(.semibold))
+                    .frame(minHeight: 44)
                 }
                 Rectangle().fill(Palette.line).frame(height: 1)
-                if current.members.isEmpty {
+                if availableMembers.isEmpty {
                     Text("Add someone to this group before choosing a split.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 } else {
-                    ForEach(current.members) { person in
+                    ForEach(availableMembers) { person in
                         participantRow(person)
                     }
                 }
@@ -868,6 +946,12 @@ struct AddExpenseView: View {
 
     private var receiptCard: some View {
         Card {
+            if let draftScanNote {
+                Text(draftScanNote)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.bottom, 10)
+            }
             ReceiptComposer(
                 bill: $bill,
                 photos: $photos,
@@ -875,7 +959,7 @@ struct AddExpenseView: View {
                 processing: $reading,
                 existing: original?.receiptIDs?.count ?? 0,
                 mustItemize: original?.bill != nil,
-                members: current.members,
+                members: availableMembers,
                 payerID: previewPayerID,
                 currentUserID: session.userID,
                 currency: currency,
@@ -951,7 +1035,7 @@ struct AddExpenseView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             HStack(spacing: 10) {
-                if original == nil {
+                if original == nil && draft == nil {
                     Button {
                         Task { await save(another: true) }
                     } label: {
@@ -1003,6 +1087,10 @@ struct AddExpenseView: View {
         do {
             let entry = try buildEntry()
             try await store.saveReceipted(entry, original: original, photos: photos)
+            if let draft {
+                do { try store.removeReceiptDraft(draft.id) }
+                catch { store.error = "Expense saved. The local receipt draft could not be cleared." }
+            }
             if another, original == nil {
                 resetForAnother()
             } else {
@@ -1075,6 +1163,7 @@ struct AddExpenseView: View {
         if payerList.count > 1 { entry.payers = payerList }
         let cleanNotes = notes.trimmingCharacters(in: .whitespacesAndNewlines)
         entry.notes = cleanNotes.isEmpty ? nil : cleanNotes
+        entry.handled = handled ? true : nil
         entry.commentCount = original?.commentCount
         entry.likeCount = original?.likeCount
         entry.likedByMe = original?.likedByMe
@@ -1130,15 +1219,37 @@ struct AddExpenseView: View {
 
     // MARK: - Initialization
 
+    private func scanDraft() async {
+        guard let draft, draftScanNote == nil else { return }
+        reading = true
+        let reader = Task.detached(priority: .userInitiated) { ReceiptReader.readDraft(draft.photos) }
+        let suggestion = await withTaskCancellationHandler {
+            await reader.value
+        } onCancel: {
+            reader.cancel()
+        }
+        reading = false
+        guard !Task.isCancelled else { return }
+        if bill.items.isEmpty { bill = suggestion }
+        draftScanNote = suggestion.items.isEmpty
+            ? "No prices were recognized. Add the line items and choose who shared them."
+            : "Review the suggested line items and choose who shared each one."
+    }
+
     private func initialize() {
         guard !initialized else { return }
         initialized = true
         currency = original?.currency ?? group.currency
-        title = original?.title ?? ""
+        title = original?.title ?? draft?.title ?? ""
+        if let draft {
+            entryID = draft.id
+            photos = draft.photos
+            purchaseDate = draft.capturedAt
+        }
         amount = original.map { Money.input($0.amount) } ?? ""
         #if DEBUG
         // Simulator QA: `-splitComposerCurrency USD -splitComposerAmount 12 -splitComposerTitle Taxi` presets a new expense.
-        if original == nil, let preset = UserDefaults.standard.string(forKey: "splitComposerCurrency"), Money.currencies.contains(preset) {
+        if original == nil, draft == nil, let preset = UserDefaults.standard.string(forKey: "splitComposerCurrency"), Money.currencies.contains(preset) {
             currency = preset
             amount = UserDefaults.standard.string(forKey: "splitComposerAmount") ?? amount
             title = UserDefaults.standard.string(forKey: "splitComposerTitle") ?? title
@@ -1146,8 +1257,9 @@ struct AddExpenseView: View {
         #endif
         category = original?.category ?? ""
         notes = original?.notes ?? ""
+        handled = original?.isHandled ?? false
         bill = original?.bill ?? ReceiptBill()
-        itemized = original?.bill != nil
+        itemized = original?.bill != nil || draft != nil
         recurrence = original?.recurrence ?? "off"
 
         if let original {
@@ -1178,7 +1290,7 @@ struct AddExpenseView: View {
         } else {
             let me = current.members.first { $0.userID == session.userID } ?? current.members.first
             if let me { payers = [Payer(memberID: me.id, amount: 0)] }
-            selected = Set(current.members.map(\.id))
+            selected = Set(availableMembers.map(\.id))
             if let weights = current.defaultWeights, !weights.isEmpty {
                 let known = Set(current.members.map(\.id))
                 let ids = weights.keys.filter { known.contains($0) }
@@ -1208,6 +1320,7 @@ struct AddExpenseView: View {
         amount = ""
         title = ""
         notes = ""
+        handled = false
         bill = ReceiptBill()
         photos = []
         itemized = false
@@ -1237,27 +1350,5 @@ struct AddExpenseView: View {
     private func displayName(_ id: String) -> String {
         guard let person = current.members.first(where: { $0.id == id }) else { return "Group member" }
         return person.userID == session.userID ? "You" : person.name
-    }
-}
-
-private struct ExpenseChoiceChip: View {
-    var title: String
-    var selected: Bool
-    var action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Text(title)
-                .font(.subheadline.weight(.semibold))
-                .padding(.horizontal, 13)
-                .frame(minHeight: 44)
-                .foregroundStyle(selected ? Palette.paper : Palette.ink)
-                .background(selected ? Palette.evergreen : Palette.raised)
-                .clipShape(Capsule())
-                .overlay(Capsule().stroke(selected ? Color.clear : Palette.line, lineWidth: 1))
-                .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }

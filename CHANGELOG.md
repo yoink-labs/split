@@ -10,6 +10,23 @@ is noted next to each release. The CLI is versioned separately with
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-27
+
+TestFlight build 14.
+
+### Added
+
+- Photograph receipts, save drafts for later, and review detected line items before assigning them to the people who shared them.
+- Request approval for a settlement. Balances update when the recipient confirms the payment.
+- Mark an expense as already handled to include it in spending reports without adding it to balances.
+
+### Changed
+
+- See expenses, receipt items, spending, and balances in your home currency. The converter shows the exchange-rate source and lets you look up a past date.
+- Use the same Split logo on web and iOS, with a green launch screen and clearer expense forms.
+
+## 0.8.0 follow-up
+
 TestFlight build 0.8.0 (12), Yoink Internal.
 
 ### Added

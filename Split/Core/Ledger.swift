@@ -8,6 +8,7 @@ struct Person: Codable, Identifiable, Equatable {
     var email: String?
     var phone: String?
     var payment:[String:String]?
+    var removed: Bool?
 }
 struct ExpenseGroup: Codable, Identifiable, Equatable {
     var id: String = UUID().uuidString
@@ -19,8 +20,24 @@ struct ExpenseGroup: Codable, Identifiable, Equatable {
     var members: [Person]
     var simplify: Bool? = nil
     var archived: Bool? = nil
+    var description: String?
+    var startDate: String?
+    var endDate: String?
     var symbol: String { kind == "trip" ? "airplane" : kind == "home" ? "house.fill" : "person.2.fill" }
     var isFriend: Bool { kind == "friend" }
+
+    mutating func setMetadata(description: String, start: Date?, end: Date?) throws {
+        let text = description.trimmingCharacters(in: .whitespacesAndNewlines)
+        let startDay = start.map(Exchange.localDay)
+        let endDay = end.map(Exchange.localDay)
+        guard text.utf16.count <= 400 else { throw LedgerError.invalid("Keep the description under 400 characters.") }
+        if let startDay, let endDay, endDay < startDay {
+            throw LedgerError.invalid("End date must be on or after the start date.")
+        }
+        self.description = text.isEmpty ? nil : text
+        startDate = startDay
+        endDate = endDay
+    }
 }
 struct Portion: Codable, Equatable { var memberID: String; var amount: Int64 }
 struct Payer: Codable, Equatable, Identifiable {
@@ -73,25 +90,64 @@ struct LedgerEntry: Codable, Identifiable, Equatable {
     var commentCount: Int? = nil
     var likeCount: Int? = nil
     var likedByMe: Bool? = nil
+    var handled: Bool? = nil
     /// Payers in canonical form. Older entries paid by one person.
     var allPayers: [Payer] {
         if let payers, !payers.isEmpty { return payers }
         return [Payer(memberID: paidBy, amount: amount)]
     }
     var isSettlement: Bool { kind == "settlement" }
+    var isHandled: Bool { handled == true }
+    var hasReceipt: Bool { bill != nil || receiptIDs?.isEmpty == false }
+    var openPurchaseCount: Int { bill?.closed == false ? bill?.openCount ?? 0 : 0 }
     var day: String { String(createdAt.prefix(10)) }
 }
 struct Transfer: Identifiable {
     var from: String; var to: String; var amount: Int64; var currency: String
     var id: String { from + to + currency }
 }
-struct Snapshot: Codable, Equatable { var groups: [ExpenseGroup] = []; var entries: [LedgerEntry] = [] }
+struct Snapshot: Codable, Equatable {
+    var groups: [ExpenseGroup] = []
+    var entries: [LedgerEntry] = []
+    var settlementRequests: [LedgerEntry]?
+}
+
+enum SettlementResponse: String {
+    case approve, decline, cancel
+}
 struct OutboxItem: Codable, Identifiable {
     var id: String
     var path: String
     var body: Data
 }
-struct DiskState: Codable { var snapshot = Snapshot(); var outbox: [OutboxItem] = [] }
+struct DiskState: Codable {
+    var snapshot = Snapshot()
+    var outbox: [OutboxItem] = []
+    var receiptDrafts: [ReceiptDraft]?
+    var unsentPayments: [LedgerEntry]?
+
+    mutating func migrateQueuedPayments(userID: String) -> Bool {
+        var migrated = Set<String>()
+        var unsent = unsentPayments ?? []
+        let groups = snapshot.groups
+        outbox = outbox.compactMap { item in
+            guard item.path == "/v1/entries",
+                  let payment = try? JSONDecoder().decode(LedgerEntry.self, from: item.body),
+                  payment.isSettlement else { return item }
+            migrated.insert(item.id)
+            let payer = groups.first { $0.id == payment.groupID }?.members.first { $0.id == payment.paidBy }
+            if payer?.userID == userID && payer?.removed != true {
+                return OutboxItem(id: item.id, path: "/v1/settlements", body: item.body)
+            }
+            unsent.append(payment)
+            return nil
+        }
+        guard !migrated.isEmpty else { return false }
+        snapshot.entries.removeAll { migrated.contains($0.id) }
+        unsentPayments = unsent.isEmpty ? nil : unsent
+        return true
+    }
+}
 
 enum LedgerError: LocalizedError {
     case invalid(String)
@@ -135,8 +191,8 @@ enum Money {
 }
 enum Ledger {
     /// Largest-remainder allocation preserves every cent and resolves ties in input order.
-    static func allocate(total: Int64, weights: [Int64]) throws -> [Int64] {
-        guard total > 0, total <= Money.maxAmount, !weights.isEmpty, weights.count <= 50,
+    static func allocate(total: Int64, weights: [Int64], maximumTotal: Int64 = Money.maxAmount) throws -> [Int64] {
+        guard total > 0, total <= maximumTotal, !weights.isEmpty, weights.count <= 50,
               weights.allSatisfy({ $0 >= 0 && $0 <= Money.maxAmount }), weights.contains(where: { $0 > 0 }) else { throw LedgerError.invalid("Enter a positive amount and at least one participant.") }
         let sum = weights.reduce(Decimal(0)) { $0 + Decimal($1) }
         let raw = weights.map { Decimal(total) * Decimal($0) / sum }
@@ -184,7 +240,9 @@ enum Ledger {
     }
     static func balances(_ entries: [LedgerEntry], currency: String) -> [String:Int64] {
         var values: [String:Int64] = [:]
-        for e in entries.map(\.settling) where e.currency == currency {
+        for entry in entries where !entry.isHandled {
+            let e = entry.settling
+            guard e.currency == currency else { continue }
             for payer in e.allPayers { values[payer.memberID, default: 0] += payer.amount }
             for s in e.splits { values[s.memberID, default: 0] -= s.amount }
         }
@@ -197,7 +255,7 @@ enum Ledger {
         entry.splits.filter { $0.memberID == memberID }.reduce(0) { $0 + $1.amount }
     }
     static func net(_ entry: LedgerEntry, for memberID: String) -> Int64 {
-        paid(entry, by: memberID) - share(entry, of: memberID)
+        entry.isHandled ? 0 : paid(entry, by: memberID) - share(entry, of: memberID)
     }
     static func simplify(_ entries: [LedgerEntry], currency: String) -> [Transfer] {
         plan(balances(entries,currency:currency),currency:currency)

@@ -49,7 +49,10 @@ it('claims a verified address and merges both sides of historical expenses and s
   await call(guest,'/v1/join',{token:(await invitation()).code});
   const existing=(await snapshot(guest)).groups[0].members.find(m=>m.userID===guest)!.id;
   await call(guest,'/v1/entries',{...expense,id:'entry-shared',paidBy:placeholder,splits:[{memberID:existing,amount:700},{memberID:placeholder,amount:500}]});
-  await call(owner,'/v1/entries',{...expense,id:'entry-payment',kind:'settlement',amount:200,paidBy:placeholder,splits:[{memberID:ownerSeat,amount:200}]});
+  // This payment predates recipient approval.
+  const historical = {...expense,id:'entry-payment',kind:'settlement',amount:200,paidBy:placeholder,splits:[{memberID:ownerSeat,amount:200}]};
+  await env.DB.prepare('INSERT INTO entries VALUES (?,?,?,?,?)')
+    .bind(historical.id,groupID,owner,JSON.stringify(historical),historical.createdAt).run();
   const raw={id:guest,first_name:'Casey',last_name:'Green',username:'caseyg',primary_email_address_id:'address',
     email_addresses:[{id:'address',email_address:'CASEY@example.test',verification:{status:'unverified'}}]};
   await saveProfile(env.DB,verifiedProfile(raw));

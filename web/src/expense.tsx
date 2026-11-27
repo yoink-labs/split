@@ -1,5 +1,5 @@
-import { useRef, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { useEffect, useRef, useState } from "react";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { Form, useLedger, value } from "./context";
 import { CATEGORIES } from "./categories";
 import {
@@ -16,7 +16,9 @@ import {
 } from "./data";
 import type { Bill } from "../../worker/src/items";
 import { ConverterDialog, RateField } from "./fxui";
-import type { Exchange } from "./fx";
+import { useRates, type Exchange } from "./fx";
+import { useHomeMoney } from "./homeMoney";
+import { minorInput } from "./receiptText";
 
 export function ExpenseForm() {
   const { gid, eid } = useParams(),
@@ -29,6 +31,7 @@ export function ExpenseForm() {
 }
 
 function Composer({ g, existing }: { g: Group; existing?: Expense }) {
+  const [query] = useSearchParams();
   const { save, user } = useLedger(),
     nav = useNavigate(),
     [id] = useState(() => existing?.id ?? crypto.randomUUID()),
@@ -38,11 +41,18 @@ function Composer({ g, existing }: { g: Group; existing?: Expense }) {
   const activeMembers = g.members.filter((m) =>
     !m.removed || existing?.splits.some((s) => s.memberID === m.id) || existingPayers.some((p) => p.memberID === m.id),
   );
+  const pickerMembers = [...activeMembers].sort((a, b) =>
+    Number(b.userID === user) - Number(a.userID === user) || a.name.localeCompare(b.name),
+  );
+  const canSetHandled = !existing || existingPayers.some((payer) =>
+    g.members.some((member) => member.id === payer.memberID && member.userID === user && !member.removed),
+  );
+  const [handled, setHandled] = useState(existing?.handled ?? false);
   const weights = g.defaultWeights ?? {},
     hasDefaults = !existing && Object.values(weights).some((w) => w > 0);
 
   const [mode, setMode] = useState<string>(() =>
-    existing?.bill ? "items" : existing?.splitMode ?? (hasDefaults ? "shares" : "equal"),
+    existing?.bill || (!existing && query.has("receipt")) ? "items" : existing?.splitMode ?? (hasDefaults ? "shares" : "equal"),
   );
   const [selected, setSelected] = useState<string[]>(() =>
     existing
@@ -70,7 +80,67 @@ function Composer({ g, existing }: { g: Group; existing?: Expense }) {
       : [{ id: crypto.randomUUID(), title: "", price: "", claims: [] }],
   );
 
+  const [tax, setTax] = useState(minorInput(existing?.bill?.tax ?? 0));
+  const [tip, setTip] = useState(minorInput(existing?.bill?.tip ?? 0));
+  const scan = useRef<AbortController | undefined>(undefined);
+  const [scanMessage, setScanMessage] = useState("");
+  const [fileNames, setFileNames] = useState<string[]>([]);
+  const photoInput = useRef<HTMLInputElement>(null);
+  const [scanning, setScanning] = useState(false);
+  useEffect(() => () => scan.current?.abort(), []);
+
+  async function suggestPhotos(files: File[]) {
+    scan.current?.abort();
+    setScanning(false);
+    setScanMessage("");
+    setFileNames(files.map((file) => file.name));
+    if (!files.length) return;
+    if (files.length > 4) {
+      setScanMessage("Choose up to four photos.");
+      return;
+    }
+    if (existing?.bill || rows.some((row) => row.title || row.price || row.claims.length)) {
+      setScanMessage("Photos attached. Your existing line items are kept.");
+      return;
+    }
+
+    const controller = new AbortController();
+    scan.current = controller;
+    setScanning(true);
+    const timeout = window.setTimeout(() => {
+      controller.abort();
+      setScanning(false);
+      setScanMessage("Photo reading took too long. Enter the items and choose who shared each one.");
+    }, 25000);
+
+    try {
+      const { readReceiptPhotos } = await import("./receiptScan");
+      const suggestion = await readReceiptPhotos(files, controller.signal);
+      if (controller.signal.aborted) return;
+      if (suggestion.items.length) {
+        setMode("items");
+        setRows((current) =>
+          current.some((row) => row.title || row.price || row.claims.length)
+            ? current
+            : suggestion.items.map((item) => ({ id: crypto.randomUUID(), title: item.title, price: minorInput(item.amount), claims: [] })),
+        );
+        setTax((current) => current || minorInput(suggestion.tax));
+        setTip((current) => current || minorInput(suggestion.tip));
+        setScanMessage("Review the suggested items and choose who shared each one.");
+      } else {
+        setScanMessage("No prices were recognized. Enter the items and choose who shared each one.");
+      }
+    } catch {
+      if (!controller.signal.aborted) setScanMessage("Could not read these photos. Enter the items and choose who shared each one.");
+    } finally {
+      window.clearTimeout(timeout);
+      if (!controller.signal.aborted) setScanning(false);
+    }
+  }
+
   const [currency, setCurrency] = useState(existing?.currency ?? g.currency);
+  const homeMoney = useHomeMoney();
+  useRates([currency], homeMoney.home);
   const [amountText, setAmountText] = useState(existing ? (existing.amount / 100).toFixed(2) : "");
   const [category, setCategory] = useState(existing?.category ?? "Dining");
   const [notes, setNotes] = useState(existing?.notes ?? "");
@@ -106,7 +176,7 @@ function Composer({ g, existing }: { g: Group; existing?: Expense }) {
   };
 
   return (
-    <div style={{ maxWidth: 760, margin: "0 auto" }}>
+    <div className="expense-form">
       <div className="page-head">
         <div>
           <p className="muted" style={{ fontSize: 12.5, marginBottom: 4 }}>
@@ -123,6 +193,7 @@ function Composer({ g, existing }: { g: Group; existing?: Expense }) {
         <Form
           label={existing ? "Save changes" : "Save expense"}
           submit={async (f) => {
+            if (scanning && mode === "items") throw new Error("Wait for photo reading to finish before saving.");
             const files = (f.getAll("photos") as File[]).filter((file) => file.size);
             if (files.length > 4) throw new Error("Choose up to four photos.");
             const photos = await Promise.all(
@@ -241,6 +312,7 @@ function Composer({ g, existing }: { g: Group; existing?: Expense }) {
               splits,
               splitMode: bill ? "exact" : mode,
               kind: "expense" as const,
+              ...(handled ? { handled: true } : {}),
               createdAt,
               ...(category ? { category } : {}),
               ...(notes.trim() ? { notes: notes.trim() } : {}),
@@ -288,6 +360,52 @@ function Composer({ g, existing }: { g: Group; existing?: Expense }) {
             </label>
           </div>
 
+          <label className="expense-handled">
+            <input type="checkbox" checked={handled} disabled={!canSetHandled} onChange={(e) => setHandled(e.target.checked)} />
+            <span>
+              <strong>Already handled</strong>
+              <small>{canSetHandled ? "Keep this expense in spending history without adding it to balances." : "A payer can change this status from the expense details."}</small>
+            </span>
+          </label>
+
+          <section className="receipt-upload">
+            <div className="expense-section-head">
+              <strong>Receipt photos</strong>
+              {fileNames.length > 0 && (
+                <button type="button" className="btn btn-sm btn-ghost" onClick={() => {
+                  if (photoInput.current) photoInput.current.value = "";
+                  void suggestPhotos([]);
+                }}>Remove photos</button>
+              )}
+            </div>
+            <label className="receipt-upload-control">
+              <input
+                ref={photoInput}
+                type="file"
+                name="photos"
+                accept="image/*"
+                multiple
+                onChange={(event) => void suggestPhotos(Array.from(event.currentTarget.files ?? []))}
+              />
+              <span className="receipt-upload-label">Choose receipt photos</span>
+              <span className="muted">Up to 4 images</span>
+            </label>
+            {fileNames.length > 0 && <p className="receipt-file-list">{fileNames.join(", ")}</p>}
+            {fileNames.length > 0 && (
+              <p className="muted" role="status">
+                {scanning ? "Reading photos on this device…" : scanMessage || "Review the line items and choose who shared each one."}
+              </p>
+            )}
+            {scanning && (
+              <button type="button" className="btn btn-sm" onClick={() => {
+                scan.current?.abort();
+                setMode("items");
+                setScanning(false);
+                setScanMessage("Enter the items and choose who shared each one.");
+              }}>Enter items manually</button>
+            )}
+          </section>
+
           <div className="form-row">
             <label className="field">
               Category
@@ -321,6 +439,9 @@ function Composer({ g, existing }: { g: Group; existing?: Expense }) {
                     value={amountText}
                     onChange={(e) => setAmountText(e.target.value)}
                   />
+                  {typed !== null && typed > 0 && currency !== homeMoney.home && (
+                    <small className="muted">{homeMoney.totalText({ [currency]: typed })}</small>
+                  )}
                 </label>
               )}
             </div>
@@ -343,38 +464,38 @@ function Composer({ g, existing }: { g: Group; existing?: Expense }) {
           )}
           <ConverterDialog open={converter} onClose={() => setConverter(false)} to={g.currency} amount={typed} />
 
-          {/* Paid by (single or multiple payers) */}
-          <div className="card" style={{ padding: 14, background: "var(--bg)" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-              <strong style={{ fontSize: 13 }}>Paid by</strong>
-              <label className="check" style={{ fontSize: 12.5 }}>
-                <input
-                  type="checkbox"
-                  checked={multiPayer}
-                  disabled={Boolean(existing?.bill?.closed)}
-                  onChange={(e) => setMultiPayer(e.target.checked)}
-                />
-                Multiple people paid
-              </label>
-            </div>
-            {!multiPayer ? (
-              <select value={singlePayer} disabled={Boolean(existing?.bill?.closed)} onChange={(e) => setSinglePayer(e.target.value)}>
-                  {activeMembers.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
+          <section className="expense-form-section">
+            <label className="field">
+              Paid by
+              <select
+                value={multiPayer ? ":multiple" : singlePayer}
+                disabled={Boolean(existing?.bill?.closed)}
+                onChange={(event) => {
+                  const next = event.target.value;
+                  setMultiPayer(next === ":multiple");
+                  if (next !== ":multiple") setSinglePayer(next);
+                }}
+              >
+                <optgroup label="One payer">
+                  {pickerMembers.map((person) => (
+                    <option key={person.id} value={person.id}>
+                      {person.userID === user ? "You" : person.name}
+                    </option>
+                  ))}
+                </optgroup>
+                {activeMembers.length > 1 && <option value=":multiple">Multiple people…</option>}
               </select>
-            ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {activeMembers.map((p) => (
-                  <div key={p.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
-                    <span style={{ fontSize: 13.5, fontWeight: 500 }}>{p.name}</span>
+            </label>
+            {multiPayer && (
+              <div className="expense-payer-amounts">
+                {pickerMembers.map((p) => (
+                  <div className="expense-payer-row" key={p.id}>
+                    <span>{p.userID === user ? "You" : p.name}</span>
                     <input
                       type="text"
                       inputMode="decimal"
                       placeholder="0.00"
-                      style={{ width: 130 }}
+                      aria-label={`Amount paid by ${p.name}`}
                       value={payerAmounts[p.id] ?? ""}
                       onChange={(e) => setPayerAmounts({ ...payerAmounts, [p.id]: e.target.value })}
                     />
@@ -382,7 +503,7 @@ function Composer({ g, existing }: { g: Group; existing?: Expense }) {
                 ))}
               </div>
             )}
-          </div>
+          </section>
 
           {/* Split Method */}
           <label className="field">
@@ -400,7 +521,7 @@ function Composer({ g, existing }: { g: Group; existing?: Expense }) {
           {existing?.bill?.closed ? (
             <p className="muted">The item allocations are locked because this receipt is closed.</p>
           ) : mode === "items" ? (
-            <div className="card" style={{ padding: 14, background: "var(--bg)" }}>
+            <fieldset className="card" disabled={scanning} style={{ padding: 14, background: "var(--bg)", minWidth: 0 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
                 <strong style={{ fontSize: 13 }}>Receipt line items</strong>
                 <button
@@ -418,11 +539,11 @@ function Composer({ g, existing }: { g: Group; existing?: Expense }) {
                     <div className="form-row">
                       <label className="field">
                         Item {i + 1}
-                        <input type="text" name={"name-" + r.id} defaultValue={r.title} required maxLength={100} placeholder="Ribeye steak, Malbec…" />
+                        <input type="text" name={"name-" + r.id} value={r.title} onChange={(e) => setRows(rows.map((row) => row.id === r.id ? { ...row, title: e.target.value } : row))} required maxLength={100} placeholder="Ribeye steak, Malbec…" />
                       </label>
                       <label className="field">
                         Price ({currency})
-                        <input type="text" name={"price-" + r.id} defaultValue={r.price} required inputMode="decimal" placeholder="0.00" />
+                        <input type="text" name={"price-" + r.id} value={r.price} onChange={(e) => setRows(rows.map((row) => row.id === r.id ? { ...row, price: e.target.value } : row))} required inputMode="decimal" placeholder="0.00" />
                       </label>
                     </div>
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginTop: 8, alignItems: "center" }}>
@@ -449,18 +570,18 @@ function Composer({ g, existing }: { g: Group; existing?: Expense }) {
                 <div className="form-row">
                   <label className="field">
                     Tax
-                    <input type="text" name="tax" defaultValue={existing?.bill ? (existing.bill.tax / 100).toFixed(2) : ""} inputMode="decimal" placeholder="0.00" />
+                    <input type="text" name="tax" value={tax} onChange={(e) => setTax(e.target.value)} inputMode="decimal" placeholder="0.00" />
                   </label>
                   <label className="field">
                     Tip
-                    <input type="text" name="tip" defaultValue={existing?.bill ? (existing.bill.tip / 100).toFixed(2) : ""} inputMode="decimal" placeholder="0.00" />
+                    <input type="text" name="tip" value={tip} onChange={(e) => setTip(e.target.value)} inputMode="decimal" placeholder="0.00" />
                   </label>
                 </div>
                 <p className="muted" style={{ fontSize: 12 }}>
                   Tax and tip scale proportionally to each item. Unclaimed items stay on the payer until claimed (including fractional shares) in the Receipts Hub.
                 </p>
               </div>
-            </div>
+            </fieldset>
           ) : (
             <div className="card" style={{ padding: 14, background: "var(--bg)" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
@@ -529,10 +650,7 @@ function Composer({ g, existing }: { g: Group; existing?: Expense }) {
             />
           </label>
 
-          <label className="field">
-            Receipt photos (up to 4 images)
-            <input type="file" name="photos" accept="image/*" multiple />
-          </label>
+
         </Form>
       </div>
     </div>

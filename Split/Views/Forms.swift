@@ -9,6 +9,9 @@ struct CreateGroupView: View {
     @State private var people: [MemberDraft] = []
     @State private var choosing = false
     @State private var kind = "trip"
+    @State private var description = ""
+    @State private var start: Date?
+    @State private var end: Date?
     @AppStorage("split.defaultCurrency") private var preferredCurrency = "USD"
     @State private var currency = ""
     @State private var error: String?
@@ -38,6 +41,7 @@ struct CreateGroupView: View {
                                     Text("Home").tag("home")
                                 }
                                 .pickerStyle(.segmented)
+                                GroupMetadataFields(description: $description, start: $start, end: $end, isTrip: kind == "trip")
                             }
                             Picker("Currency", selection: $currency) {
                                 ForEach(Money.currencies, id: \.self) { Text($0).tag($0) }
@@ -136,7 +140,9 @@ struct CreateGroupView: View {
         }
         saving = true; error = nil
         do {
-            try store.create(name: clean, kind: friend ? "friend" : kind, currency: currency, people: participants, userID: id, displayName: session.displayName)
+            try store.create(name: clean, kind: friend ? "friend" : kind, currency: currency, people: participants, userID: id, displayName: session.displayName,
+                             description: description, start: !friend && kind == "trip" ? start : nil,
+                             end: !friend && kind == "trip" ? end : nil)
             dismiss()
         } catch {
             saving = false

@@ -1,177 +1,52 @@
 import SwiftUI
 
-/// "Show in" currency menu. Changing it re-expresses totals; it never changes the ledger.
-struct ShowInMenu: View {
-    @EnvironmentObject private var fx: FXStore
-    var onHero = false
-
-    var body: some View {
-        Menu {
-            Picker("Show in", selection: $fx.display) {
-                ForEach(Money.currencies, id: \.self) { Text($0).tag($0) }
-            }
-        } label: {
-            HStack(spacing: 4) {
-                Text("Show in \(fx.display)")
-                Image(systemName: "chevron.up.chevron.down").font(.caption2.weight(.bold))
-            }
-            .font(.caption.weight(.semibold))
-            .padding(.horizontal, 10)
-            .frame(minHeight: 30)
-            .foregroundStyle(onHero ? Palette.lime : Palette.evergreen)
-            .background((onHero ? Palette.lime : Palette.evergreen).opacity(0.12), in: Capsule())
-            .contentShape(Capsule())
-        }
-        .accessibilityLabel("Show totals in \(fx.display)")
-        .accessibilityIdentifier("show-in-menu")
-    }
-}
-
-/// One approximate figure for amounts in several currencies, at today's rates. Always labelled
-/// as approximate, with the source and date, and degrades to cached rates when offline.
-struct ApproxTotal: View {
-    var amounts: [String: Int64]
-    var onHero = false
-    /// Caption for positive and negative totals, from the reader's point of view.
-    var positive = "you’re owed"
-    var negative = "you owe"
-    var showsMenu = true
-    @EnvironmentObject private var fx: FXStore
-
-    private var open: [String: Int64] { amounts.filter { $0.value != 0 } }
-    private var needsConversion: Bool { open.keys.contains { $0 != fx.display } }
-    private var result: (amount: Int64, missing: [String], quotes: [FXQuote]) { fx.total(open, in: fx.display) }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            ViewThatFits(in: .horizontal) {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        conversionSummary
-                    }
-                    .fixedSize(horizontal: true, vertical: false)
-                    if showsMenu {
-                        Spacer(minLength: 6)
-                        ShowInMenu(onHero: onHero)
-                            .fixedSize(horizontal: true, vertical: false)
-                    }
-                }
-                VStack(alignment: .leading, spacing: 4) {
-                    conversionSummary
-                    if showsMenu { ShowInMenu(onHero: onHero) }
-                }
-            }
-            if needsConversion, result.missing.count < open.count {
-                Text(caption)
-                    .font(.caption2)
-                    .foregroundStyle(onHero ? Palette.onHero.opacity(0.55) : Color.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .accessibilityElement(children: .contain)
-        .task(id: Array(open.keys).sorted().joined() + fx.display) {
-            await fx.refresh(currencies: Set(open.keys), into: fx.display)
-        }
-    }
-
-    @ViewBuilder private var conversionSummary: some View {
-        if needsConversion, result.missing.count < open.count {
-            Text("≈ " + Money.text(abs(result.amount), fx.display))
-                .font(.splitAmount(onHero ? 17 : 15, weight: .semibold))
-                .foregroundStyle(onHero ? Palette.onHero : Palette.ink)
-                .fixedSize(horizontal: false, vertical: true)
-                .contentTransition(.numericText())
-            if result.amount != 0 {
-                Text(result.amount > 0 ? positive : negative)
-                    .font(.caption)
-                    .foregroundStyle(onHero ? Palette.onHero.opacity(0.62) : .secondary)
-            }
-        } else if needsConversion {
-            Text(fx.refreshing ? "Getting today’s rates…" : "Rates unavailable offline")
-                .font(.caption)
-                .foregroundStyle(onHero ? Palette.onHero.opacity(0.62) : .secondary)
-        }
-    }
-
-    private var caption: String {
-        var parts = ["Approximate, at today’s rate"]
-        let sources = Array(Set(result.quotes.map { $0.source == "Frankfurter" ? "Frankfurter · ECB" : $0.source == "BCRA" ? "BCRA official" : "your rate" })).sorted()
-        if !sources.isEmpty { parts.append(sources.joined(separator: ", ")) }
-        if let day = result.quotes.map(\.date).filter({ !$0.isEmpty }).min() { parts.append(FXQuote.shortDay(day)) }
-        if fx.offline { parts.append("offline, last saved rates") }
-        if !result.missing.isEmpty { parts.append("excludes " + result.missing.joined(separator: ", ")) }
-        return parts.joined(separator: " · ")
-    }
-}
-
-/// A small standalone converter. Free: published rates from Frankfurter (ECB) and BCRA, or your own.
 struct ConverterView: View {
     var initialAmount: Int64? = nil
     var from: String? = nil
     var to: String? = nil
+
     @EnvironmentObject private var fx: FXStore
     @Environment(\.dismiss) private var dismiss
     @State private var amount = ""
-    @State private var base = "USD"
-    @State private var quote = "ARS"
-    @State private var useOwn = false
+    @State private var base = "ARS"
+    @State private var quote = "USD"
+    @State private var historical = false
+    @State private var date = Date.now
+    @State private var revision = 0
+    @State private var forceNextLookup = false
+    @State private var loadedKey: [String] = []
+    @State private var published: FXQuote?
+    @State private var usingSavedRate = false
+    @State private var editingRate = false
     @State private var ownRate = ""
-    @State private var loading = false
-    @State private var failure: String?
     @State private var initialized = false
-    @FocusState private var amountFocused: Bool
 
-    private var rate: FXQuote? { fx.rate(base, quote) }
-    private var minor: Int64? { Money.parse(amount) }
-    private var converted: Int64? {
-        guard let minor, let rate else { return nil }
-        return FXMath.convert(minor, rateE8: rate.rateE8)
+    private var day: String { Exchange.localDay(date) }
+    private var lookupKey: [String] { [base, quote, historical ? day : "", String(revision), String(initialized)] }
+    private var matchesLookup: Bool { loadedKey == lookupKey }
+    private var manual: FXQuote? {
+        guard !historical, base != quote, let rate = fx.rate(base, quote), rate.source == "Manual" else { return nil }
+        return rate
+    }
+    private var rate: FXQuote? {
+        if base == quote { return fx.rate(base, quote) }
+        return manual ?? (matchesLookup ? published : nil)
+    }
+    private var result: String? {
+        guard let value = Money.parse(amount), let rate,
+              let converted = FXMath.convert(value, rateE8: rate.rateE8) else { return nil }
+        return (base == quote ? "" : "≈ ") + Money.text(converted, quote)
     }
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: Spacing.section) {
-                    Card {
-                        VStack(alignment: .leading, spacing: 14) {
-                            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                                currencyMenu($base, label: "From")
-                                TextField("0.00", text: $amount)
-                                    .font(.splitAmount(30))
-                                    .keyboardType(.decimalPad)
-                                    .multilineTextAlignment(.trailing)
-                                    .focused($amountFocused)
-                                    .accessibilityLabel("Amount in \(base)")
-                            }
-                            HStack {
-                                Rectangle().fill(Palette.line).frame(height: 1)
-                                Button {
-                                    swap(&base, &quote)
-                                } label: {
-                                    Image(systemName: "arrow.up.arrow.down")
-                                }
-                                .buttonStyle(IconButton())
-                                .accessibilityLabel("Swap currencies")
-                                Rectangle().fill(Palette.line).frame(height: 1)
-                            }
-                            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                                currencyMenu($quote, label: "To")
-                                Spacer()
-                                Text(converted.map { Money.input($0) } ?? "—")
-                                    .font(.splitAmount(30, weight: .bold))
-                                    .foregroundStyle(Palette.ink)
-                                    .lineLimit(1)
-                                    .minimumScaleFactor(0.5)
-                                    .contentTransition(.numericText())
-                                    .accessibilityLabel(converted.map { Money.text($0, quote) } ?? "No result")
-                            }
-                        }
+                VStack(alignment: .leading, spacing: Spacing.s) {
+                    amountCard
+                    if base != quote {
+                        rateCard
+                        if !historical { manualCard }
                     }
-                    rateCard
-                    Label("Free for everyone. Rates come from Frankfurter (European Central Bank) and, for pesos, the BCRA official rate. No account or subscription needed.", systemImage: "gift")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
                 }
                 .padding(Spacing.page)
                 .frame(maxWidth: 560)
@@ -182,92 +57,187 @@ struct ConverterView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
             .onAppear(perform: initialize)
-            .task(id: base + quote) { await load() }
+            .task(id: lookupKey) { if initialized { await load() } }
+            .onChange(of: [base, quote]) {
+                editingRate = false
+                ownRate = ""
+            }
+        }
+    }
+
+    private var amountCard: some View {
+        Card {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .bottom, spacing: 8) {
+                    currencyMenu($base, label: "From")
+                    Button {
+                        let prior = base
+                        base = quote
+                        quote = prior
+                    } label: {
+                        Image(systemName: "arrow.left.arrow.right")
+                    }
+                    .buttonStyle(IconButton())
+                    .accessibilityLabel("Swap currencies")
+                    currencyMenu($quote, label: "To")
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Amount in \(base)").font(.subheadline).foregroundStyle(.secondary)
+                    TextField("0.00", text: $amount)
+                        .font(.splitAmount(30))
+                        .keyboardType(.decimalPad)
+                        .accessibilityLabel("Amount in \(base)")
+                }
+                Divider()
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(base == quote ? "Amount in \(quote)" : "Estimated amount in \(quote)")
+                        .font(.subheadline).foregroundStyle(.secondary)
+                    Text(result ?? "—")
+                        .font(.splitAmount(32, weight: .bold))
+                        .foregroundStyle(Palette.evergreen)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.55)
+                        .contentTransition(.numericText())
+                        .accessibilityIdentifier("conversion-result")
+                }
+            }
         }
     }
 
     private var rateCard: some View {
         Card {
             VStack(alignment: .leading, spacing: 12) {
-                if let rate, base != quote {
+                SectionHeader(title: "Exchange rate")
+                Picker("Rate date", selection: $historical) {
+                    Text("Latest").tag(false)
+                    Text("By date").tag(true)
+                }
+                .pickerStyle(.segmented)
+                if historical {
+                    DatePicker("Rate date", selection: $date, in: ...Date.now, displayedComponents: .date)
+                }
+                if let rate {
                     Text("1 \(base) = \(FXMath.rateText(rate.rateE8)) \(quote)")
                         .font(.headline)
-                        .foregroundStyle(Palette.ink)
-                    Text(rate.source == "Manual" ? "Your rate, saved on this device" : rate.sourceLabel + (fx.offline ? " · offline, last saved rate" : ""))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } else if loading {
-                    HStack(spacing: 8) { ProgressView(); Text("Getting today’s rate…").font(.subheadline).foregroundStyle(.secondary) }
-                } else if let failure {
-                    InlineError(text: failure)
-                }
-                Toggle(isOn: $useOwn) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Use my own rate").font(.subheadline.weight(.semibold))
-                        Text([base, quote].contains("ARS") ? "For the blue dollar or a cash rate. BCRA official stays the default." : "For a card or cash rate.")
+                        .fixedSize(horizontal: false, vertical: true)
+                    if rate.source == "Manual" {
+                        Text("Your rate · saved on this device")
                             .font(.caption).foregroundStyle(.secondary)
+                    } else {
+                        LabeledContent("Source", value: rate.source == "BCRA" ? "BCRA via Frankfurter" : "ECB via Frankfurter")
+                        LabeledContent("Published", value: Exchange.date(fromDay: rate.date)?.formatted(date: .abbreviated, time: .omitted) ?? rate.date)
+                        if usingSavedRate {
+                            Text("Showing a saved quote. The service couldn’t be reached.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        } else if historical && day != rate.date {
+                            Text("Showing the last published rate before the selected date.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
                     }
-                }
-                .onChange(of: useOwn) { _, on in
-                    if on { ownRate = rate.map { NSDecimalNumber(decimal: Decimal($0.rateE8) / 100_000_000).stringValue } ?? "" }
-                    else { fx.setManual(base, quote, rateE8: nil) }
-                }
-                if useOwn {
-                    HStack {
-                        Text("1 \(base) =").font(.subheadline).foregroundStyle(.secondary)
-                        TextField("Rate", text: $ownRate)
-                            .keyboardType(.decimalPad)
-                            .multilineTextAlignment(.trailing)
-                            .font(.splitAmount(17))
-                            .accessibilityLabel("Your rate, one \(base) in \(quote)")
-                        Text(quote).font(.subheadline).foregroundStyle(.secondary)
+                } else if !matchesLookup {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                        Text("Getting the exchange rate…").font(.subheadline).foregroundStyle(.secondary)
                     }
-                    .padding(.horizontal, 12)
-                    .frame(minHeight: 48)
-                    .background(Palette.raised, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    .onChange(of: ownRate) { _, text in fx.setManual(base, quote, rateE8: Exchange.units(text)) }
-                    Text("Used for approximate totals on this device. Expenses keep the rate saved with them.")
+                } else {
+                    InlineError(text: "No published rate was available for this lookup.")
+                }
+                if manual == nil && (!historical || (matchesLookup && published == nil)) {
+                    Button {
+                        forceNextLookup = !historical
+                        revision += 1
+                    } label: {
+                        Label(historical ? "Retry lookup" : "Refresh rate", systemImage: "arrow.clockwise")
+                    }
+                    .disabled(!matchesLookup)
+                }
+                Text("Reference rates are estimates. Your card or bank may charge a different rate or fees.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private var manualCard: some View {
+        Card {
+            DisclosureGroup(isExpanded: $editingRate) {
+                VStack(alignment: .leading, spacing: 8) {
+                    TextField("Rate in \(quote)", text: $ownRate)
+                        .keyboardType(.decimalPad)
+                        .textFieldStyle(.roundedBorder)
+                        .accessibilityLabel("Your rate, one \(base) in \(quote)")
+                    Text("Used for balance estimates on this device. Saved expenses keep their original rates.")
                         .font(.caption).foregroundStyle(.secondary)
+                    Button("Save rate") {
+                        guard let units = Exchange.units(ownRate) else { return }
+                        fx.setManual(base, quote, rateE8: units)
+                        editingRate = false
+                    }
+                    .disabled(Exchange.units(ownRate) == nil)
+                    if manual != nil {
+                        Button("Use published rate") {
+                            fx.setManual(base, quote, rateE8: nil)
+                            editingRate = false
+                            revision += 1
+                        }
+                    }
+                }
+                .padding(.top, 8)
+            } label: {
+                Text(manual == nil ? "Enter your own rate" : "Edit your rate").font(.subheadline.weight(.semibold))
+            }
+            .onChange(of: editingRate) { _, open in
+                if open {
+                    ownRate = manual.map { NSDecimalNumber(decimal: Decimal($0.rateE8) / 100_000_000).stringValue } ?? ""
                 }
             }
         }
     }
 
     private func currencyMenu(_ selection: Binding<String>, label: String) -> some View {
-        Menu {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label).font(.caption).foregroundStyle(.secondary).accessibilityHidden(true)
             Picker(label, selection: selection) {
                 ForEach(Money.currencies, id: \.self) { Text($0).tag($0) }
             }
-        } label: {
-            HStack(spacing: 4) {
-                Text(selection.wrappedValue).font(.headline)
-                Image(systemName: "chevron.down").font(.caption2.weight(.bold))
-            }
-            .padding(.horizontal, 12)
-            .frame(minHeight: 40)
-            .foregroundStyle(Palette.ink)
-            .glassCapsule(tint: Palette.card.opacity(0.4))
+            .pickerStyle(.menu)
+            .labelsHidden()
+            .frame(maxWidth: .infinity, minHeight: 44)
+            .background(Palette.raised, in: RoundedRectangle(cornerRadius: 12))
+            .accessibilityLabel("\(label) currency")
         }
-        .accessibilityLabel("\(label) currency, \(selection.wrappedValue)")
     }
 
     private func initialize() {
         guard !initialized else { return }
-        initialized = true
-        base = from ?? (fx.home == "ARS" ? "USD" : fx.home)
-        quote = to ?? (base == "ARS" ? "USD" : "ARS")
-        if base == quote { quote = Money.currencies.first { $0 != base } ?? "EUR" }
+        quote = to ?? fx.home
+        base = from ?? (quote == "USD" ? "ARS" : "USD")
         amount = initialAmount.map { Money.input($0) } ?? "100"
-        useOwn = fx.manualRate(base, quote) != nil
-        if let own = fx.manualRate(base, quote) { ownRate = NSDecimalNumber(decimal: Decimal(own) / 100_000_000).stringValue }
+        initialized = true
     }
 
     private func load() async {
-        guard base != quote else { return }
-        useOwn = fx.manualRate(base, quote) != nil
-        loading = true; failure = nil
-        await fx.refresh(currencies: [base], into: quote)
-        loading = false
-        if fx.rate(base, quote) == nil { failure = "No rate available. Check your connection or use your own rate." }
+        let key = lookupKey
+        let requestBase = base, requestQuote = quote
+        guard requestBase != requestQuote else { return }
+        let selectedDay = historical ? day : nil
+        let force = forceNextLookup
+        forceNextLookup = false
+        let result: FXQuote?
+        let saved: Bool
+        if let selectedDay {
+            result = try? await fx.quote(base: requestBase, target: requestQuote, date: selectedDay)
+            saved = result != nil && (selectedDay < Exchange.localDay(.now)
+                ? fx.cache.published(requestBase, requestQuote, day: selectedDay) == nil
+                : fx.offline)
+        } else {
+            await fx.refresh(currencies: [requestBase], into: requestQuote, force: force)
+            result = fx.cache.published(requestBase, requestQuote)
+            saved = fx.offline && result != nil
+        }
+        guard !Task.isCancelled, lookupKey == key else { return }
+        published = result
+        usingSavedRate = saved
+        loadedKey = key
     }
 }

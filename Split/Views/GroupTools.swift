@@ -23,7 +23,6 @@ struct GroupTools: View {
     @State private var start: Date?
     @State private var end: Date?
     @State private var weights: [String: String] = [:]
-    @State private var payment: [String: String] = [:]
     @State private var choose = false
     @State private var exporting = false
     @State private var export: (file: LedgerExportFile, type: UTType, name: String)?
@@ -32,9 +31,9 @@ struct GroupTools: View {
     @State private var message: String?
     @State private var error: String?
     @State private var confirmLeave = false
+    @State private var confirmDelete = false
     @State private var confirmArchive = false
     @State private var initialized = false
-    private let fields = [("venmo", "Venmo username"), ("paypal", "PayPal.Me username"), ("mercado", "Mercado Pago payment link"), ("alias", "Argentine alias or CVU")]
 
     private var current: ExpenseGroup { store.group(group.id) ?? group }
     private var entries: [LedgerEntry] { store.entries(in: current) }
@@ -131,19 +130,17 @@ struct GroupTools: View {
                     Text("Use 2 shares for a couple or 0 to exclude someone. You can change the split on each expense.")
                 }
 
-                Section {
-                    ForEach(fields, id: \.0) { field in
-                        TextField(field.1, text: Binding(get: { payment[field.0] ?? "" }, set: { payment[field.0] = $0 }))
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
+                if let me = current.members.first(where: { $0.userID == session.userID && $0.removed != true }) {
+                    Section {
+                        NavigationLink {
+                            PaymentSettings(groupID: current.id, initial: me.paymentOverride,
+                                            defaults: store.state.snapshot.paymentMethods ?? [])
+                        } label: {
+                            Label("Your payment methods", systemImage: "creditcard")
+                        }
+                    } footer: {
+                        Text(me.paymentOverride == nil ? "Using your profile payment methods." : "Using payment methods set for this group.")
                     }
-                    Button("Save payment details") {
-                        run { _ = try await store.groupAction(current.id, "payment-profile", payment); message = "Payment details saved." }
-                    }
-                } header: {
-                    Text("Your payment details")
-                } footer: {
-                    Text("Visible to this group when settling a balance.")
                 }
 
                 Section {
@@ -200,6 +197,9 @@ struct GroupTools: View {
                 Section {
                     Button(isArchived ? "Unarchive group" : "Archive group") { confirmArchive = true }
                     Button("Leave group", role: .destructive) { confirmLeave = true }
+                    if current.canDelete == true || store.isDemo {
+                        Button("Delete group", role: .destructive) { confirmDelete = true }
+                    }
                 } footer: {
                     Text(isArchived ? "This group is archived and hidden from your lists." : "Archiving hides the group without deleting its history. Leaving removes your access.")
                 }
@@ -233,6 +233,14 @@ struct GroupTools: View {
             } message: {
                 Text("You will lose access to its expenses. The group keeps its history for everyone else.")
             }
+            .confirmationDialog("Delete \(current.name)?", isPresented: $confirmDelete, titleVisibility: .visible) {
+                Button("Delete group", role: .destructive) {
+                    run { try await store.deleteGroup(current); dismiss() }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("This permanently removes the group, its expenses, receipts, and payments for everyone.")
+            }
             .fileExporter(isPresented: $exporting, document: export?.file, contentType: export?.type ?? .commaSeparatedText, defaultFilename: export?.name) {
                 if case .failure(let error) = $0 { self.error = error.localizedDescription }
             }
@@ -265,7 +273,6 @@ struct GroupTools: View {
         simplify = current.simplify ?? true
         let defaults = current.defaultWeights ?? [:]
         weights = Dictionary(uniqueKeysWithValues: current.members.map { ($0.id, String(defaults.isEmpty ? 1 : defaults[$0.id] ?? 0)) })
-        payment = current.members.first { $0.userID == session.userID }?.payment ?? [:]
     }
 
     private func run(_ work: @escaping @MainActor () async throws -> Void) {
@@ -283,37 +290,19 @@ struct PaymentActions: View {
     var member: Person
     var currency: String
     var amount: String
-    @State private var copied = false
+
     var body: some View {
-        if let payment = member.payment, !payment.isEmpty {
+        let methods = member.availablePaymentMethods
+        if !methods.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
-                Rectangle().fill(Palette.line).frame(height: 1)
-                Text("Pay \(member.name)").font(.subheadline.weight(.semibold)).foregroundStyle(Palette.ink)
-                if let name = payment["paypal"], let url = URL(string: "https://paypal.me/" + name + (Money.parse(amount).map { "/" + Money.input($0) + currency } ?? "")) {
-                    Link(destination: url) { Label("PayPal · \(name)", systemImage: "arrow.up.right") }
-                }
-                if let name = payment["venmo"], let url = URL(string: "https://venmo.com/u/" + name) {
-                    Link(destination: url) { Label("Venmo · \(name)", systemImage: "arrow.up.right") }
-                }
-                if let link = payment["mercado"], let url = URL(string: link) {
-                    Link(destination: url) { Label("Mercado Pago", systemImage: "arrow.up.right") }
-                }
-                if let alias = payment["alias"] {
-                    Button {
-                        UIPasteboard.general.string = alias
-                        copied = true
-                    } label: {
-                        Label(copied ? "Alias copied" : "Copy alias / CVU · \(alias)", systemImage: copied ? "checkmark" : "doc.on.doc")
-                    }
-                    .buttonStyle(.plain)
-                }
+                Divider()
+                Text("Pay \(member.name)").font(.subheadline.weight(.semibold))
+                PaymentOptions(methods: methods, amount: Money.parse(amount), currency: currency)
                 Text("Confirm the recipient and \(currency) \(amount) in your payment app. Return here to record the completed payment.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            .font(.subheadline.weight(.semibold))
-            .foregroundStyle(Palette.evergreen)
         }
     }
 }

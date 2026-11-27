@@ -18,6 +18,7 @@ import {
   type ExpenseComment,
   type Group,
   type Snapshot,
+  type PaymentMethod,
 } from "./data";
 import { createDemoState, DEMO_USER } from "./demo";
 import { ExpenseForm } from "./expense";
@@ -182,7 +183,7 @@ function DemoLedger({ onExit }: { onExit: () => void }) {
       // Create group
       if (path === "/v1/groups" && body) {
         const b = body as Group;
-        setData((prev) => ({ ...prev, groups: [b, ...prev.groups] }));
+        setData((prev) => ({ ...prev, groups: [{ ...b, canDelete: true, members: b.members.map((m) => m.userID === DEMO_USER ? { ...m, paymentMethods: prev.paymentMethods } : m) }, ...prev.groups] }));
         return { ok: true } as T;
       }
 
@@ -216,23 +217,38 @@ function DemoLedger({ onExit }: { onExit: () => void }) {
         return { ok: true } as T;
       }
 
-      // Payment profile
-      const payMatch = path.match(/^\/v1\/groups\/([\w-]+)\/payment-profile$/);
-      if (payMatch && body) {
-        const gid = payMatch[1];
+      const deleteGroup = path.match(/^\/v1\/groups\/([\w-]+)\/delete$/);
+      if (deleteGroup && body) {
+        const id = deleteGroup[1];
+        if (!data.groups.find((group) => group.id === id)?.canDelete) throw new Error("Only the group creator can delete this group.");
         setData((prev) => ({
           ...prev,
-          groups: prev.groups.map((g) =>
-            g.id !== gid
-              ? g
-              : {
-                  ...g,
-                  members: g.members.map((m) =>
-                    m.userID === DEMO_USER ? { ...m, payment: body as Record<string, string> } : m,
-                  ),
-                },
-          ),
+          groups: prev.groups.filter((group) => group.id !== id),
+          entries: prev.entries.filter((entry) => entry.groupID !== id),
+          settlementRequests: prev.settlementRequests?.filter((entry) => entry.groupID !== id),
         }));
+        delete invitesRef.current[id];
+        return { ok: true } as T;
+      }
+
+      const payMatch = path.match(/^\/v1\/groups\/([\w-]+)\/payment-profile$/);
+      if ((payMatch || path === "/v1/profile/payment-methods") && body) {
+        const { methods } = body as { methods: PaymentMethod[] | null };
+        setData((prev) => {
+          const paymentMethods = payMatch ? prev.paymentMethods : methods ?? [];
+          return {
+            ...prev,
+            paymentMethods,
+            groups: prev.groups.map((group) => payMatch && group.id !== payMatch[1] ? group : {
+              ...group,
+              members: group.members.map((person) => {
+                if (person.userID !== DEMO_USER) return person;
+                const paymentOverride = payMatch ? methods ?? undefined : person.paymentOverride;
+                return { ...person, paymentOverride, paymentMethods: paymentOverride ?? paymentMethods ?? [] };
+              }),
+            }),
+          };
+        });
         return { ok: true } as T;
       }
 

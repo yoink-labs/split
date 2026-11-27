@@ -88,6 +88,13 @@ import XCTest
         XCTAssertEqual(SnapshotMerge.ordered(a.reversed()).map(\.id), once, "input order must not change row order")
     }
 
+    func testRefreshCarriesProfilePaymentMethods() {
+        let method = PaymentMethod(platform: "zelle", handle: "alex@example.com", preferred: true)
+        let remote = Snapshot(paymentMethods: [method])
+        let merged = SnapshotMerge.merge(remote: remote, local: Snapshot(), pendingIDs: [])
+        XCTAssertEqual(merged.paymentMethods, [method])
+    }
+
     func testUnchangedSnapshotCompareEqual() {
         let snapshot = Fixtures.snapshot()
         let merged = SnapshotMerge.merge(remote: snapshot, local: snapshot, pendingIDs: [])

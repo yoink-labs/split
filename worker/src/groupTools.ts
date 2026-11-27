@@ -1,5 +1,6 @@
 import {HTTPError, body, json} from './http';
 import {currencies, Entry, InputError} from './ledger';
+import {saveGroupPayments} from './paymentProfiles';
 
 export function nextDate(day:string,cadence:string,anchor:number) {
   const date=new Date(day+'T12:00:00Z');
@@ -36,7 +37,7 @@ export async function groupTools(req:Request,env:Env,user:string) {
   const [,group,action]=match;
   const seat=await env.DB.prepare('SELECT id FROM members WHERE group_id=? AND user_id=?').bind(group,user).first<{id:string}>();
   if(!seat) throw new HTTPError(403,'Join the group first.');
-  const b=await body(req,action==='import'?512000:32768);
+  const b=await body(req,action==='import'?512000:65536);
   if(action==='import') return importRows(env.DB,group,user,b);
   if(action==='trip-rate') {
     const trip=await env.DB.prepare(`SELECT g.currency FROM groups g JOIN members m ON m.group_id=g.id
@@ -57,13 +58,7 @@ export async function groupTools(req:Request,env:Env,user:string) {
       if(!result.meta.changes) throw new HTTPError(409,'The trip changed. Refresh and try again.');
     }
   } else if(action==='payment-profile') {
-    const details:Record<string,string>={};
-    for(const [k,pattern] of Object.entries({venmo:/^[A-Za-z0-9_-]{1,40}$/,paypal:/^[A-Za-z0-9]{1,40}$/,mercado:/^https:\/\/(?:link\.mercadopago\.com\.ar|mpago\.la|mpago\.ar)\/[\w-]{1,100}\/?$/,alias:/^(?:[0-9]{22}|[a-zA-Z0-9.-]{6,20})$/})) {
-      if(!b[k]) continue;
-      if(typeof b[k]!=='string' || !pattern.test(b[k] as string)) throw new InputError('Check your payment handles, Argentine alias or CVU.');
-      details[k]=b[k] as string;
-    }
-    await env.DB.prepare('INSERT INTO payment_profiles VALUES (?,?) ON CONFLICT(member_id) DO UPDATE SET details=excluded.details').bind(seat.id,JSON.stringify(details)).run();
+    return saveGroupPayments(env.DB,group,user,b);
   } else if(action==='default-split') {
     const ids=(await env.DB.prepare('SELECT id FROM members WHERE group_id=? AND id NOT IN (SELECT member_id FROM member_aliases)').bind(group).all<{id:string}>()).results.map(m=>m.id);
     if(!b.weights || Array.isArray(b.weights) || typeof b.weights!=='object') throw new InputError('Choose default weights.');

@@ -1,6 +1,18 @@
 import XCTest
 @testable import Split
 final class LedgerTests: XCTestCase {
+    func testPaymentLinksAndLegacyHandles() throws {
+        let legacy = try JSONDecoder().decode(Person.self, from: Data("""
+        {"id":"seat","groupID":"group","name":"Alex","payment":{"venmo":"alex"}}
+        """.utf8))
+        XCTAssertEqual(legacy.availablePaymentMethods.first?.url()?.absoluteString, "https://venmo.com/u/alex")
+        XCTAssertEqual(PaymentMethod(platform: "paypal", handle: "Alex").url(amount: 1005, currency: "USD")?.absoluteString,
+                       "https://paypal.me/Alex/10.05USD")
+        XCTAssertNil(PaymentMethod(platform: "paypal", handle: "https://paypal.me.example.com/Alex").url())
+        XCTAssertNil(PaymentMethod(platform: "zelle", handle: "alex@example.com").url())
+        XCTAssertNil(PaymentMethod(platform: "Other", handle: "javascript:alert(1)").url())
+    }
+
     func testSettlementOptimizationAndFrozenRate() throws {
         let balance:[String:Int64]=["a":-8,"b":-7,"c":-5,"d":5,"e":7,"f":8]
         XCTAssertEqual(Ledger.plan(balance,currency:"ARS").count,3)

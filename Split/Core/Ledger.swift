@@ -8,6 +8,12 @@ struct Person: Codable, Identifiable, Equatable {
     var email: String?
     var phone: String?
     var payment:[String:String]?
+    var paymentMethods: [PaymentMethod]?
+    var paymentOverride: [PaymentMethod]?
+    var availablePaymentMethods: [PaymentMethod] {
+        guard removed != true else { return [] }
+        return paymentMethods ?? (payment ?? [:]).sorted { $0.key < $1.key }.map { PaymentMethod(platform: $0.key, handle: $0.value) }
+    }
     var removed: Bool?
 }
 struct ExpenseGroup: Codable, Identifiable, Equatable {
@@ -24,6 +30,7 @@ struct ExpenseGroup: Codable, Identifiable, Equatable {
     var startDate: String?
     var endDate: String?
     var tripRates: [String: Int64]?
+    var canDelete: Bool?
     var symbol: String { kind == "trip" ? "airplane" : kind == "home" ? "house.fill" : "person.2.fill" }
     var isFriend: Bool { kind == "friend" }
 
@@ -111,6 +118,7 @@ struct Snapshot: Codable, Equatable {
     var groups: [ExpenseGroup] = []
     var entries: [LedgerEntry] = []
     var settlementRequests: [LedgerEntry]?
+    var paymentMethods: [PaymentMethod]?
 }
 
 enum SettlementResponse: String {

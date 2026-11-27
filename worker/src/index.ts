@@ -1,3 +1,4 @@
+import { legacyPayment, paymentMethods, saveAccountPayments } from './paymentProfiles';
 import { preserveStatementAmount } from './exchange';
 import {groupTools,generateRecurring} from './groupTools';
 import { purchaseRoute, attachments } from './receipts';
@@ -11,7 +12,7 @@ import { currencies, entryPayers, InputError, validID, validateEntry } from './l
 import { importSplitwise } from './splitwiseImport';
 import { pendingSettlements, proposeSettlement, respondToSettlement } from './settlements';
 const jwks = createRemoteJWKSet(new URL('https://clerk.yoinklabs.dev/.well-known/jwks.json'));
-interface Member {id:string; groupID:string; userID:string|null; name:string; email?:string; phone?:string; payment?:string; removedAt?:string|null; avatarURL?:string|null}
+interface Member {id:string; groupID:string; userID:string|null; name:string; email?:string; phone?:string; payment?:string; accountPayment?:string; viewerRemoved?:string|null; removedAt?:string|null; avatarURL?:string|null}
 export function validParty(azp: unknown, webOrigin: string) {
   return azp === undefined || (typeof azp === 'string' && [webOrigin, 'com.yoinklabs.split', 'https://yoinklabs.dev', 'https://www.yoinklabs.dev'].includes(azp));
 }
@@ -49,35 +50,33 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
   if(purchase) return purchase;
   const social=await socialRoute(request,env,userID);
   if(social) return social;
+  if(path==='/v1/profile/payment-methods' && request.method==='POST')
+    return saveAccountPayments(request,env.DB,userID);
   if(path==='/v1/snapshot' && request.method==='GET') {
-    type SnapshotGroup={id:string;name:string;kind:string;currency:string;simplify?:number;archivedAt?:string|null;description?:string|null;startDate?:string|null;endDate?:string|null;weights:string|null;createdAt:string};
+    type SnapshotGroup={id:string;creator:string;name:string;kind:string;currency:string;simplify?:number;archivedAt?:string|null;description?:string|null;startDate?:string|null;endDate?:string|null;weights:string|null;createdAt:string};
     let groups: SnapshotGroup[];
     try {
-      groups=(await env.DB.prepare('SELECT g.id,g.name,g.kind,g.currency,g.simplify,g.archived_at AS archivedAt,g.description,g.start_date AS startDate,g.end_date AS endDate,(SELECT weights FROM group_splits WHERE group_id=g.id) AS weights,g.created_at AS createdAt FROM groups g JOIN members m ON g.id=m.group_id WHERE m.user_id=? ORDER BY g.created_at DESC LIMIT 101').bind(userID).all<SnapshotGroup>()).results;
+      groups=(await env.DB.prepare('SELECT g.id,g.creator,g.name,g.kind,g.currency,g.simplify,g.archived_at AS archivedAt,g.description,g.start_date AS startDate,g.end_date AS endDate,(SELECT weights FROM group_splits WHERE group_id=g.id) AS weights,g.created_at AS createdAt FROM groups g JOIN members m ON g.id=m.group_id WHERE m.user_id=? ORDER BY g.created_at DESC LIMIT 101').bind(userID).all<SnapshotGroup>()).results;
     } catch {
       try {
-        groups=(await env.DB.prepare('SELECT g.id,g.name,g.kind,g.currency,g.simplify,g.archived_at AS archivedAt,(SELECT weights FROM group_splits WHERE group_id=g.id) AS weights,g.created_at AS createdAt FROM groups g JOIN members m ON g.id=m.group_id WHERE m.user_id=? ORDER BY g.created_at DESC LIMIT 101').bind(userID).all<SnapshotGroup>()).results;
+        groups=(await env.DB.prepare('SELECT g.id,g.creator,g.name,g.kind,g.currency,g.simplify,g.archived_at AS archivedAt,(SELECT weights FROM group_splits WHERE group_id=g.id) AS weights,g.created_at AS createdAt FROM groups g JOIN members m ON g.id=m.group_id WHERE m.user_id=? ORDER BY g.created_at DESC LIMIT 101').bind(userID).all<SnapshotGroup>()).results;
       } catch {
-        groups=(await env.DB.prepare('SELECT g.id,g.name,g.kind,g.currency,1 AS simplify,NULL AS archivedAt,(SELECT weights FROM group_splits WHERE group_id=g.id) AS weights,g.created_at AS createdAt FROM groups g JOIN members m ON g.id=m.group_id WHERE m.user_id=? ORDER BY g.created_at DESC LIMIT 101').bind(userID).all<SnapshotGroup>()).results;
+        groups=(await env.DB.prepare('SELECT g.id,g.creator,g.name,g.kind,g.currency,1 AS simplify,NULL AS archivedAt,(SELECT weights FROM group_splits WHERE group_id=g.id) AS weights,g.created_at AS createdAt FROM groups g JOIN members m ON g.id=m.group_id WHERE m.user_id=? ORDER BY g.created_at DESC LIMIT 101').bind(userID).all<SnapshotGroup>()).results;
       }
     }
     if(groups.length>100) throw new HTTPError(409,'This beta supports up to 100 groups.');
     const aliases = new Map((await env.DB.prepare(`SELECT a.member_id, a.canonical_id FROM member_aliases a
       JOIN members m ON m.id=a.canonical_id JOIN members viewer ON viewer.group_id=m.group_id WHERE viewer.user_id=?`)
       .bind(userID).all<{member_id:string;canonical_id:string}>()).results.map(a=>[a.member_id,a.canonical_id]));
-    let visible: Member[];
-    let avatarURL: string | null | undefined;
-    try {
-      visible=(await env.DB.prepare(`SELECT m.id,m.group_id AS groupID,m.user_id AS userID,m.name,m.removed_at AS removedAt,
-        (SELECT avatar_url FROM user_avatars WHERE user_id=m.user_id) AS avatarURL,
-        (SELECT details FROM payment_profiles WHERE member_id=m.id) AS payment FROM members m
-        JOIN members viewer ON viewer.group_id=m.group_id WHERE viewer.user_id=? ORDER BY m.rowid`).bind(userID).all<Member>()).results;
-      avatarURL = visible.find(m => m.userID===userID)?.avatarURL
-        ?? (groups.length ? null : await env.DB.prepare('SELECT avatar_url FROM user_avatars WHERE user_id=?').bind(userID).first<string>('avatar_url'));
-    } catch {
-      visible=(await env.DB.prepare(`SELECT m.id,m.group_id AS groupID,m.user_id AS userID,m.name,(SELECT details FROM payment_profiles WHERE member_id=m.id) AS payment FROM members m
-        JOIN members viewer ON viewer.group_id=m.group_id WHERE viewer.user_id=? ORDER BY m.rowid`).bind(userID).all<Member>()).results;
-    }
+    const visible=(await env.DB.prepare(`SELECT m.id,m.group_id AS groupID,m.user_id AS userID,m.name,
+      m.removed_at AS removedAt,viewer.removed_at AS viewerRemoved,
+      (SELECT details FROM account_payment_profiles WHERE user_id=m.user_id) AS accountPayment,
+      (SELECT avatar_url FROM user_avatars WHERE user_id=m.user_id) AS avatarURL,
+      (SELECT details FROM payment_profiles WHERE member_id=m.id) AS payment FROM members m
+      JOIN members viewer ON viewer.group_id=m.group_id WHERE viewer.user_id=? ORDER BY m.rowid`)
+      .bind(userID).all<Member>()).results;
+    const avatarURL = visible.find(m => m.userID===userID)?.avatarURL
+      ?? (groups.length ? null : await env.DB.prepare('SELECT avatar_url FROM user_avatars WHERE user_id=?').bind(userID).first<string>('avatar_url'));
     const tripRates=new Map<string,Record<string,number>>();
     if(groups.some(g=>g.kind==='trip')) {
       try {
@@ -94,7 +93,7 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
         if(!String(err).includes('no such table: trip_exchange_rates')) throw err;
       }
     }
-    const all=groups.map(({weights,simplify,archivedAt,description,startDate,endDate,...g})=>{
+    const all=groups.map(({creator,weights,simplify,archivedAt,description,startDate,endDate,...g})=>{
       const roster=visible.filter(m=>m.groupID===g.id && !aliases.has(m.id));
       const active=new Set(roster.filter(m=>!m.removedAt).map(m=>m.id));
       const defaults:Record<string,number>={};
@@ -102,16 +101,18 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
         const key=aliases.get(id)??id;
         if(active.has(key)) defaults[key]=(defaults[key]??0)+w;
       }
-      return {...g,simplify:Boolean(simplify),archived:Boolean(archivedAt),
+      return {...g,canDelete:creator===userID && roster.some(m=>m.userID===userID && !m.removedAt),simplify:Boolean(simplify),archived:Boolean(archivedAt),
         ...(description?{description}:{}),...(startDate?{startDate}:{}),...(endDate?{endDate}:{}),
         defaultWeights:defaults,
         ...(tripRates.has(g.id)?{tripRates:tripRates.get(g.id)}:{}),
-        members:roster.map(({payment,removedAt,avatarURL,...m})=>({
-          ...m,
-          payment:JSON.parse(payment??'{}'),
-          ...(removedAt?{removed:true}:{}),
-          ...(avatarURL?{avatarURL}:{})
-        }))};
+        members:roster.map(({payment,accountPayment,viewerRemoved,removedAt,avatarURL,...m})=>{
+          const override=!removedAt && !viewerRemoved ? paymentMethods(payment) : undefined;
+          const methods=!removedAt && !viewerRemoved ? override ?? paymentMethods(accountPayment) ?? [] : [];
+          return {...m,payment:legacyPayment(methods),paymentMethods:methods,
+            ...(m.userID===userID && override!==undefined ? {paymentOverride:override} : {}),
+            ...(removedAt?{removed:true}:{}),
+            ...(avatarURL?{avatarURL}:{})};
+        })};
     });
     type SnapshotEntryRow={payload:string;author:string;recurrence:string|null;photos:string;commentCount:number;likeCount:number;likedByMe:number};
     let entries: SnapshotEntryRow[];
@@ -135,7 +136,8 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
     if(entries.length>5000)throw new HTTPError(409,'This beta supports up to 5,000 entries. Export support is coming.');
     const settlementRequests=(await pendingSettlements(env.DB,userID))
       .map(row => resolveEntry(JSON.parse(row.payload),aliases));
-    return json({userID,settlementRequests,...(avatarURL ? {avatarURL} : {}),groups:all,entries:entries.map(e=>({...resolveEntry(JSON.parse(e.payload),aliases), recurrence:e.recurrence,receiptIDs:JSON.parse(e.photos),editable:e.author===userID,
+    const profilePayment=await env.DB.prepare('SELECT details FROM account_payment_profiles WHERE user_id=?').bind(userID).first<string>('details');
+    return json({userID,paymentMethods:paymentMethods(profilePayment)??[],settlementRequests,...(avatarURL ? {avatarURL} : {}),groups:all,entries:entries.map(e=>({...resolveEntry(JSON.parse(e.payload),aliases), recurrence:e.recurrence,receiptIDs:JSON.parse(e.photos),editable:e.author===userID,
       commentCount:Number(e.commentCount),likeCount:Number(e.likeCount),likedByMe:Boolean(e.likedByMe)}))});
   }
   if(path==='/v1/import/splitwise' && request.method==='POST') return importSplitwise(env.DB,userID,await body(request,2_000_000));

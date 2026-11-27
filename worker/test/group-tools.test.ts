@@ -149,3 +149,91 @@ describe('Group tools',()=>{
     expect(snap.groups[0].members).toHaveLength(3);
   });
 });
+
+describe('Payment preferences and group deletion', () => {
+  async function addSecondGroup() {
+    await env.DB.prepare("UPDATE members SET user_id='guest' WHERE id=?").bind(guest).run();
+    await call('/v1/groups', {
+      id: 'another-group', name: 'Another group', kind: 'home', currency: 'USD',
+      members: [{ id: 'another-owner', name: 'Alex', userID: 'owner' }],
+    });
+  }
+
+  it('inherits profile methods, preserves legacy handles, and scopes overrides to the group', async () => {
+    await addSecondGroup();
+    const defaults = [
+      { platform: 'zelle', handle: 'alex@example.com', preferred: true },
+      { platform: 'Local wire', handle: 'Account ID / álëx' },
+    ];
+    await call('/v1/profile/payment-methods', { methods: defaults, userID: 'guest' });
+    const other = async () => (await call('/v1/snapshot', undefined, 'guest'));
+    const ownerInGroup = async () => (await other()).groups[0].members.find((person: { id: string }) => person.id === owner);
+    expect((await other()).paymentMethods).toEqual([]);
+    expect((await call('/v1/snapshot')).paymentMethods).toEqual(defaults);
+    expect((await ownerInGroup()).paymentMethods).toEqual(defaults);
+    expect((await ownerInGroup()).paymentOverride).toBeUndefined();
+    expect(await call('/v1/snapshot', undefined, 'stranger')).toMatchObject({ groups: [], paymentMethods: [] });
+
+    await call(path + 'payment-profile', { venmo: 'alex-expenses' });
+    expect((await ownerInGroup()).paymentMethods).toEqual([{ platform: 'venmo', handle: 'alex-expenses' }]);
+    const override = [{ platform: 'paypal', handle: 'alex+trip@example.com', preferred: true }];
+    await call(path + 'payment-profile', { methods: override, memberID: guest });
+    expect((await ownerInGroup()).paymentMethods).toEqual(override);
+    const own = (await call('/v1/snapshot')).groups.find((g: { id: string }) => g.id === group);
+    expect(own.members.find((person: { id: string }) => person.id === owner).paymentOverride).toEqual(override);
+    expect(own.members.find((person: { id: string }) => person.id === guest).paymentMethods).toEqual([]);
+    expect((await call('/v1/snapshot')).groups.find((g: { id: string }) => g.id === 'another-group').members[0].paymentMethods).toEqual(defaults);
+
+    await call(path + 'payment-profile', { methods: [] });
+    expect((await ownerInGroup()).paymentMethods).toEqual([]);
+    await call(path + 'payment-profile', { methods: null });
+    expect((await ownerInGroup()).paymentMethods).toEqual(defaults);
+    await expect(call('/v1/profile/payment-methods', { methods: [defaults[0], defaults[0]] })).rejects.toThrow('one preferred');
+    await expect(call('/v1/profile/payment-methods', { methods: [{ platform: 'zelle', handle: 'line\nbreak' }] })).rejects.toThrow('one line');
+
+    await env.DB.prepare('UPDATE members SET removed_at=? WHERE id=?').bind('2025-01-01', guest).run();
+    expect((await ownerInGroup()).paymentMethods).toEqual([]);
+    await expect(call(path + 'payment-profile', { methods: defaults }, 'guest')).rejects.toThrow('Only active members');
+  });
+
+  it('deletes a shared group and its dependent data only as its active creator', async () => {
+    await addSecondGroup();
+    await call('/v1/profile/payment-methods', { methods: [{ platform: 'zelle', handle: 'alex@example.com' }] });
+    await call(path + 'payment-profile', { methods: [{ platform: 'zelle', handle: 'alex+group@example.com' }] });
+    await call(path + 'repeat', { entryID: entry.id, cadence: 'weekly' });
+    await call(path + 'default-split', { weights: { [owner]: 2 } });
+    await call('/v1/entries', { ...entry, id: 'deleted-expense' });
+    await call('/v1/entries/deleted-expense/delete', {});
+    await env.DB.batch([
+      env.DB.prepare('INSERT INTO receipts VALUES (?,?,?)').bind(entry.id, 'photo', new Uint8Array([1, 2, 3, 4])),
+      env.DB.prepare('INSERT INTO entry_comments VALUES (?,?,?,?,?,?,?)').bind('comment', entry.id, group, 'owner', 'Alex', 'Lunch', entry.createdAt),
+      env.DB.prepare('INSERT INTO entry_reactions VALUES (?,?,?)').bind(entry.id, 'guest', entry.createdAt),
+      env.DB.prepare('INSERT INTO member_contacts(member_id,email) VALUES (?,?)').bind(guest, 'guest@example.com'),
+      env.DB.prepare('INSERT INTO members(id,group_id,name) VALUES (?,?,?)').bind('alias-seat', group, 'Alias'),
+      env.DB.prepare('INSERT INTO member_aliases VALUES (?,?)').bind('alias-seat', guest),
+      env.DB.prepare('INSERT INTO invites VALUES (?,?,?,?)').bind('member-token', group, 'alias-seat', Date.now() + 60000),
+      env.DB.prepare('INSERT INTO group_invites VALUES (?,?,?)').bind('group-token', group, Date.now() + 60000),
+      env.DB.prepare('INSERT INTO settlement_requests(id,group_id,author,payer_id,recipient_id,payload,created_at) VALUES (?,?,?,?,?,?,?)')
+        .bind('request', group, 'owner', owner, guest, JSON.stringify(entry), entry.createdAt),
+    ]);
+    expect((await call('/v1/snapshot', undefined, 'guest')).groups[0].canDelete).toBe(false);
+    await expect(call(path + 'delete', {}, 'guest')).rejects.toMatchObject({ status: 403 });
+    await expect(call(path + 'delete', {}, 'stranger')).rejects.toMatchObject({ status: 403 });
+    await env.DB.prepare('UPDATE members SET removed_at=? WHERE id=?').bind('2025-01-01', owner).run();
+    await expect(call(path + 'delete', {})).rejects.toMatchObject({ status: 403 });
+    await env.DB.prepare('UPDATE members SET removed_at=NULL WHERE id=?').bind(owner).run();
+    expect((await call('/v1/snapshot')).groups.find((g: { id: string }) => g.id === group).canDelete).toBe(true);
+
+    await expect(call(path + 'delete', {})).resolves.toEqual({ ok: true });
+    const own = await call('/v1/snapshot');
+    expect(own.groups.map((g: { id: string }) => g.id)).toEqual(['another-group']);
+    expect(own.entries).toEqual([]);
+    expect(own.paymentMethods).toEqual([{ platform: 'zelle', handle: 'alex@example.com' }]);
+    expect((await call('/v1/snapshot', undefined, 'guest')).groups).toEqual([]);
+    for (const table of ['receipts', 'entry_comments', 'entry_reactions', 'member_contacts', 'member_aliases', 'invites',
+      'group_invites', 'payment_profiles', 'settlement_requests', 'deleted_entries', 'group_splits', 'recurring']) {
+      expect(await env.DB.prepare('SELECT count(*) AS n FROM ' + table).first('n'), table).toBe(0);
+    }
+    expect(await env.DB.prepare('SELECT bytes FROM receipt_usage').first('bytes')).toBe(0);
+  });
+});

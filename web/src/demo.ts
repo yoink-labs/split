@@ -55,7 +55,7 @@ export function createDemoState() {
     simplify: true,
     members: [
       { id: "m-harris", name: "Harris", userID: DEMO_USER, avatarURL: "preset:cobalt", payment: { venmo: "harris-k", paypal: "harrisk", alias: "harris.split.mp" } },
-      { id: "m-maya", name: "Maya Lin", userID: "user-maya", avatarURL: "preset:emerald", payment: { venmo: "mayalin", paypal: "mayalin" } },
+      { id: "m-maya", name: "Maya Lin", userID: "user-maya", avatarURL: "preset:emerald", paymentMethods: [{ platform: "zelle", handle: "maya@example.com", preferred: true }, { platform: "paypal", handle: "mayalin" }] },
       { id: "m-alex", name: "Alex Rivera", userID: "user-alex", avatarURL: "preset:indigo", payment: { venmo: "alexr" } },
       { id: "m-sam", name: "Sam Patel", userID: null, avatarURL: "preset:amber" },
       { id: "m-jordan", name: "Jordan Kim", userID: null, removed: true, avatarURL: "preset:slate" },
@@ -428,7 +428,10 @@ export function createDemoState() {
   };
 
   return {
-    snapshot: { userID: DEMO_USER, avatarURL: "preset:cobalt", groups: [gBA, gHome, gTokyo], entries } as Snapshot,
+    snapshot: { userID: DEMO_USER, avatarURL: "preset:cobalt", paymentMethods: [{ platform: "venmo", handle: "harris-k", preferred: true }],
+      groups: [gBA, gHome, gTokyo].map((group) => ({ ...group, canDelete: true, members: group.members.map((person) =>
+        person.userID === DEMO_USER ? { ...person, paymentMethods: [{ platform: "venmo", handle: "harris-k", preferred: true }] } : person
+      ) })), entries } as Snapshot,
     comments,
     invites,
     photos,

@@ -232,17 +232,52 @@ private struct ActiveInviteResponse: Decodable {
     }
 
     func leaveGroup(_ group: ExpenseGroup) async throws {
+        try await removeGroup(group, action: "leave")
+    }
+
+    func deleteGroup(_ group: ExpenseGroup) async throws {
+        try await removeGroup(group, action: "delete")
+    }
+
+    private func removeGroup(_ group: ExpenseGroup, action: String) async throws {
+        if !demo { _ = try await groupAction(group.id, action, [:]) }
+        var next = state
+        next.snapshot.groups.removeAll { $0.id == group.id }
+        let entryIDs = Set(next.snapshot.entries.filter { $0.groupID == group.id }.map(\.id))
+        next.snapshot.entries.removeAll { $0.groupID == group.id }
+        next.snapshot.settlementRequests?.removeAll { $0.groupID == group.id }
+        if action == "delete" {
+            next.receiptDrafts?.removeAll { $0.groupID == group.id }
+            next.unsentPayments?.removeAll { $0.groupID == group.id }
+        }
+        try persist(next)
+        for id in entryIDs { comments.removeValue(forKey: id) }
+    }
+
+    func savePaymentMethods(_ methods: [PaymentMethod]?, in groupID: String?) async throws {
+        struct Update: Encodable {
+            let methods: [PaymentMethod]?
+            func encode(to encoder: Encoder) throws {
+                var container = encoder.container(keyedBy: CodingKeys.self)
+                try container.encode(methods, forKey: .methods)
+            }
+            enum CodingKeys: String, CodingKey { case methods }
+        }
         if demo {
             var next = state
-            next.snapshot.groups.removeAll { $0.id == group.id }
-            next.snapshot.entries.removeAll { $0.groupID == group.id }
+            if groupID == nil { next.snapshot.paymentMethods = methods ?? [] }
+            for group in next.snapshot.groups.indices where groupID == nil || next.snapshot.groups[group].id == groupID {
+                let members = next.snapshot.groups[group].members
+                guard let index = members.firstIndex(where: { $0.userID == currentUserID }) else { continue }
+                if groupID != nil { next.snapshot.groups[group].members[index].paymentOverride = methods }
+                let override = next.snapshot.groups[group].members[index].paymentOverride
+                next.snapshot.groups[group].members[index].paymentMethods = override ?? next.snapshot.paymentMethods ?? []
+            }
             try persist(next)
         } else {
-            _ = try await groupAction(group.id, "leave", [:])
-            var next = state
-            next.snapshot.groups.removeAll { $0.id == group.id }
-            next.snapshot.entries.removeAll { $0.groupID == group.id }
-            try persist(next)
+            let path = groupID.map { "/v1/groups/\($0)/payment-profile" } ?? "/v1/profile/payment-methods"
+            _ = try await post(path, JSONEncoder().encode(Update(methods: methods)))
+            await sync()
         }
     }
 
@@ -596,7 +631,7 @@ enum Fixtures {
         let trip = "demo-buenos-aires", home = "demo-home", spain = "demo-spain", sam = "demo-friend-sam", maya = "demo-friend-maya"
         let people = [
             Person(id:"demo-alex",groupID:trip,userID:"demo-user",name:"Alex"),
-            Person(id:"demo-maya",groupID:trip,userID:"demo-maya-account",name:"Maya"),
+            Person(id:"demo-maya",groupID:trip,userID:"demo-maya-account",name:"Maya",paymentMethods:[PaymentMethod(platform:"zelle",handle:"maya@example.com",preferred:true),PaymentMethod(platform:"venmo",handle:"maya-lin")]),
             Person(id:"demo-sam",groupID:trip,userID:"demo-sam-account",name:"Sam"),
             Person(id:"demo-harris",groupID:trip,userID:"demo-harris-account",name:"Harris")
         ]

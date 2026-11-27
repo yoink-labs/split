@@ -38,7 +38,7 @@ split join --invite "$INVITE"                    # link or code
 
 Exact email and username searches find existing Split users. Partial names match people with a shared group. Use `invite --member` for someone already on the roster or `invite --name` to create a new placeholder. Share the returned link or code with the individual yourself.
 
-An email on a placeholder lets the owner of that verified primary email claim the member’s history when Split refreshes their account. If they already joined separately, Split merges the placeholder history into their membership. Changing or clearing the address revokes the placeholder’s existing invite links. Account holders manage their own sign-in email through Clerk.
+An email on a placeholder lets the owner of that verified primary email claim the member’s history when they open Split on the web or iOS. If they already joined separately, Split merges the placeholder history into their membership. CLI users can claim a placeholder with `split join --invite`. Changing or clearing the address revokes the placeholder’s existing invite links. Account holders manage their own sign-in email through Clerk.
 
 ```sh
 split expenses add --group "$GROUP" --title Dinner --payer "$ALEX" --amount 24.50

@@ -10,6 +10,9 @@ is noted next to each release. The CLI is versioned separately with
 
 ## [Unreleased]
 
+- Redesigned Splitwise import on the web with drag-and-drop CSV selection, clearer balance checks, and a mobile layout for matching people and reviewing entries.
+- Review or import several Splitwise CSV exports in one CLI command by repeating `--file`.
+
 ## [0.9.0] - 2026-11-27
 
 TestFlight build 14.

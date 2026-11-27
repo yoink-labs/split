@@ -116,7 +116,13 @@ export const tools = [
     group, name: text('Member display name.',60), user: text('Existing user ID returned by members lookup.',128),
     email: text('Optional placeholder email for verified matching.',254), phone: text('Optional placeholder contact number.',32)
   }, ['group','name']),
-  op('invite','Create a group invitation, or target a placeholder member. Returns a link and code.', { group, member }, ['group']),
+  op('members_update','Set or clear an unclaimed member’s email for verified matching. Email changes revoke their existing invite links.', {
+    group, member, email: text('Email address, or "none" to clear.',254)
+  }, ['group','member','email']),
+  op('invite','Create a group invitation, invite an existing placeholder, or create and invite a new placeholder. Returns a link and code.', {
+    group, member, name: text('Name for a new placeholder. Use without --member.',60),
+    email: text('Optional email for verified matching. Use with --member or --name.',254)
+  }, ['group']),
   op('join','Claim an invited member slot with a Split invite link or code.', { invite: text('Invite link or code.',512) }, ['invite']),
   op('expenses_list','List expenses in a group. Amounts in results are integer minor units.', { group }, ['group'], true),
   op('expenses_add','Record a standard or itemized expense. Supply an amount for standard expenses. Itemized expenses use the sum of the bill, and any supplied amount must match it.', {

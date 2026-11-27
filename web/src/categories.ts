@@ -10,7 +10,7 @@ export const CATEGORIES: CategoryMeta[] = [
   { id: "Dining", label: "Dining", color: "#EA580C", bg: "rgba(234,88,12,0.12)", glyph: "utensils" },
   { id: "Lodging", label: "Lodging", color: "#4F46E5", bg: "rgba(79,70,229,0.12)", glyph: "bed" },
   { id: "Flights", label: "Flights", color: "#0284C7", bg: "rgba(2,132,199,0.12)", glyph: "plane" },
-  { id: "Transport", label: "Transport", color: "#0891B2", bg: "rgba(8,145,178,0.12)", glyph: "car" },
+  { id: "Transport", label: "Transport", color: "#0D9488", bg: "rgba(13,148,136,0.12)", glyph: "car" },
   { id: "Groceries", label: "Groceries", color: "#16A34A", bg: "rgba(22,163,74,0.12)", glyph: "cart" },
   { id: "Drinks", label: "Drinks & Coffee", color: "#9333EA", bg: "rgba(147,51,234,0.12)", glyph: "cup" },
   { id: "Activities", label: "Activities", color: "#DB2777", bg: "rgba(219,39,119,0.12)", glyph: "ticket" },

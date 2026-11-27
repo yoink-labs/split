@@ -17,6 +17,7 @@ is noted next to each release. The CLI is versioned separately with
 
 ### Changed
 
+- Enter web expenses with searchable pickers and a live split preview, and explore daily or monthly spending by category, person, and housing.
 - Redesigned Splitwise import on the web with drag-and-drop CSV selection, clearer balance checks, and a mobile layout for matching people and reviewing entries.
 
 ### Changed

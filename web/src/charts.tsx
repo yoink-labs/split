@@ -1,12 +1,9 @@
 import { useHomeMoney } from "./homeMoney";
 import { useState } from "react";
-import { categoryMeta } from "./categories";
 import {
-  dayHeading,
   entryPayers,
   memberName,
   moneyCompact,
-  monthHeading,
   rawTransfers,
   settlementEntry,
   simplify,
@@ -20,11 +17,13 @@ export function PaidVsShareChart({
   g,
   entries,
   currency,
+  convertedIDs,
   onSelectMember,
 }: {
   g: Group;
   entries: Expense[];
   currency: string;
+  convertedIDs: ReadonlySet<string>;
   onSelectMember?: (memberID: string) => void;
 }) {
   const expenses = entries
@@ -32,15 +31,19 @@ export function PaidVsShareChart({
     .filter((e) => e.kind === "expense" && e.currency === currency);
   const rows = g.members
     .map((m) => {
-      const paid = expenses.reduce(
-        (s, e) => s + entryPayers(e).filter((p) => p.memberID === m.id).reduce((n, p) => n + p.amount, 0),
-        0,
-      );
-      const share = expenses.reduce(
-        (s, e) => s + (e.splits.find((x) => x.memberID === m.id)?.amount ?? 0),
-        0,
-      );
-      return { member: m, paid, share, net: paid - share };
+      let paid = 0, share = 0;
+      let estimatedPaid = false, estimatedShare = false;
+      for (const entry of expenses) {
+        const paidAmount = entryPayers(entry).find((payer) => payer.memberID === m.id)?.amount ?? 0;
+        const shareAmount = entry.splits.find((split) => split.memberID === m.id)?.amount ?? 0;
+        paid += paidAmount;
+        share += shareAmount;
+        if (convertedIDs.has(entry.id)) {
+          estimatedPaid ||= paidAmount > 0;
+          estimatedShare ||= shareAmount > 0;
+        }
+      }
+      return { member: m, paid, share, estimatedPaid, estimatedShare };
     })
     .filter((r) => !r.member.removed || r.paid > 0 || r.share > 0);
 
@@ -75,8 +78,8 @@ export function PaidVsShareChart({
                   {r.member.removed && <span className="muted"> (archived)</span>}
                 </strong>
                 <span className="num" style={{ fontSize: 12, color: "var(--muted)" }}>
-                  Paid <b style={{ color: "var(--ink)" }}>{moneyCompact(r.paid, currency)}</b> · Share{" "}
-                  <b style={{ color: "var(--ink)" }}>{moneyCompact(r.share, currency)}</b>
+                  Paid <b style={{ color: "var(--ink)" }}>{r.estimatedPaid && "≈ "}{moneyCompact(r.paid, currency)}</b> · Share{" "}
+                  <b style={{ color: "var(--ink)" }}>{r.estimatedShare && "≈ "}{moneyCompact(r.share, currency)}</b>
                 </span>
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
@@ -95,192 +98,6 @@ export function PaidVsShareChart({
               </div>
             </div>
           ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-/** Interactive SVG Donut + clickable category breakdown. */
-export function CategoryChart({
-  entries,
-  currency,
-  onSelectCategory,
-}: {
-  entries: Expense[];
-  currency: string;
-  onSelectCategory?: (category: string) => void;
-}) {
-  const expenses = entries
-    .map(settlementEntry)
-    .filter((e) => e.kind === "expense" && e.currency === currency);
-  const buckets = new Map<string, number>();
-  for (const e of expenses) {
-    const key = e.category || "Other";
-    buckets.set(key, (buckets.get(key) ?? 0) + e.amount);
-  }
-  const items = [...buckets.entries()]
-    .map(([name, amount]) => ({ name, amount, meta: categoryMeta(name) }))
-    .sort((a, b) => b.amount - a.amount);
-  const total = items.reduce((s, i) => s + i.amount, 0);
-
-  const radius = 56;
-  const circumference = 2 * Math.PI * radius;
-  let offset = 0;
-
-  return (
-    <div className="card card-pad">
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-        <h3 style={{ fontSize: 14, fontWeight: 700 }}>Spend by Category</h3>
-        <span className="muted" style={{ fontSize: 12 }}>Click to filter</span>
-      </div>
-      {!total ? (
-        <p className="muted">No categorized expenses in {currency} yet.</p>
-      ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "144px minmax(0, 1fr)", gap: 16, alignItems: "center" }}>
-          <svg viewBox="0 0 144 144" width="144" height="144" aria-label="Spend by category chart">
-            <circle cx="72" cy="72" r={radius} fill="none" stroke="var(--surface-2)" strokeWidth="18" />
-            {items.map((item) => {
-              const frac = item.amount / total;
-              const len = frac * circumference;
-              const dashOffset = -offset;
-              offset += len;
-              return (
-                <circle
-                  key={item.name}
-                  cx="72"
-                  cy="72"
-                  r={radius}
-                  fill="none"
-                  stroke={item.meta.color}
-                  strokeWidth="18"
-                  strokeDasharray={`${Math.max(1, len - 1.5)} ${circumference}`}
-                  strokeDashoffset={dashOffset}
-                  transform="rotate(-90 72 72)"
-                  style={{ cursor: onSelectCategory ? "pointer" : "default" }}
-                  onClick={() => onSelectCategory?.(item.name)}
-                >
-                  <title>{`${item.meta.label}: ${moneyCompact(item.amount, currency)} (${Math.round(frac * 100)}%)`}</title>
-                </circle>
-              );
-            })}
-            <text x="72" y="69" textAnchor="middle" fill="var(--muted)" fontSize="10" fontWeight="600">
-              Total
-            </text>
-            <text x="72" y="85" textAnchor="middle" fill="var(--ink)" fontSize="13.5" fontWeight="700">
-              {moneyCompact(total, currency)}
-            </text>
-          </svg>
-          <div className="chart-legend">
-            {items.slice(0, 6).map((item) => (
-              <button
-                key={item.name}
-                type="button"
-                className="legend-row"
-                onClick={() => onSelectCategory?.(item.name)}
-              >
-                <span style={{ display: "inline-flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-                  <span style={{ width: 9, height: 9, borderRadius: 99, background: item.meta.color, flexShrink: 0 }} />
-                  <span style={{ fontSize: 13, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {item.meta.label}
-                  </span>
-                </span>
-                <span className="num" style={{ fontSize: 12.5, fontWeight: 600 }}>
-                  {moneyCompact(item.amount, currency)}{" "}
-                  <span className="muted" style={{ fontWeight: 500 }}>
-                    {Math.round((item.amount / total) * 100)}%
-                  </span>
-                </span>
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-/** Daily (for trips) or Monthly (for long-term groups) spending bar chart. */
-export function TimelineChart({
-  g,
-  entries,
-  currency,
-}: {
-  g: Group;
-  entries: Expense[];
-  currency: string;
-}) {
-  const byDay = g.kind === "trip";
-  const expenses = entries
-    .map(settlementEntry)
-    .filter((e) => e.kind === "expense" && e.currency === currency);
-  const buckets = new Map<string, number>();
-  for (const e of expenses) {
-    const key = byDay ? e.createdAt.slice(0, 10) : e.createdAt.slice(0, 7);
-    buckets.set(key, (buckets.get(key) ?? 0) + e.amount);
-  }
-  const points = [...buckets.entries()].sort((a, b) => a[0].localeCompare(b[0]));
-  const max = Math.max(1, ...points.map((p) => p[1]));
-
-  return (
-    <div className="card card-pad">
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-        <h3 style={{ fontSize: 14, fontWeight: 700 }}>
-          {byDay ? "Daily Trip Spend" : "Monthly Spend"}
-        </h3>
-        <span className="muted" style={{ fontSize: 12 }}>
-          {points.length} {byDay ? (points.length === 1 ? "day" : "days") : points.length === 1 ? "month" : "months"}
-        </span>
-      </div>
-      {!points.length ? (
-        <p className="muted">No spending timeline yet.</p>
-      ) : (
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: `repeat(${points.length}, minmax(0, 1fr))`,
-            gap: 8,
-            alignItems: "end",
-            height: 150,
-            paddingTop: 18,
-          }}
-        >
-          {points.map(([key, amount]) => {
-            const pct = Math.max(6, Math.round((amount / max) * 100));
-            const label = byDay ? key.slice(5) : key.slice(2);
-            const full = byDay ? dayHeading(key) : monthHeading(key);
-            return (
-              <div
-                key={key}
-                title={`${full}: ${moneyCompact(amount, currency)}`}
-                style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  alignItems: "center",
-                  height: "100%",
-                  justifyContent: "flex-end",
-                  gap: 6,
-                }}
-              >
-                <span className="num" style={{ fontSize: 10.5, color: "var(--muted)" }}>
-                  {moneyCompact(amount, currency).replace(/\.00$/, "")}
-                </span>
-                <div
-                  style={{
-                    width: "100%",
-                    maxWidth: 42,
-                    height: `${pct}%`,
-                    background: "var(--primary)",
-                    borderRadius: "6px 6px 2px 2px",
-                    opacity: 0.88,
-                  }}
-                />
-                <span className="mono" style={{ fontSize: 10.5, color: "var(--muted)" }}>
-                  {label}
-                </span>
-              </div>
-            );
-          })}
         </div>
       )}
     </div>

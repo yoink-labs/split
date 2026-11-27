@@ -1,9 +1,11 @@
 import { memberBalances, useHomeMoney } from "./homeMoney";
 import { PendingPayments } from "./settlements";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { CATEGORIES, categoryMeta } from "./categories";
-import { CategoryChart, MoneyFlowGraph, PaidVsShareChart, TimelineChart } from "./charts";
+import { MoneyFlowGraph, PaidVsShareChart } from "./charts";
+import { Picker } from "./picker";
+import { SpendingDashboard } from "./spending";
 import { Form, useLedger, value } from "./context";
 import {
   balances,
@@ -54,6 +56,13 @@ function ExpenseDrawer({
   const [busy, setBusy] = useState(false);
   const [handledBusy, setHandledBusy] = useState(false);
   const [handledError, setHandledError] = useState("");
+  const drawer = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    const previous = document.activeElement;
+    drawer.current?.querySelector<HTMLButtonElement>("[aria-label='Close']")?.focus();
+    return () => { if (previous instanceof HTMLElement && previous.isConnected) previous.focus({ preventScroll: true }); };
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -118,7 +127,8 @@ function ExpenseDrawer({
 
   return (
     <div className="drawer-backdrop" onClick={onClose}>
-      <aside className="drawer" onClick={(e) => e.stopPropagation()} aria-label="Expense details">
+      <aside ref={drawer} className="drawer" onClick={(e) => e.stopPropagation()} aria-label="Expense details"
+        onKeyDown={(event) => { if (event.key === "Escape") onClose(); }}>
         <div className="drawer-head">
           <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
             <CategoryIcon category={entry.category} settlement={entry.kind === "settlement"} />
@@ -539,7 +549,10 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
   const projected = entries.map(homeMoney.project);
   const missingSpend = projected.some((entry, index) => !entry && entries[index].kind === "expense");
   const homeEntries = projected.filter((entry): entry is Expense => entry !== null);
-  const foreignSpend = entries.some((entry) => entry.kind === "expense" && entry.currency !== homeMoney.home);
+  const convertedSpendIDs = useMemo(() => new Set(entries
+    .filter((entry) => entry.kind === "expense" && entry.currency !== homeMoney.home)
+    .map((entry) => entry.id)), [entries, homeMoney.home]);
+  const foreignSpend = convertedSpendIDs.size > 0;
   const spending = breakdown(homeEntries, g.members, homeMoney.home);
   const spendText = (amount: number) => missingSpend ? "Rate unavailable" : homeMoney.format(amount, foreignSpend);
   const myStats = me ? spending.members.find((member) => member.id === me.id) : undefined;
@@ -676,7 +689,7 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
       {/* TAB 1: OVERVIEW & CHARTS */}
       {tab === "overview" && (
         <div className="form-stack" style={{ gap: 18 }}>
-          <div className="kpi-grid">
+          <div className="kpi-grid group-kpis">
             <div className="kpi">
               <div className="kpi-label">Total group spend</div>
               <div className="kpi-val">{spendText(spending.total)}</div>
@@ -713,22 +726,14 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
           </div>
 
           {foreignSpend && <p className="muted">Spending in {homeMoney.home} uses estimated exchange rates.</p>}
-          {missingSpend ? <p className="muted">Spending charts are unavailable until all exchange rates are available.</p> : <div className="grid-2">
-            <PaidVsShareChart
-              g={g}
-              entries={homeEntries}
-              currency={homeMoney.home}
-              onSelectMember={(mid) => nav(memberPath(g, mid))}
-            />
-            <CategoryChart
-              entries={homeEntries}
-              currency={homeMoney.home}
-              onSelectCategory={(cat) => setTab("ledger", { cat })}
-            />
-          </div>}
+          {missingSpend ? <p className="muted">Spending charts are unavailable until all exchange rates are available.</p> : (
+            <SpendingDashboard group={g} entries={homeEntries} currency={homeMoney.home}
+              convertedIDs={convertedSpendIDs} format={homeMoney.format} onOpenEntry={(entry) => setInspectID(entry.id)} />
+          )}
 
-          <div className="grid-sidebar-r">
-            {!missingSpend && <TimelineChart g={g} entries={homeEntries} currency={homeMoney.home} />}
+          <div className="grid-2">
+            {!missingSpend && <PaidVsShareChart g={g} entries={homeEntries} currency={homeMoney.home} convertedIDs={convertedSpendIDs}
+              onSelectMember={(mid) => nav(memberPath(g, mid))} />}
             <div className="card">
               <div className="card-head">
                 <h3>Who owes whom</h3>
@@ -767,33 +772,26 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
             <input
               type="search"
               placeholder="Search title, notes, category…"
+              aria-label="Search expenses"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
-            <select value={filterCat} onChange={(e) => setTab("ledger", e.target.value ? { cat: e.target.value } : undefined)} aria-label="Filter by category">
-              <option value="">All categories</option>
-              {[...new Set([...CATEGORIES.map((c) => c.id), ...entries.map((e) => e.category ?? "Other")])].map((cat) => (
-                <option key={cat} value={cat}>{categoryMeta(cat).label}</option>
-              ))}
-            </select>
-            <select value={filterPayer} onChange={(e) => setFilterPayer(e.target.value)} aria-label="Filter by payer">
-              <option value="">Any payer</option>
-              {g.members.map((m) => (
-                <option key={m.id} value={m.id}>{m.name}</option>
-              ))}
-            </select>
-            <select value={filterPerson} onChange={(e) => setFilterPerson(e.target.value)} aria-label="Filter by participant">
-              <option value="">Any person</option>
-              {g.members.map((m) => (
-                <option key={m.id} value={m.id}>{m.name}</option>
-              ))}
-            </select>
-            <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value as typeof filterStatus)} aria-label="Filter by status">
-              <option value="all">All items</option>
-              <option value="open">Needs claiming</option>
-              <option value="receipt">Has receipt</option>
-              <option value="recurring">Recurring</option>
-            </select>
+            <Picker label="Filter by category" value={filterCat} search
+              onChange={(cat) => setTab("ledger", cat ? { cat } : undefined)}
+              options={[{ value: "", label: "All categories" },
+                ...[...new Set([...CATEGORIES.map((c) => c.id), ...entries.map((e) => e.category ?? "Other")])].map((cat) => ({
+                  value: cat, label: categoryMeta(cat).label, icon: <CategoryIcon category={cat} />,
+                })),
+              ]} />
+            <Picker label="Filter by payer" value={filterPayer} onChange={setFilterPayer} search={g.members.length > 8}
+              options={[{ value: "", label: "Any payer" }, ...g.members.map((m) => ({ value: m.id, label: m.name }))]} />
+            <Picker label="Filter by participant" value={filterPerson} onChange={setFilterPerson} search={g.members.length > 8}
+              options={[{ value: "", label: "Any participant" }, ...g.members.map((m) => ({ value: m.id, label: m.name }))]} />
+            <Picker label="Filter by status" value={filterStatus} onChange={(status) => setFilterStatus(status as typeof filterStatus)}
+              options={[
+                { value: "all", label: "All items" }, { value: "open", label: "Needs claiming" },
+                { value: "receipt", label: "Has receipt" }, { value: "recurring", label: "Recurring" },
+              ]} />
             {(search || filterCat || filterPayer || filterPerson || filterStatus !== "all") && (
               <button
                 type="button"
@@ -816,83 +814,85 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
               <p className="muted">No matching expenses.</p>
             </div>
           ) : (
-            groupedLedger.map(([bucket, items]) => {
-              const bucketTotal = items.some((entry) => entry.kind === "expense") ? homeMoney.spend(items) : "";
-              return (
-                <div className="day-group" key={bucket}>
-                  <div className="day-heading">
-                    <span>{g.kind === "trip" ? dayHeading(bucket) : monthHeading(bucket)}</span>
-                    <span className="num">{bucketTotal}</span>
-                  </div>
-                  <div className="ledger-list">
-                    {items.map((e) => {
-                      const payers = entryPayers(e);
-                      const isSettle = e.kind === "settlement";
-                      const open = e.bill && !e.bill.closed ? e.bill.items.filter((i) => !i.memberIDs.length).length : 0;
-                      const myPaid = me ? payers.filter((p) => p.memberID === me.id).reduce((s, p) => s + p.amount, 0) : 0;
-                      const myShare = me ? e.splits.find((s) => s.memberID === me.id)?.amount ?? 0 : 0;
-                      const myDelta = e.handled ? 0 : myPaid - myShare;
-                      const participants = e.splits
-                        .map((s) => g.members.find((m) => m.id === s.memberID))
-                        .filter((m): m is Person => Boolean(m));
-                      return (
-                        <button
-                          key={e.id}
-                          type="button"
-                          className={"ledger-item" + (inspectID === e.id ? " selected" : "")}
-                          onClick={() => setInspectID(e.id)}
-                        >
-                          <CategoryIcon category={e.category} settlement={isSettle} />
-                          <div style={{ minWidth: 0 }}>
-                            <div className="ledger-title">
-                              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            <div className="ledger-feed">
+              {groupedLedger.map(([bucket, items]) => {
+                const bucketTotal = items.some((entry) => entry.kind === "expense") ? homeMoney.spend(items) : "";
+                return (
+                  <div className="day-group" key={bucket}>
+                    <div className="day-heading">
+                      <span>{g.kind === "trip" ? dayHeading(bucket) : monthHeading(bucket)}</span>
+                      <span className="num">{bucketTotal}</span>
+                    </div>
+                    <div className="ledger-list">
+                      {items.map((e) => {
+                        const payers = entryPayers(e);
+                        const isSettle = e.kind === "settlement";
+                        const open = e.bill && !e.bill.closed ? e.bill.items.filter((i) => !i.memberIDs.length).length : 0;
+                        const myPaid = me ? payers.filter((p) => p.memberID === me.id).reduce((s, p) => s + p.amount, 0) : 0;
+                        const myShare = me ? e.splits.find((s) => s.memberID === me.id)?.amount ?? 0 : 0;
+                        const myDelta = e.handled ? 0 : myPaid - myShare;
+                        const participants = e.splits
+                          .map((s) => g.members.find((m) => m.id === s.memberID))
+                          .filter((m): m is Person => Boolean(m));
+                        return (
+                          <button
+                            key={e.id}
+                            type="button"
+                            className={"ledger-item" + (inspected?.id === e.id ? " selected" : "")}
+                            onClick={() => setInspectID(e.id)}
+                          >
+                            <CategoryIcon category={e.category} settlement={isSettle} />
+                            <div style={{ minWidth: 0 }}>
+                              <div className="ledger-title">
+                                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                  {isSettle
+                                    ? `${memberName(g, e.paidBy)} → ${memberName(g, e.splits[0]?.memberID ?? "")}`
+                                    : e.title}
+                                </span>
+                                {e.handled && <span className="tag tag-pos">Handled</span>}
+                                {open > 0 && <span className="tag tag-warn">{open} open</span>}
+                                {!open && (e.bill || e.receiptIDs?.length) && <span className="tag">Receipt</span>}
+                                {e.recurrence && <span className="tag tag-primary">{e.recurrence}</span>}
+                              </div>
+                              <div className="ledger-meta">
+                                <span>
+                                  {payers.length > 1
+                                    ? `${payers.length} payers`
+                                    : `${memberName(g, e.paidBy)} paid`}
+                                </span>
+                                {!isSettle && <span className="ledger-category">{categoryMeta(e.category).label}</span>}
+                                {(e.commentCount ?? 0) > 0 && <span>· 💬 {e.commentCount}</span>}
+                              </div>
+                            </div>
+
+                            <div className="ledger-hide-sm">
+                              <AvatarStack people={participants} max={4} size={22} />
+                            </div>
+
+                            <div className="ledger-amount ledger-hide-sm">
+                              <strong className={myDelta > 0 ? "pos" : myDelta < 0 ? "neg" : "muted"}>
                                 {isSettle
-                                  ? `${memberName(g, e.paidBy)} → ${memberName(g, e.splits[0]?.memberID ?? "")}`
-                                  : e.title}
-                              </span>
-                              {e.handled && <span className="tag tag-pos">Handled</span>}
-                              {open > 0 && <span className="tag tag-warn">{open} open</span>}
-                              {!open && (e.bill || e.receiptIDs?.length) && <span className="tag">Receipt</span>}
-                              {e.recurrence && <span className="tag tag-primary">{e.recurrence}</span>}
+                                  ? "payment"
+                                  : e.handled
+                                    ? "handled"
+                                  : myDelta === 0
+                                    ? "not involved"
+                                    : (myDelta > 0 ? "+" : "−") + homeMoney.entry(e, Math.abs(myDelta))}
+                              </strong>
+                              <small>{!isSettle && myDelta !== 0 ? (myDelta > 0 ? "you lent" : "your share") : ""}</small>
                             </div>
-                            <div className="ledger-meta">
-                              <span>
-                                {payers.length > 1
-                                  ? `${payers.length} payers`
-                                  : `${memberName(g, e.paidBy)} paid`}
-                              </span>
-                              {e.notes && <span>· {e.notes.slice(0, 48)}{e.notes.length > 48 ? "…" : ""}</span>}
-                              {(e.commentCount ?? 0) > 0 && <span>· 💬 {e.commentCount}</span>}
+
+                            <div className="ledger-amount">
+                              <strong>{homeMoney.entry(e)}</strong>
                             </div>
-                          </div>
-
-                          <div className="ledger-hide-sm">
-                            <AvatarStack people={participants} max={4} size={22} />
-                          </div>
-
-                          <div className="ledger-amount ledger-hide-sm">
-                            <strong className={myDelta > 0 ? "pos" : myDelta < 0 ? "neg" : "muted"}>
-                              {isSettle
-                                ? "payment"
-                                : e.handled
-                                  ? "handled"
-                                : myDelta === 0
-                                  ? "not involved"
-                                  : (myDelta > 0 ? "+" : "−") + homeMoney.entry(e, Math.abs(myDelta))}
-                            </strong>
-                            <small>{!isSettle && myDelta !== 0 ? (myDelta > 0 ? "you lent" : "your share") : ""}</small>
-                          </div>
-
-                          <div className="ledger-amount">
-                            <strong>{homeMoney.entry(e)}</strong>
-                          </div>
-                        </button>
-                      );
-                    })}
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
-                </div>
-              );
-            })
+                );
+              })}
+            </div>
           )}
         </>
       )}

@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { Form, useLedger, value } from "./context";
-import { CATEGORIES } from "./categories";
+import { CATEGORIES, categoryMeta } from "./categories";
+import { Picker } from "./picker";
+import { Avatar, CategoryIcon } from "./ui";
 import {
   allocate,
   entryPayers,
@@ -57,6 +59,8 @@ function Composer({ g, existing }: { g: Group; existing?: Expense }) {
       ? existing.splits.map((s) => s.memberID)
       : activeMembers.filter((p) => !hasDefaults || (weights[p.id] ?? 0) > 0).map((p) => p.id),
   );
+
+  const [splitInputs, setSplitInputs] = useState<Record<string, Record<string, string>>>({});
 
   // Multi-payer support
   const [multiPayer, setMultiPayer] = useState(() => existingPayers.length > 1);
@@ -142,6 +146,7 @@ function Composer({ g, existing }: { g: Group; existing?: Expense }) {
   const [amountText, setAmountText] = useState(existing ? (existing.amount / 100).toFixed(2) : "");
   const [category, setCategory] = useState(existing?.category ?? "Dining");
   const [notes, setNotes] = useState(existing?.notes ?? "");
+  const [extrasOpen, setExtrasOpen] = useState(Boolean(existing?.notes || existing?.handled || query.has("receipt")));
   const savedExchange = currency === existing?.currency && existing.exchange?.target === g.currency
     ? existing.exchange : undefined;
   const [exchange, setExchange] = useState<Exchange | null>(savedExchange ?? null);
@@ -197,9 +202,11 @@ function Composer({ g, existing }: { g: Group; existing?: Expense }) {
         </Link>
       </div>
 
-      <div className="card card-pad">
+      <div className="expense-composer">
         <Form
           label={existing ? "Save changes" : "Save expense"}
+          footer={<div><span>{mode === "items" ? "Receipt total" : "Expense total"}</span>
+            <strong className="num">{moneyCompact(chargeAmount ?? 0, currency)}</strong></div>}
           submit={async (f) => {
             if (scanning && mode === "items") throw new Error("Wait for photo reading to finish before saving.");
             const files = (f.getAll("photos") as File[]).filter((file) => file.size);
@@ -346,325 +353,305 @@ function Composer({ g, existing }: { g: Group; existing?: Expense }) {
             nav(`/g/${g.id}?tab=${bill ? "receipts" : "ledger"}`, { replace: true });
           }}
         >
-          <div className="form-row">
-            <label className="field">
-              Description
-              <input
-                type="text"
-                required
-                name="title"
-                maxLength={120}
-                defaultValue={existing?.title ?? ""}
-                placeholder="Dinner at Don Julio, Airbnb, flights…"
-                autoFocus
-              />
-            </label>
-            <label className="field">
-              Date
-              <input
-                type="date"
-                value={date}
-                disabled={Boolean(existing)}
-                max={today()}
-                required
-                onChange={(e) => {
-                  setExchange(null);
-                  setDate(e.target.value);
-                }}
-              />
-            </label>
-          </div>
-
-          <label className="expense-handled">
-            <input type="checkbox" checked={handled} disabled={!canSetHandled} onChange={(e) => setHandled(e.target.checked)} />
-            <span>
-              <strong>Already handled</strong>
-              <small>{canSetHandled ? "Keep this expense in spending history without adding it to balances." : "A payer can change this status from the expense details."}</small>
-            </span>
-          </label>
-
-          <section className="receipt-upload">
-            <div className="expense-section-head">
-              <strong>Receipt photos</strong>
-              {fileNames.length > 0 && (
-                <button type="button" className="btn btn-sm btn-ghost" onClick={() => {
-                  if (photoInput.current) photoInput.current.value = "";
-                  void suggestPhotos([]);
-                }}>Remove photos</button>
-              )}
-            </div>
-            <label className="receipt-upload-control">
-              <input
-                ref={photoInput}
-                type="file"
-                name="photos"
-                accept="image/*"
-                multiple
-                onChange={(event) => void suggestPhotos(Array.from(event.currentTarget.files ?? []))}
-              />
-              <span className="receipt-upload-label">Choose receipt photos</span>
-              <span className="muted">Up to 4 images</span>
-            </label>
-            {fileNames.length > 0 && <p className="receipt-file-list">{fileNames.join(", ")}</p>}
-            {fileNames.length > 0 && (
-              <p className="muted" role="status">
-                {scanning ? "Reading photos on this device…" : scanMessage || "Review the line items and choose who shared each one."}
-              </p>
-            )}
-            {scanning && (
-              <button type="button" className="btn btn-sm" onClick={() => {
-                scan.current?.abort();
-                setMode("items");
-                setScanning(false);
-                setScanMessage("Enter the items and choose who shared each one.");
-              }}>Enter items manually</button>
-            )}
-          </section>
-
-          <div className="form-row">
-            <label className="field">
-              Category
-              <select value={category} onChange={(e) => setCategory(e.target.value)}>
-                {!CATEGORIES.some((c) => c.id === category) && <option value={category}>{category}</option>}
-                {CATEGORIES.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <div className="form-row">
-              <CurrencySelect label="Currency" value={currency} onChange={(next) => {
-                setExchange(null);
-                setCurrency(next);
-              }} />
-              {mode !== "items" && (
-                <label className="field">
-                  Amount ({currency})
-                  <input
-                    type="text"
-                    name="amount"
-                    required
-                    inputMode="decimal"
-                    placeholder="0.00"
-                    value={amountText}
-                    onChange={(e) => setAmountText(e.target.value)}
-                  />
+          <div className="expense-layout">
+            <section className="card expense-panel">
+              <h2>Expense details</h2>
+              <label className="field">
+                Description
+                <input type="text" required name="title" maxLength={120}
+                  defaultValue={existing?.title ?? ""} placeholder="Dinner, Airbnb, flights…" />
+              </label>
+              <div className="expense-money-fields">
+                {mode !== "items" && <label className="field expense-amount">
+                  Amount
+                  <input type="text" name="amount" required inputMode="decimal" placeholder="0.00"
+                    value={amountText} onChange={(e) => setAmountText(e.target.value)} />
                   {typed !== null && typed > 0 && currency !== homeMoney.home && (
                     <small className="muted">{homeMoney.totalText({ [currency]: typed })}</small>
                   )}
-                </label>
+                </label>}
+                <CurrencySelect label="Currency" searchable value={currency} onChange={(next) => {
+                  setExchange(null);
+                  setCurrency(next);
+                }} />
+              </div>
+              <div className="field">
+                <span>Category</span>
+                <Picker label="Category" value={category} onChange={setCategory} search
+                  options={[...new Set([...CATEGORIES.map((c) => c.id), category])].map((id) => ({
+                    value: id, label: categoryMeta(id).label, icon: <CategoryIcon category={id} />,
+                  }))} />
+              </div>
+              <label className="field">
+                Date
+                <input type="date" value={date} disabled={Boolean(existing)} max={today()} required
+                  onChange={(e) => {
+                    setExchange(null);
+                    setDate(e.target.value);
+                  }} />
+              </label>
+              {!foreign ? (
+                <div>
+                  <button type="button" className="btn btn-sm btn-ghost" onClick={() => setConverter(true)}>
+                    Open FX converter
+                  </button>
+                </div>
+              ) : (
+                <RateField
+                  key={currency}
+                  from={currency}
+                  to={g.currency}
+                  amount={chargeAmount}
+                  date={date}
+                  saved={savedExchange}
+                  tripRate={g.tripRates?.[currency]}
+                  onChange={setExchange}
+                />
               )}
-            </div>
-          </div>
+              <ConverterDialog open={converter} onClose={() => setConverter(false)} from={currency} to={g.currency} amount={chargeAmount} date={date} />
 
-          {!foreign ? (
-            <div>
-              <button type="button" className="btn btn-sm btn-ghost" onClick={() => setConverter(true)}>
-                Open FX converter
-              </button>
-            </div>
-          ) : (
-            <RateField
-              key={currency}
-              from={currency}
-              to={g.currency}
-              amount={chargeAmount}
-              date={date}
-              saved={savedExchange}
-              tripRate={g.tripRates?.[currency]}
-              onChange={setExchange}
-            />
-          )}
-          <ConverterDialog open={converter} onClose={() => setConverter(false)} from={currency} to={g.currency} amount={chargeAmount} date={date} />
+            </section>
 
-          <section className="expense-form-section">
-            <label className="field">
-              Paid by
-              <select
-                value={multiPayer ? ":multiple" : singlePayer}
-                disabled={Boolean(existing?.bill?.closed)}
-                onChange={(event) => {
-                  const next = event.target.value;
-                  setMultiPayer(next === ":multiple");
-                  if (next !== ":multiple") setSinglePayer(next);
-                }}
-              >
-                <optgroup label="One payer">
-                  {pickerMembers.map((person) => (
-                    <option key={person.id} value={person.id}>
-                      {person.userID === user ? "You" : person.name}
-                    </option>
+            <section className="card expense-panel">
+              <h2>Payment & split</h2>
+              <div className="field">
+                <span>Paid by</span>
+                <Picker label="Paid by" value={multiPayer ? ":multiple" : singlePayer} search={pickerMembers.length > 8}
+                  disabled={Boolean(existing?.bill?.closed)}
+                  onChange={(next) => {
+                    setMultiPayer(next === ":multiple");
+                    if (next !== ":multiple") setSinglePayer(next);
+                  }}
+                  options={[
+                    ...pickerMembers.map((person) => ({
+                      value: person.id, label: person.userID === user ? "You" : person.name,
+                      icon: <Avatar name={person.name} avatarURL={person.avatarURL} size={23} />,
+                    })),
+                    ...(activeMembers.length > 1 || multiPayer ? [{ value: ":multiple", label: "Multiple people" }] : []),
+                  ]} />
+              </div>
+              {multiPayer && (
+                <div className="expense-payer-amounts">
+                  {pickerMembers.map((p) => (
+                    <div className="expense-payer-row" key={p.id}>
+                      <span>{p.userID === user ? "You" : p.name}</span>
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        placeholder="0.00"
+                        aria-label={`Amount paid by ${p.name}`}
+                        value={payerAmounts[p.id] ?? ""}
+                        onChange={(e) => setPayerAmounts({ ...payerAmounts, [p.id]: e.target.value })}
+                      />
+                    </div>
                   ))}
-                </optgroup>
-                {activeMembers.length > 1 && <option value=":multiple">Multiple people…</option>}
-              </select>
-            </label>
-            {multiPayer && (
-              <div className="expense-payer-amounts">
-                {pickerMembers.map((p) => (
-                  <div className="expense-payer-row" key={p.id}>
-                    <span>{p.userID === user ? "You" : p.name}</span>
-                    <input
-                      type="text"
-                      inputMode="decimal"
-                      placeholder="0.00"
-                      aria-label={`Amount paid by ${p.name}`}
-                      value={payerAmounts[p.id] ?? ""}
-                      onChange={(e) => setPayerAmounts({ ...payerAmounts, [p.id]: e.target.value })}
-                    />
+                </div>
+              )}
+              <div className="field">
+                <span>Split method</span>
+                <Picker label="Split method" value={mode} disabled={Boolean(existing?.bill)} onChange={setMode}
+                  options={[
+                    { value: "equal", label: "Equally" }, { value: "exact", label: "Exact amounts" },
+                    { value: "percent", label: "Percentages" }, { value: "shares", label: "Shares (weights)" },
+                    { value: "adjustment", label: "Equal + adjustments" }, { value: "items", label: "Itemized receipt" },
+                  ]} />
+              </div>
+
+              {existing?.bill?.closed ? (
+                <p className="muted">The item allocations are locked because this receipt is closed.</p>
+              ) : mode === "items" ? (
+                <fieldset className="card" disabled={scanning} style={{ padding: 14, background: "var(--bg)", minWidth: 0 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                    <strong style={{ fontSize: 13 }}>Receipt line items</strong>
+                    <button
+                      type="button"
+                      className="btn btn-sm"
+                      disabled={rows.length >= 50}
+                      onClick={() => setRows([...rows, { id: crypto.randomUUID(), title: "", price: "", claims: [] }])}
+                    >
+                      + Add line item
+                    </button>
                   </div>
-                ))}
-              </div>
-            )}
-          </section>
-
-          {/* Split Method */}
-          <label className="field">
-            Split method
-            <select value={mode} onChange={(e) => setMode(e.target.value)} disabled={Boolean(existing?.bill)}>
-              <option value="equal">Equally</option>
-              <option value="exact">Exact amounts</option>
-              <option value="percent">Percentages (%)</option>
-              <option value="shares">Shares (weights)</option>
-              <option value="adjustment">Equal + adjustments (+/-)</option>
-              <option value="items">Itemized receipt (claimable)</option>
-            </select>
-          </label>
-
-          {existing?.bill?.closed ? (
-            <p className="muted">The item allocations are locked because this receipt is closed.</p>
-          ) : mode === "items" ? (
-            <fieldset className="card" disabled={scanning} style={{ padding: 14, background: "var(--bg)", minWidth: 0 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-                <strong style={{ fontSize: 13 }}>Receipt line items</strong>
-                <button
-                  type="button"
-                  className="btn btn-sm"
-                  disabled={rows.length >= 50}
-                  onClick={() => setRows([...rows, { id: crypto.randomUUID(), title: "", price: "", claims: [] }])}
-                >
-                  + Add line item
-                </button>
-              </div>
-              <div className="form-stack">
-                {rows.map((r, i) => (
-                  <div key={r.id} className="card" style={{ padding: 12 }}>
+                  <div className="form-stack">
+                    {rows.map((r, i) => (
+                      <div key={r.id} className="card" style={{ padding: 12 }}>
+                        <div className="form-row">
+                          <label className="field">
+                            Item {i + 1}
+                            <input type="text" name={"name-" + r.id} value={r.title} onChange={(e) => setRows(rows.map((row) => row.id === r.id ? { ...row, title: e.target.value } : row))} required maxLength={100} placeholder="Ribeye steak, Malbec…" />
+                          </label>
+                          <label className="field">
+                            Price ({currency})
+                            <input type="text" name={"price-" + r.id} value={r.price} onChange={(e) => setRows(rows.map((row) => row.id === r.id ? { ...row, price: e.target.value } : row))} required inputMode="decimal" placeholder="0.00" />
+                          </label>
+                        </div>
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginTop: 8, alignItems: "center" }}>
+                          <span className="muted" style={{ fontSize: 12 }}>Claimed by:</span>
+                          {activeMembers.map((p) => (
+                            <label className="check" key={p.id} style={{ fontSize: 12.5 }}>
+                              <input type="checkbox" name={"claims-" + r.id} value={p.id} checked={r.claims.includes(p.id)}
+                                onChange={(event) => {
+                                  const checked = event.target.checked;
+                                  setRows((current) => current.map((row) => row.id === r.id
+                                    ? { ...row, claims: checked ? [...row.claims, p.id] : row.claims.filter((id) => id !== p.id) }
+                                    : row));
+                                }} />
+                              {p.name}
+                            </label>
+                          ))}
+                          {rows.length > 1 && (
+                            <button
+                              type="button"
+                              className="btn btn-xs btn-danger"
+                              style={{ marginLeft: "auto" }}
+                              onClick={() => setRows(rows.filter((x) => x.id !== r.id))}
+                            >
+                              Remove
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
                     <div className="form-row">
                       <label className="field">
-                        Item {i + 1}
-                        <input type="text" name={"name-" + r.id} value={r.title} onChange={(e) => setRows(rows.map((row) => row.id === r.id ? { ...row, title: e.target.value } : row))} required maxLength={100} placeholder="Ribeye steak, Malbec…" />
+                        Tax
+                        <input type="text" name="tax" value={tax} onChange={(e) => setTax(e.target.value)} inputMode="decimal" placeholder="0.00" />
                       </label>
                       <label className="field">
-                        Price ({currency})
-                        <input type="text" name={"price-" + r.id} value={r.price} onChange={(e) => setRows(rows.map((row) => row.id === r.id ? { ...row, price: e.target.value } : row))} required inputMode="decimal" placeholder="0.00" />
+                        Tip
+                        <input type="text" name="tip" value={tip} onChange={(e) => setTip(e.target.value)} inputMode="decimal" placeholder="0.00" />
                       </label>
                     </div>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginTop: 8, alignItems: "center" }}>
-                      <span className="muted" style={{ fontSize: 12 }}>Claimed by:</span>
-                      {activeMembers.map((p) => (
-                        <label className="check" key={p.id} style={{ fontSize: 12.5 }}>
-                          <input type="checkbox" name={"claims-" + r.id} value={p.id} defaultChecked={r.claims.includes(p.id)} />
-                          {p.name}
-                        </label>
-                      ))}
-                      {rows.length > 1 && (
-                        <button
-                          type="button"
-                          className="btn btn-xs btn-danger"
-                          style={{ marginLeft: "auto" }}
-                          onClick={() => setRows(rows.filter((x) => x.id !== r.id))}
-                        >
-                          Remove
-                        </button>
-                      )}
-                    </div>
+                    <p className="muted" style={{ fontSize: 12 }}>
+                      Tax and tip scale proportionally to each item. Unclaimed items stay on the payer until claimed (including fractional shares) in the Receipts Hub.
+                    </p>
                   </div>
-                ))}
-                <div className="form-row">
-                  <label className="field">
-                    Tax
-                    <input type="text" name="tax" value={tax} onChange={(e) => setTax(e.target.value)} inputMode="decimal" placeholder="0.00" />
-                  </label>
-                  <label className="field">
-                    Tip
-                    <input type="text" name="tip" value={tip} onChange={(e) => setTip(e.target.value)} inputMode="decimal" placeholder="0.00" />
-                  </label>
+                </fieldset>
+              ) : (
+                <div className="expense-split-list">
+                  <div className="expense-section-head">
+                    <strong style={{ fontSize: 13 }}>Split with ({selected.length})</strong>
+                    <button
+                      type="button"
+                      className="btn btn-xs btn-ghost"
+                      onClick={() =>
+                        setSelected(selected.length === activeMembers.length ? [] : activeMembers.map((m) => m.id))
+                      }
+                    >
+                      {selected.length === activeMembers.length ? "Clear all" : "Select all"}
+                    </button>
+                  </div>
+                  <div>
+                    {pickerMembers.map((p) => {
+                      const isOn = selected.includes(p.id);
+                      const idx = selected.indexOf(p.id);
+                      const eqShare = perPersonEqual && idx >= 0 ? perPersonEqual[idx] : null;
+                      return (
+                        <div key={p.id} className="expense-split-person">
+                          <label className="check">
+                            <input
+                              type="checkbox"
+                              checked={isOn}
+                              onChange={(e) =>
+                                setSelected(
+                                  e.target.checked ? [...selected, p.id] : selected.filter((x) => x !== p.id),
+                                )
+                              }
+                            />
+                            <Avatar name={p.name} avatarURL={p.avatarURL} size={24} />
+                            <span>{p.userID === user ? "You" : p.name}</span>
+                          </label>
+                          {mode === "equal" && eqShare !== null && (
+                            <span className="num muted" style={{ fontSize: 12.5 }}>
+                              {moneyCompact(eqShare, currency)}
+                            </span>
+                          )}
+                          {mode !== "equal" && isOn && (
+                            <input
+                              key={mode}
+                              type="text"
+                              style={{ width: 130 }}
+                              aria-label={p.name + " " + mode}
+                              name={"weight-" + p.id}
+                              inputMode="decimal"
+                              placeholder={mode === "percent" ? "%" : mode === "shares" ? "1" : "0.00"}
+                              value={splitInputs[mode]?.[p.id] ?? defaultSplitInput(p.id)}
+                              onChange={(event) => {
+                                const text = event.target.value;
+                                setSplitInputs((current) => ({ ...current, [mode]: { ...current[mode], [p.id]: text } }));
+                              }}
+                              required
+                            />
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
-                <p className="muted" style={{ fontSize: 12 }}>
-                  Tax and tip scale proportionally to each item. Unclaimed items stay on the payer until claimed (including fractional shares) in the Receipts Hub.
-                </p>
-              </div>
-            </fieldset>
-          ) : (
-            <div className="card" style={{ padding: 14, background: "var(--bg)" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-                <strong style={{ fontSize: 13 }}>Split with ({selected.length})</strong>
-                <button
-                  type="button"
-                  className="btn btn-xs btn-ghost"
-                  onClick={() =>
-                    setSelected(selected.length === activeMembers.length ? [] : activeMembers.map((m) => m.id))
-                  }
-                >
-                  {selected.length === activeMembers.length ? "Clear all" : "Select all"}
-                </button>
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {activeMembers.map((p) => {
-                  const isOn = selected.includes(p.id);
-                  const idx = selected.indexOf(p.id);
-                  const eqShare = perPersonEqual && idx >= 0 ? perPersonEqual[idx] : null;
-                  return (
-                    <div key={p.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
-                      <label className="check">
-                        <input
-                          type="checkbox"
-                          checked={isOn}
-                          onChange={(e) =>
-                            setSelected(
-                              e.target.checked ? [...selected, p.id] : selected.filter((x) => x !== p.id),
-                            )
-                          }
-                        />
-                        <span>{p.name}</span>
-                      </label>
-                      {mode === "equal" && eqShare !== null && (
-                        <span className="num muted" style={{ fontSize: 12.5 }}>
-                          {moneyCompact(eqShare, currency)}
-                        </span>
-                      )}
-                      {mode !== "equal" && isOn && (
-                        <input
-                          key={mode}
-                          type="text"
-                          style={{ width: 130 }}
-                          aria-label={p.name + " " + mode}
-                          name={"weight-" + p.id}
-                          inputMode="decimal"
-                          placeholder={mode === "percent" ? "%" : mode === "shares" ? "1" : "0.00"}
-                          defaultValue={defaultSplitInput(p.id)}
-                          required
-                        />
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
+              )}
+
+            </section>
+          </div>
+          <details className="card expense-extras" open={extrasOpen} onToggle={(e) => setExtrasOpen(e.currentTarget.open)}>
+            <summary>Receipt photos, notes & more</summary>
+            <div className="expense-extras-body">
+              <label className="expense-handled">
+                <input type="checkbox" checked={handled} disabled={!canSetHandled} onChange={(e) => setHandled(e.target.checked)} />
+                <span>
+                  <strong>Already handled</strong>
+                  <small>{canSetHandled ? "Keep this expense in spending history without adding it to balances." : "A payer can change this status from the expense details."}</small>
+                </span>
+              </label>
+
+              <section className="receipt-upload">
+                <div className="expense-section-head">
+                  <strong>Receipt photos</strong>
+                  {fileNames.length > 0 && (
+                    <button type="button" className="btn btn-sm btn-ghost" onClick={() => {
+                      if (photoInput.current) photoInput.current.value = "";
+                      void suggestPhotos([]);
+                    }}>Remove photos</button>
+                  )}
+                </div>
+                <label className="receipt-upload-control">
+                  <input
+                    ref={photoInput}
+                    type="file"
+                    name="photos"
+                    accept="image/*"
+                    multiple
+                    onChange={(event) => void suggestPhotos(Array.from(event.currentTarget.files ?? []))}
+                  />
+                  <span className="receipt-upload-label">Choose receipt photos</span>
+                  <span className="muted">Up to 4 images</span>
+                </label>
+                {fileNames.length > 0 && <p className="receipt-file-list">{fileNames.join(", ")}</p>}
+                {fileNames.length > 0 && (
+                  <p className="muted" role="status">
+                    {scanning ? "Reading photos on this device…" : scanMessage || "Review the line items and choose who shared each one."}
+                  </p>
+                )}
+                {scanning && (
+                  <button type="button" className="btn btn-sm" onClick={() => {
+                    scan.current?.abort();
+                    setMode("items");
+                    setScanning(false);
+                    setScanMessage("Enter the items and choose who shared each one.");
+                  }}>Enter items manually</button>
+                )}
+              </section>
+
+              <label className="field">
+                Notes (optional)
+                <textarea
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  maxLength={2000}
+                  placeholder="e.g., Paid in cash at the blue-dollar rate; Sam joined after dessert"
+                />
+              </label>
             </div>
-          )}
-
-          <label className="field">
-            Notes (optional)
-            <textarea
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              maxLength={2000}
-              placeholder="e.g., Paid in cash at the blue-dollar rate; Sam joined after dessert"
-            />
-          </label>
-
-
+          </details>
         </Form>
       </div>
     </div>

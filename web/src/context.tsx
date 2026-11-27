@@ -31,10 +31,12 @@ export function Form({
   children,
   submit,
   label,
+  footer,
 }: {
   children: ReactNode;
   submit: (form: FormData) => Promise<void>;
   label: string;
+  footer?: ReactNode;
 }) {
   const [busy, setBusy] = useState(false),
     [error, setError] = useState("");
@@ -64,7 +66,8 @@ export function Form({
             {error}
           </p>
         )}
-        <div>
+        <div className={footer ? "expense-save" : undefined}>
+          {footer}
           <button className="btn btn-primary" type="submit">
             {busy ? "Saving…" : label}
           </button>

@@ -580,6 +580,9 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
           <button type="button" className="btn btn-sm" onClick={exportCSV}>
             Export CSV
           </button>
+          <Link className="btn btn-sm" to={`/g/${g.id}/summary`} title="Printable summary you can save as PDF">
+            Summary PDF
+          </Link>
           <button type="button" className="btn btn-sm" onClick={() => setTab("settle")}>
             Settle up
           </button>

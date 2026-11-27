@@ -29,10 +29,16 @@ split members lookup --query casey@example.com
 split members add --group "$GROUP" --name Casey --user "$USER_ID"
 split invite --group "$GROUP"                    # general invitation
 split invite --group "$GROUP" --member "$MAYA"   # claim Maya’s placeholder
+split invite --group "$GROUP" --member "$MAYA" --email maya@example.com
+split invite --group "$GROUP" --name Jordan --email jordan@example.com
+split members update --group "$GROUP" --member "$MAYA" --email maya.new@example.com
+split members update --group "$GROUP" --member "$MAYA" --email none
 split join --invite "$INVITE"                    # link or code
 ```
 
-Exact email and username searches find existing Split users. Partial names match people with a shared group. A targeted invitation keeps the member’s existing expenses. Contact details and verified email claims follow the same rules as the app.
+Exact email and username searches find existing Split users. Partial names match people with a shared group. Use `invite --member` for someone already on the roster or `invite --name` to create a new placeholder. Share the returned link or code with the individual yourself.
+
+An email on a placeholder lets the owner of that verified primary email claim the member’s history when they open Split on the web or iOS. If they already joined separately, Split merges the placeholder history into their membership. CLI users can claim a placeholder with `split join --invite`. Changing or clearing the address revokes the placeholder’s existing invite links. Account holders manage their own sign-in email through Clerk.
 
 ```sh
 split expenses add --group "$GROUP" --title Dinner --payer "$ALEX" --amount 24.50
@@ -173,7 +179,7 @@ Choose one transport per server entry. The Worker handles each request independe
 
 From a checkout use `cli/bin/split`. The launcher lives under `cli/bin` so it can coexist with the `Split/` app directory on case-insensitive macOS volumes.
 
-Update `cli/release/version.json`, merge to main, then tag the merge commit `split-vX.Y.Z`. The release workflow builds an allowlisted tarball, publishes it in both repositories and updates the public formula with its SHA-256. Configure the Split repository Actions secret `HOMEBREW_TAP_TOKEN` with Contents write access scoped to `yoink-labs/homebrew-tap`. The workflow can be rerun for an existing tag and verifies any previously uploaded asset byte for byte.
+Update `cli/release/version.json` and `cli/package.json`, then merge to main. The release workflow tags the merge commit `split-vX.Y.Z`, builds an allowlisted tarball, publishes it in both repositories and updates the public formula with its SHA-256. Configure the Split repository Actions secret `HOMEBREW_TAP_TOKEN` with Contents write access scoped to `yoink-labs/homebrew-tap`. The workflow can be rerun for an existing tag and verifies any previously uploaded asset byte for byte.
 
 ```sh
 node --test cli/test/*.test.mjs

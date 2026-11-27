@@ -10,6 +10,10 @@ is noted next to each release. The CLI is versioned separately with
 
 ## [Unreleased]
 
+### Added
+
+- Split CLI 0.3.0 creates personal invitations and can set, correct, or clear a placeholder member’s email for verified account linking.
+
 ## [0.9.0] - 2026-11-27
 
 TestFlight build 14.

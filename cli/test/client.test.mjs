@@ -26,10 +26,12 @@ test('credentials are private, origin-bound and forgotten independently of env o
 });
 test('offline version, help and per-command flags work through the installed launcher', () => {
   const run = args => spawnSync(fileURLToPath(new URL('../bin/split',import.meta.url)),args,{encoding:'utf8'});
-  assert.equal(run(['--version']).stdout.trim(),'split 0.2.0');
+  assert.equal(run(['--version']).stdout.trim(),'split 0.3.0');
   assert.match(run(['--help']).stdout,/members lookup/);
   assert.match(run(['--help']).stdout,/github\.com\/yoink-labs\/split/);
   assert.match(run(['expenses','edit','--help']).stdout,/--revision/);
+  assert.match(run(['members','update','--help']).stdout,/--email/);
+  assert.match(run(['invite','--help']).stdout,/--email/);
   assert.match(run(['groups','create','--placeholders','nonsense','--json']).stderr,/JSON array/);
   assert.equal(run(['groups','list','--unknown']).status,1);
 });

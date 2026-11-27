@@ -22,6 +22,7 @@ import {
 import { createDemoState, DEMO_USER } from "./demo";
 import { ExpenseForm } from "./expense";
 import { ConverterScreen } from "./fxui";
+import { GroupSummary } from "./groupSummary";
 import { GroupWorkspace } from "./groupWorkspace";
 import { isAbort, mergeSnapshot, singleFlight } from "./refresh";
 import {
@@ -53,6 +54,7 @@ function RoutesBody() {
         <Route path="/import/splitwise" element={<SplitwiseImport />} />
         <Route path="/convert" element={<ConverterScreen />} />
         <Route path="/g/:gid" element={<GroupWorkspace />} />
+        <Route path="/g/:gid/summary" element={<GroupSummary />} />
         <Route path="/g/:gid/m/:mid" element={<MemberScreen />} />
         <Route path="/g/:gid/new" element={<ExpenseForm />} />
         <Route path="/g/:gid/e/:eid" element={<GroupWorkspace />} />

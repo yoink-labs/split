@@ -21,6 +21,20 @@ function contactInfo(emailInput:unknown,phoneInput:unknown) {
     if ((email && (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length>254)) || (phone && !/^[+0-9() .-]{3,32}$/.test(phone))) throw new InputError('Check the email address or phone number.');
     return {email,phone};
 }
+function memberEmail(value:unknown):string {
+  const {email}=contactInfo(value,undefined);
+  if (!email) throw new InputError('Enter a valid email address.');
+  return email;
+}
+const activeGroupMember = 'EXISTS (SELECT 1 FROM members WHERE group_id=? AND user_id=? AND removed_at IS NULL)';
+const activePlaceholder = `SELECT id FROM members WHERE group_id=? AND id=? AND user_id IS NULL AND removed_at IS NULL
+  AND id NOT IN (SELECT member_id FROM member_aliases) AND ${activeGroupMember}`;
+function saveMemberEmail(db:D1Database,groupID:string,memberID:string,userID:string,email:string|null) {
+  return db.prepare(`INSERT INTO member_contacts(member_id,email)
+    SELECT id,? FROM (${activePlaceholder}) WHERE true
+    ON CONFLICT(member_id) DO UPDATE SET email=excluded.email`)
+    .bind(email,groupID,memberID,groupID,userID);
+}
 async function member(env:Env,groupID:string,userID:string) {
   const row=await env.DB.prepare('SELECT id FROM members WHERE group_id=? AND user_id=?').bind(groupID,userID).first();
   if(!row) throw new HTTPError(403,'You are not a member of this group.');
@@ -276,22 +290,52 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
     ]);
     return json({id:b.id},201);
   }
+  const editMemberEmail=path.match(/^\/v1\/groups\/([\w-]+)\/members\/([\w-]+)\/email$/);
+  if (editMemberEmail && request.method==='POST') {
+    const [,groupID,memberID]=editMemberEmail;
+    await member(env,groupID,userID);
+    const b=await body(request);
+    const email=b.email===null ? null : memberEmail(b.email);
+    const [,saved]=await env.DB.batch([
+      env.DB.prepare(`DELETE FROM invites WHERE group_id=? AND member_id IN (${activePlaceholder})
+        AND (SELECT email FROM member_contacts WHERE member_id=?) IS NOT ?`)
+        .bind(groupID,groupID,memberID,groupID,userID,memberID,email),
+      saveMemberEmail(env.DB,groupID,memberID,userID,email)
+    ]);
+    if (!saved.meta.changes) throw new InputError('Choose an active, unclaimed member in your group.');
+    return json({id:memberID,email});
+  }
   const inviteMatch=path.match(/^\/v1\/groups\/([\w-]+)\/invites$/);
   if(inviteMatch && request.method==='POST') {
     const groupID=inviteMatch[1];await member(env,groupID,userID);const b=await body(request);
+    const hasMember=b.memberID!==undefined && b.memberID!==null;
+    if (hasMember && !validID(b.memberID)) throw new InputError('Choose an unclaimed member to invite.');
+    const name=typeof b.name==='string' ? b.name.trim() : '';
+    if (b.name!==undefined && (!name || name.length>60 || hasMember))
+      throw new InputError('Enter a name of up to 60 characters for a new placeholder, or choose an existing member.');
+    const email=b.email===undefined ? undefined : memberEmail(b.email);
+    if (email && !hasMember && !name) throw new InputError('Choose a member or enter a name for the email invitation.');
+    const memberID=name ? crypto.randomUUID() : hasMember ? b.memberID as string : undefined;
     const code=Array.from(crypto.getRandomValues(new Uint8Array(12)), n=>'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'[n%32]).join('');
     const digest=await hash(code), expiry=Date.now()+7*86400000;
-    if (b.memberID !== undefined && b.memberID !== null) {
-      if(!validID(b.memberID)) throw new InputError('Choose an unclaimed member to invite.');
-      const seat=await env.DB.prepare('SELECT id FROM members WHERE id=? AND group_id=? AND user_id IS NULL AND removed_at IS NULL AND id NOT IN (SELECT member_id FROM member_aliases)')
-        .bind(b.memberID,groupID).first<{id:string}>();
-      if(!seat)throw new InputError('Choose an unclaimed member to invite.');
-      await env.DB.batch([env.DB.prepare('DELETE FROM invites WHERE member_id=?').bind(seat.id),env.DB.prepare('INSERT INTO invites VALUES (?,?,?,?)').bind(digest,groupID,seat.id,expiry)]);
+    if (memberID) {
+      const statements=[
+        name
+          ? env.DB.prepare(`INSERT INTO members(id,group_id,user_id,name) SELECT ?,?,NULL,? WHERE ${activeGroupMember}`)
+            .bind(memberID,groupID,name,groupID,userID)
+          : env.DB.prepare(`DELETE FROM invites WHERE group_id=? AND member_id IN (${activePlaceholder})`)
+            .bind(groupID,groupID,memberID,groupID,userID)
+      ];
+      if (email) statements.push(saveMemberEmail(env.DB,groupID,memberID,userID,email));
+      statements.push(env.DB.prepare(`INSERT INTO invites(token_hash,group_id,member_id,expires_at)
+        SELECT ?,?,id,? FROM (${activePlaceholder})`).bind(digest,groupID,expiry,groupID,memberID,groupID,userID));
+      const results=await env.DB.batch(statements);
+      if (!results.at(-1)?.meta.changes) throw new InputError('Choose an active, unclaimed member to invite.');
     } else {
       await env.DB.batch([env.DB.prepare('DELETE FROM group_invites WHERE expires_at<=?').bind(Date.now()),
         env.DB.prepare('INSERT INTO group_invites VALUES (?,?,?)').bind(digest,groupID,expiry)]);
     }
-    return json({url:`${env.APP_URL}/join/${code}`,code});
+    return json({url:`${env.APP_URL}/join/${code}`,code,...(memberID ? {memberID} : {})});
   }
   if(path==='/v1/join' && request.method==='POST') {
     const b=await body(request);

@@ -183,6 +183,7 @@ export async function operate(name: string, input: unknown, env: Env, user: stri
     return ledger('/v1/groups/'+group.id+'/leave', {});
   }
   if (name === 'members_remove') return ledger('/v1/groups/'+group.id+'/members/'+a.member+'/remove', { mode: a.mode ?? 'archive' });
+  if (name === 'members_update') return ledger(`/v1/groups/${group.id}/members/${a.member}/email`, { email: clearable(a.email) });
   if (name === 'invites_list') return ledger('/v1/groups/'+group.id+'/invites');
   if (name === 'invites_revoke') return ledger('/v1/groups/'+group.id+'/invites/'+a.invite+'/revoke', {});
   if (name === 'members_list') return members;
@@ -191,7 +192,7 @@ export async function operate(name: string, input: unknown, env: Env, user: stri
       id: crypto.randomUUID(), name: a.name, userID: a.user, email: a.email, phone: a.phone
     });
   }
-  if (name === 'invite') return ledger(`/v1/groups/${group.id}/invites`, { memberID: a.member });
+  if (name === 'invite') return ledger(`/v1/groups/${group.id}/invites`, { memberID: a.member, name: a.name, email: a.email });
   if (name === 'expenses_add' || name === 'settle_up') {
     const entry = name === 'expenses_add' ? makeExpense(a,group) : validateEntry({
       id: crypto.randomUUID(), groupID: group.id, title: 'Settlement', amount: minor(a.amount!), currency: a.currency ?? group.currency,

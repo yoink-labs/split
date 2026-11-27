@@ -103,7 +103,7 @@ struct AccountView: View {
             }
             .fileExporter(
                 isPresented: $exporting,
-                document: CSVFile(exportText),
+                document: LedgerExportFile(exportText),
                 contentType: .commaSeparatedText,
                 defaultFilename: "Split data"
             ) { result in

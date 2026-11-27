@@ -379,3 +379,32 @@ export const shortDate = (stamp: string) => {
     ...(d.getFullYear() === new Date().getFullYear() ? {} : { year: "numeric" }),
   });
 };
+
+/**
+ * Transfers for a group with "simplify debts" off, matching the iOS `Ledger.directPlan`:
+ * debtors and creditors in id order are paired greedily, without the fewest-transfers search.
+ */
+export function directPlan(balance: Record<string, number>) {
+  const remaining = { ...balance };
+  const ids = Object.keys(remaining).filter((id) => remaining[id]).sort();
+  const debtors = ids.filter((id) => remaining[id] < 0);
+  const creditors = ids.filter((id) => remaining[id] > 0);
+  const out: { from: string; to: string; amount: number }[] = [];
+  let d = 0, c = 0;
+  while (d < debtors.length && c < creditors.length) {
+    const from = debtors[d], to = creditors[c];
+    const amount = Math.min(-remaining[from], remaining[to]);
+    if (amount > 0) {
+      out.push({ from, to, amount });
+      remaining[from] += amount;
+      remaining[to] -= amount;
+    }
+    if (remaining[from] === 0) d++;
+    if (remaining[to] === 0) c++;
+  }
+  return out;
+}
+
+/** Suggested transfers for one currency, honoring the group's "simplify debts" setting. */
+export const groupTransfers = (g: Group, balance: Record<string, number>) =>
+  g.simplify === false ? directPlan(balance) : simplify(balance);

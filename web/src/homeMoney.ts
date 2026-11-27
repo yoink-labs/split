@@ -37,15 +37,29 @@ export function memberBalances(entries: Expense[], memberID: string) {
   return Object.fromEntries([...codes].map((code) => [code, balances(entries, code)[memberID] ?? 0]));
 }
 
-function publishedRate(entry: Expense, home: string, cache: FxCache) {
+/**
+ * The rate `projectHomeEntry` uses for a foreign entry, and where it came from: the exchange stored
+ * with the expense, the published rate for the expense date, or (when that is unavailable) the latest
+ * published or your own rate.
+ */
+export function homeRate(entry: Expense, home: string, cache: FxCache):
+  | { rateE8: number; date: string; source: string; kind: "stored" | "dated" | "latest" | "manual" }
+  | null {
+  if (entry.currency === home) return null;
+  if (entry.exchange?.target === home) return { ...entry.exchange, kind: "stored" };
   const [base, day] = historicPair(entry);
-  return cache.published(base, home, day) ?? cache.published(base, home) ?? cache.rate(base, home);
+  const dated = cache.published(base, home, day);
+  if (dated) return { ...dated, kind: "dated" };
+  const latest = cache.published(base, home);
+  if (latest) return { ...latest, kind: "latest" };
+  const own = cache.rate(base, home);
+  return own ? { ...own, kind: own.source === "Manual" ? "manual" : "latest" } : null;
 }
 
 export function projectHomeEntry(entry: Expense, home: string, cache: FxCache): Expense | null {
   if (entry.currency === home) return entry.exchange ? { ...entry, exchange: undefined } : entry;
   if (entry.exchange?.target === home) return { ...entry, ...settlementEntry(entry) };
-  const quote = publishedRate(entry, home, cache);
+  const quote = homeRate(entry, home, cache);
   if (!quote) return null;
   try {
     const amount = convert(entry.amount, quote.rateE8);
@@ -76,7 +90,7 @@ export function useHomeMoney() {
       return projected ? format(projected.amount, true) : "Rate unavailable";
     }
     try {
-      const quote = expense.exchange?.target === home ? expense.exchange : publishedRate(expense, home, fx);
+      const quote = homeRate(expense, home, fx);
       return quote ? format(convert(amount, quote.rateE8), true) : "Rate unavailable";
     } catch {
       return "Rate unavailable";

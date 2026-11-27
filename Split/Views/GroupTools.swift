@@ -1,10 +1,11 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-struct CSVFile: FileDocument {
-    static var readableContentTypes: [UTType] { [.commaSeparatedText, .plainText] }
+struct LedgerExportFile: FileDocument {
+    static var readableContentTypes: [UTType] { [.commaSeparatedText, .plainText, .pdf] }
     var data: Data
     init(_ text: String) { data = Data(text.utf8) }
+    init(data: Data) { self.data = data }
     init(configuration: ReadConfiguration) throws { data = configuration.file.regularFileContents ?? Data() }
     func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper { FileWrapper(regularFileWithContents: data) }
 }
@@ -13,6 +14,7 @@ struct GroupTools: View {
     var group: ExpenseGroup
     @EnvironmentObject var store: ExpenseStore
     @EnvironmentObject var session: SessionStore
+    @EnvironmentObject private var fx: FXStore
     @Environment(\.dismiss) var dismiss
     @State private var name = ""
     @State private var currency = ""
@@ -24,6 +26,7 @@ struct GroupTools: View {
     @State private var payment: [String: String] = [:]
     @State private var choose = false
     @State private var exporting = false
+    @State private var export: (file: LedgerExportFile, type: UTType, name: String)?
     @State private var busy = false
     @State private var pending: [CSVExpense] = []
     @State private var message: String?
@@ -145,7 +148,10 @@ struct GroupTools: View {
 
                 Section {
                     Button("Import CSV") { choose = true }
-                    Button("Export CSV") { exporting = true }
+                    Button("Export CSV") {
+                        export = (LedgerExportFile(LedgerCSV.export(entries, group: current)), .commaSeparatedText, current.name + " expenses")
+                        exporting = true
+                    }
                     if !pending.isEmpty {
                         let names = Set(pending.flatMap { [$0.payer] + $0.splits.map(\.name) })
                         let new = names.filter { name in !current.members.contains { $0.name.caseInsensitiveCompare(name) == .orderedSame } }.sorted()
@@ -168,6 +174,27 @@ struct GroupTools: View {
                     Text("Ledger CSV")
                 } footer: {
                     Text("Import up to 80 expenses or payments. Unmatched names become placeholders. Review the preview before applying.")
+                }
+
+                Section {
+                    Menu {
+                        ForEach(GroupSummaryPDF.Layout.allCases, id: \.self) { layout in
+                            Button(layout.rawValue) {
+                                run {
+                                    let group = current
+                                    let data = try GroupSummaryPDF.render(group: group, entries: entries, fx: fx, layout: layout)
+                                    export = (LedgerExportFile(data: data), .pdf, "\(group.name) – \(layout.rawValue)")
+                                    exporting = true
+                                }
+                            }
+                        }
+                    } label: {
+                        Label("Export PDF", systemImage: "doc.richtext")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(Rectangle())
+                    }
+                } footer: {
+                    Text("Choose a balance summary, a full expense breakdown, or a report with itemized receipts.")
                 }
 
                 Section {
@@ -206,7 +233,7 @@ struct GroupTools: View {
             } message: {
                 Text("You will lose access to its expenses. The group keeps its history for everyone else.")
             }
-            .fileExporter(isPresented: $exporting, document: CSVFile(LedgerCSV.export(entries, group: current)), contentType: .commaSeparatedText, defaultFilename: current.name + " expenses") {
+            .fileExporter(isPresented: $exporting, document: export?.file, contentType: export?.type ?? .commaSeparatedText, defaultFilename: export?.name) {
                 if case .failure(let error) = $0 { self.error = error.localizedDescription }
             }
             .fileImporter(isPresented: $choose, allowedContentTypes: [.commaSeparatedText, .plainText]) { result in

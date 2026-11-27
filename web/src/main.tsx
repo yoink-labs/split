@@ -507,6 +507,30 @@ function SignIn({ onDemo }: { onDemo: () => void }) {
   );
 }
 
+function WorkspaceLoading() {
+  const { pathname } = useLocation();
+  const composing = /\/(new|edit)$/.test(pathname);
+  return (
+    <div className="workspace-loading" role="status" aria-label="Loading your workspace">
+      <div className="loading-sidebar" aria-hidden="true">
+        <SplitLogo size={28} />
+        {Array.from({ length: 5 }, (_, index) => <div key={index} className="loading-block" />)}
+      </div>
+      <div className="main-content" aria-hidden="true">
+        <div className="loading-title loading-block" />
+        <div className="loading-nav loading-block" />
+        <div className={composing ? "loading-content expense-layout" : "loading-content"}>
+          {Array.from({ length: composing ? 2 : 5 }, (_, index) => (
+            <div className="card" key={index}>
+              <div className="loading-block" /><div className="loading-block" /><div className="loading-block" />
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function Ledger({ user }: { user: string }) {
   const [data, setData] = useState<Snapshot | null>(null);
   const [error, setError] = useState("");
@@ -557,22 +581,16 @@ function Ledger({ user }: { user: string }) {
   }
 
   if (!data) {
-    return (
+    return error ? (
       <div className="auth-page">
         <div className="auth-card" style={{ textAlign: "center" }}>
-          {error ? (
-            <>
-              <p className="error-banner">{error}</p>
-              <button className="btn btn-primary" onClick={() => void refresh()}>
-                Retry
-              </button>
-            </>
-          ) : (
-            <p className="muted">Loading your workspace…</p>
-          )}
+          <p className="error-banner" role="alert">{error}</p>
+          <button className="btn btn-primary" disabled={checking} onClick={() => void refresh()}>
+            {checking ? "Retrying…" : "Retry"}
+          </button>
         </div>
       </div>
-    );
+    ) : <WorkspaceLoading />;
   }
 
   const meMember = data.groups.flatMap((g) => g.members).find((m) => m.userID === user);

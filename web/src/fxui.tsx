@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Picker } from "./picker";
 import { currencies, dateText, money } from "./data";
 import {
   convert, fx, impliedRate, rateE8, rateInput, rateText, sourceLabel, today, useFxVersion,
@@ -16,14 +17,26 @@ const quoteLabel = (quote: Quote) => [
 ].filter(Boolean).join(" · ");
 
 export function CurrencySelect({
-  label, value, onChange, name, exclude,
+  label, value, onChange, name, exclude, searchable,
 }: {
   label: string;
   value: string;
   onChange: (c: string) => void;
   name?: string;
   exclude?: string;
+  searchable?: boolean;
 }) {
+  if (searchable) {
+    const options = [value, ...currencies.filter((code) => code !== value && code !== exclude)]
+      .map((code) => ({ value: code, label: currencyLabel(code) }));
+    return (
+      <div className="field">
+        <span>{label}</span>
+        <Picker label={label} value={value} onChange={onChange} search options={options} />
+        {name && <input type="hidden" name={name} value={value} />}
+      </div>
+    );
+  }
   return (
     <label className="field">
       {label}

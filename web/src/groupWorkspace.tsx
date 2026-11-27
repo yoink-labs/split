@@ -2,9 +2,7 @@ import { memberBalances, useHomeMoney } from "./homeMoney";
 import { PendingPayments } from "./settlements";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { CATEGORIES, categoryMeta } from "./categories";
 import { MoneyFlowGraph, PaidVsShareChart } from "./charts";
-import { Picker } from "./picker";
 import { SpendingDashboard } from "./spending";
 import { Form, useLedger, value } from "./context";
 import {
@@ -12,30 +10,31 @@ import {
   breakdown,
   buildGroupCSV,
   dateText,
-  dayHeading,
   entryPayers,
   memberName,
   memberPath,
   minor,
   money,
-  monthHeading,
   settlementEntry,
   shortDate,
   stamp,
   tripRangeText,
-  type ActiveInvite,
   type Expense,
   type ExpenseComment,
   type Group,
   type Person,
 } from "./data";
-import { convert, fx, rateE8, rateInput, rateText, sourceLabel, useRates, type Exchange } from "./fx";
+import { convert, fx, rateText, sourceLabel, useRates, type Exchange } from "./fx";
 import { CurrencySelect, RateField } from "./fxui";
 import { ReceiptsHub } from "./receiptsHub";
-import { Avatar, AvatarStack, BalanceBadge, CategoryIcon } from "./ui";
+import { Avatar, AvatarStack, CategoryIcon } from "./ui";
 
-type Tab = "overview" | "ledger" | "receipts" | "settle" | "people" | "rates";
-const tabs = new Set<string>(["overview", "ledger", "receipts", "settle", "people", "rates"]);
+import { GroupLedger, type LedgerView } from "./groupLedger";
+import { GroupSettings } from "./groupSettings";
+import "./groupWorkspace.css";
+
+const tabs = ["overview", "ledger", "receipts", "settle", "settings"] as const;
+type Tab = typeof tabs[number];
 
 function ExpenseDrawer({
   g,
@@ -435,53 +434,6 @@ function SettlePaymentForm({
   );
 }
 
-function TripRates({ group, canEdit }: { group: Group; canEdit: boolean }) {
-  const { save } = useLedger();
-  const [currency, setCurrency] = useState(() => Object.keys(group.tripRates ?? {})[0] ?? (group.currency === "USD" ? "EUR" : "USD"));
-  const rates = Object.entries(group.tripRates ?? {}).sort(([a], [b]) => a.localeCompare(b));
-  const current = group.tripRates?.[currency];
-
-  return (
-    <section className="card card-pad trip-rates" aria-labelledby="trip-rates-title">
-      <h2 id="trip-rates-title">Trip exchange rates</h2>
-      <p className="muted">Set a default for each currency you spend in. Each expense can use its own rate, and saved expenses keep the rate they used.</p>
-      {canEdit && (
-        <Form
-          key={currency + "|" + (current ?? "")}
-          label="Save trip rate"
-          submit={async (form) => {
-            const input = value(form, "rate");
-            const rate = rateE8(input);
-            if (input && !rate) throw new Error("Enter a positive exchange rate.");
-            await save(`/v1/groups/${group.id}/trip-rate`, { currency, target: group.currency, rateE8: rate });
-          }}
-        >
-          <div className="form-row">
-            <CurrencySelect label="Expense currency" value={currency} onChange={setCurrency} exclude={group.currency} />
-            <label className="field">
-              {group.currency} per 1 {currency}
-              <input type="text" name="rate" inputMode="decimal"
-                defaultValue={current ? rateInput(current) : ""} />
-              <small>Clear the rate and save to use published rates again.</small>
-            </label>
-          </div>
-        </Form>
-      )}
-      {rates.length > 0 && (
-        <ul className="trip-rate-list">
-          {rates.map(([code, rate]) => (
-            <li key={code} className="num">
-              {canEdit ? <button type="button" className="btn btn-sm btn-ghost" onClick={() => setCurrency(code)} aria-label={`Edit ${code} trip rate`}>
-                1 {code} = {rateText(rate)} {group.currency}
-              </button> : <>1 {code} = {rateText(rate)} {group.currency}</>}
-            </li>
-          ))}
-        </ul>
-      )}
-    </section>
-  );
-}
-
 export function GroupWorkspace() {
   const { data } = useLedger();
   const { gid, eid } = useParams();
@@ -490,47 +442,22 @@ export function GroupWorkspace() {
 }
 
 function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
-  const { data, user, request, save } = useLedger();
+  const { data, user } = useLedger();
   const nav = useNavigate();
   const [query, setQuery] = useSearchParams();
 
   const selectedTab = query.get("tab") ?? "";
-  const tab = expenseID ? "ledger" : tabs.has(selectedTab) && (selectedTab !== "rates" || g.kind === "trip") ? selectedTab as Tab : "overview";
+  const tab = expenseID ? "ledger" : selectedTab === "people" || selectedTab === "rates"
+    ? "settings" : tabs.find((item) => item === selectedTab) ?? "overview";
+  const ledgerView: LedgerView = expenseID || query.get("view") === "transactions" || (!query.has("view") && query.has("cat"))
+    ? "transactions" : "summary";
   const homeMoney = useHomeMoney();
 
-  // Ledger filters
-  const [search, setSearch] = useState("");
-  const filterCat = query.get("cat") ?? "";
-  const [filterPayer, setFilterPayer] = useState("");
-  const [filterPerson, setFilterPerson] = useState("");
-  const [filterStatus, setFilterStatus] = useState<"all" | "receipt" | "open" | "recurring">("all");
   const [inspectID, setInspectID] = useState<string | null>(null);
   const receiptFocusID = query.get("receipt");
 
   // Settle up open form
   const [settlingKey, setSettlingKey] = useState<string | null>(null);
-
-  // People & Invites state
-  const [invites, setInvites] = useState<ActiveInvite[]>([]);
-  const [newInviteURL, setNewInviteURL] = useState("");
-  const [memberModal, setMemberModal] = useState<Person | null>(null);
-  const [memberErr, setMemberErr] = useState("");
-  const [matches, setMatches] = useState<{ userID: string; name: string }[] | null>(null);
-  const [searchError, setSearchError] = useState("");
-  const [settingsSaved, setSettingsSaved] = useState(false);
-
-  useEffect(() => {
-    if (tab !== "people") return;
-    let alive = true;
-    request<{ invites: ActiveInvite[] }>(`/v1/groups/${g.id}/invites`)
-      .then((res) => {
-        if (alive) setInvites(res.invites ?? []);
-      })
-      .catch(() => {});
-    return () => {
-      alive = false;
-    };
-  }, [g, tab, request]);
 
   const entries = useMemo(
     () =>
@@ -566,35 +493,6 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
     (sum, e) => sum + (e.bill && !e.bill.closed ? e.bill.items.filter((i) => !i.memberIDs.length).length : 0),
     0,
   );
-
-  const filteredEntries = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return entries.filter((e) => {
-      if (q && !e.title.toLowerCase().includes(q) && !(e.notes ?? "").toLowerCase().includes(q) && !(e.category ?? "").toLowerCase().includes(q))
-        return false;
-      if (filterCat && (e.category ?? "Other") !== filterCat) return false;
-      if (filterPayer && !entryPayers(e).some((p) => p.memberID === filterPayer)) return false;
-      if (filterPerson && !e.splits.some((s) => s.memberID === filterPerson) && !entryPayers(e).some((p) => p.memberID === filterPerson))
-        return false;
-      if (filterStatus === "receipt" && !e.bill && !e.receiptIDs?.length) return false;
-      if (filterStatus === "open" && !(e.bill && !e.bill.closed && e.bill.items.some((i) => !i.memberIDs.length)))
-        return false;
-      if (filterStatus === "recurring" && !e.recurrence) return false;
-      return true;
-    });
-  }, [entries, search, filterCat, filterPayer, filterPerson, filterStatus]);
-
-  const groupedLedger = useMemo(() => {
-    const byDay = g.kind === "trip";
-    const map = new Map<string, Expense[]>();
-    for (const e of filteredEntries) {
-      const k = byDay ? e.createdAt.slice(0, 10) : e.createdAt.slice(0, 7);
-      const list = map.get(k) ?? [];
-      list.push(e);
-      map.set(k, list);
-    }
-    return [...map.entries()];
-  }, [filteredEntries, g.kind]);
 
   const inspected = entries.find((e) => e.id === (expenseID ?? inspectID));
 
@@ -675,13 +573,8 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
               <span className="ws-tab-badge">{suggestions.length}</span>
             )}
           </button>
-          {g.kind === "trip" && (
-            <button className="ws-tab" role="tab" aria-selected={tab === "rates"} onClick={() => setTab("rates")}>
-              Exchange rates
-            </button>
-          )}
-          <button className="ws-tab" role="tab" aria-selected={tab === "people"} onClick={() => setTab("people")}>
-            People & Settings
+          <button className="ws-tab" role="tab" aria-selected={tab === "settings"} onClick={() => setTab("settings")}>
+            Settings
           </button>
         </div>
       </div>
@@ -765,136 +658,15 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
         </div>
       )}
 
-      {/* TAB 2: LEDGER */}
       {tab === "ledger" && (
-        <>
-          <div className="filter-bar">
-            <input
-              type="search"
-              placeholder="Search title, notes, category…"
-              aria-label="Search expenses"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
-            <Picker label="Filter by category" value={filterCat} search
-              onChange={(cat) => setTab("ledger", cat ? { cat } : undefined)}
-              options={[{ value: "", label: "All categories" },
-                ...[...new Set([...CATEGORIES.map((c) => c.id), ...entries.map((e) => e.category ?? "Other")])].map((cat) => ({
-                  value: cat, label: categoryMeta(cat).label, icon: <CategoryIcon category={cat} />,
-                })),
-              ]} />
-            <Picker label="Filter by payer" value={filterPayer} onChange={setFilterPayer} search={g.members.length > 8}
-              options={[{ value: "", label: "Any payer" }, ...g.members.map((m) => ({ value: m.id, label: m.name }))]} />
-            <Picker label="Filter by participant" value={filterPerson} onChange={setFilterPerson} search={g.members.length > 8}
-              options={[{ value: "", label: "Any participant" }, ...g.members.map((m) => ({ value: m.id, label: m.name }))]} />
-            <Picker label="Filter by status" value={filterStatus} onChange={(status) => setFilterStatus(status as typeof filterStatus)}
-              options={[
-                { value: "all", label: "All items" }, { value: "open", label: "Needs claiming" },
-                { value: "receipt", label: "Has receipt" }, { value: "recurring", label: "Recurring" },
-              ]} />
-            {(search || filterCat || filterPayer || filterPerson || filterStatus !== "all") && (
-              <button
-                type="button"
-                className="btn btn-xs btn-ghost"
-                onClick={() => {
-                  setSearch("");
-                  setTab("ledger");
-                  setFilterPayer("");
-                  setFilterPerson("");
-                  setFilterStatus("all");
-                }}
-              >
-                Clear
-              </button>
-            )}
-          </div>
-
-          {!groupedLedger.length ? (
-            <div className="card card-pad" style={{ textAlign: "center", padding: "40px 20px" }}>
-              <p className="muted">No matching expenses.</p>
-            </div>
-          ) : (
-            <div className="ledger-feed">
-              {groupedLedger.map(([bucket, items]) => {
-                const bucketTotal = items.some((entry) => entry.kind === "expense") ? homeMoney.spend(items) : "";
-                return (
-                  <div className="day-group" key={bucket}>
-                    <div className="day-heading">
-                      <span>{g.kind === "trip" ? dayHeading(bucket) : monthHeading(bucket)}</span>
-                      <span className="num">{bucketTotal}</span>
-                    </div>
-                    <div className="ledger-list">
-                      {items.map((e) => {
-                        const payers = entryPayers(e);
-                        const isSettle = e.kind === "settlement";
-                        const open = e.bill && !e.bill.closed ? e.bill.items.filter((i) => !i.memberIDs.length).length : 0;
-                        const myPaid = me ? payers.filter((p) => p.memberID === me.id).reduce((s, p) => s + p.amount, 0) : 0;
-                        const myShare = me ? e.splits.find((s) => s.memberID === me.id)?.amount ?? 0 : 0;
-                        const myDelta = e.handled ? 0 : myPaid - myShare;
-                        const participants = e.splits
-                          .map((s) => g.members.find((m) => m.id === s.memberID))
-                          .filter((m): m is Person => Boolean(m));
-                        return (
-                          <button
-                            key={e.id}
-                            type="button"
-                            className={"ledger-item" + (inspected?.id === e.id ? " selected" : "")}
-                            onClick={() => setInspectID(e.id)}
-                          >
-                            <CategoryIcon category={e.category} settlement={isSettle} />
-                            <div style={{ minWidth: 0 }}>
-                              <div className="ledger-title">
-                                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                                  {isSettle
-                                    ? `${memberName(g, e.paidBy)} → ${memberName(g, e.splits[0]?.memberID ?? "")}`
-                                    : e.title}
-                                </span>
-                                {e.handled && <span className="tag tag-pos">Handled</span>}
-                                {open > 0 && <span className="tag tag-warn">{open} open</span>}
-                                {!open && (e.bill || e.receiptIDs?.length) && <span className="tag">Receipt</span>}
-                                {e.recurrence && <span className="tag tag-primary">{e.recurrence}</span>}
-                              </div>
-                              <div className="ledger-meta">
-                                <span>
-                                  {payers.length > 1
-                                    ? `${payers.length} payers`
-                                    : `${memberName(g, e.paidBy)} paid`}
-                                </span>
-                                {!isSettle && <span className="ledger-category">{categoryMeta(e.category).label}</span>}
-                                {(e.commentCount ?? 0) > 0 && <span>· 💬 {e.commentCount}</span>}
-                              </div>
-                            </div>
-
-                            <div className="ledger-hide-sm">
-                              <AvatarStack people={participants} max={4} size={22} />
-                            </div>
-
-                            <div className="ledger-amount ledger-hide-sm">
-                              <strong className={myDelta > 0 ? "pos" : myDelta < 0 ? "neg" : "muted"}>
-                                {isSettle
-                                  ? "payment"
-                                  : e.handled
-                                    ? "handled"
-                                  : myDelta === 0
-                                    ? "not involved"
-                                    : (myDelta > 0 ? "+" : "−") + homeMoney.entry(e, Math.abs(myDelta))}
-                              </strong>
-                              <small>{!isSettle && myDelta !== 0 ? (myDelta > 0 ? "you lent" : "your share") : ""}</small>
-                            </div>
-
-                            <div className="ledger-amount">
-                              <strong>{homeMoney.entry(e)}</strong>
-                            </div>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </>
+        <GroupLedger
+          g={g} entries={entries} memberID={me?.id}
+          view={ledgerView}
+          category={query.get("cat") ?? ""}
+          onView={(view, cat) => setTab("ledger", { view, ...(cat ? { cat } : {}) })}
+          inspectedID={inspected?.id}
+          onInspect={setInspectID}
+        />
       )}
 
       {/* TAB 3: RECEIPTS HUB */}
@@ -1030,261 +802,7 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
         </div>
       )}
 
-      {tab === "rates" && <TripRates key={g.id} group={g} canEdit={activeMembers.some((m) => m.userID === user)} />}
-
-      {/* People, invites and settings */}
-      {tab === "people" && (
-        <div className="form-stack" style={{ gap: 20 }}>
-          {/* People Grid */}
-          <div className="card">
-            <div className="card-head">
-              <h3>Members ({g.members.length})</h3>
-              <span className="muted" style={{ fontSize: 12 }}>
-                Click any person for their full breakdown
-              </span>
-            </div>
-            <div>
-              {g.members.map((m) => {
-                const st = spending.members.find((x) => x.id === m.id);
-                const amounts = memberBalances(entries, m.id);
-                const net = homeMoney.total(amounts);
-                const isMe = m.userID === user;
-                return (
-                  <div className="row" key={m.id}>
-                    <Link
-                      to={memberPath(g, m.id)}
-                      style={{ display: "flex", alignItems: "center", gap: 11, color: "var(--ink)", minWidth: 0, flex: 1 }}
-                    >
-                      <Avatar name={m.name} avatarURL={m.avatarURL} size={36} />
-                      <div style={{ minWidth: 0 }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                          <strong>{m.name}</strong>
-                          {isMe && <span className="tag tag-primary">You</span>}
-                          {!m.userID && <span className="tag">Placeholder</span>}
-                          {m.removed && <span className="tag tag-warn">Archived entity</span>}
-                        </div>
-                        <div className="muted num" style={{ fontSize: 12 }}>
-                          Paid {spendText(st?.paid ?? 0)} · Share {spendText(st?.share ?? 0)}
-                        </div>
-                      </div>
-                    </Link>
-                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                      <BalanceBadge amount={net.amount} currency={homeMoney.home} display={Object.values(amounts).some(Boolean) ? homeMoney.totalText(amounts, true) : undefined} />
-                      {!isMe && (
-                        <button
-                          type="button"
-                          className="btn btn-xs"
-                          onClick={() => {
-                            setMemberErr("");
-                            setMemberModal(m);
-                          }}
-                        >
-                          {m.removed ? "Restore" : "Remove"}
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Add Person & Active Invites */}
-          <div className="grid-2">
-            <div className="card card-pad">
-              <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 12 }}>Add a person</h3>
-              <Form
-                label="Add placeholder"
-                submit={async (f) => {
-                  await save(`/v1/groups/${g.id}/members`, {
-                    id: crypto.randomUUID(),
-                    name: value(f, "person"),
-                    email: value(f, "email"),
-                  });
-                }}
-              >
-                <label className="field">
-                  Name (works even if they don’t have Split)
-                  <input type="text" name="person" required maxLength={60} placeholder="Jordan" />
-                </label>
-                <label className="field">
-                  Email (optional — auto-links if they sign up)
-                  <input type="email" name="email" placeholder="jordan@example.com" />
-                </label>
-              </Form>
-              <Form
-                label="Search Split"
-                submit={async (f) => {
-                  setSearchError("");
-                  setMatches(await request<{ userID: string; name: string }[]>("/v1/people/search", { query: value(f, "query") }));
-                }}
-              >
-                <label className="field">
-                  Exact email, username, or shared contact
-                  <input name="query" required maxLength={254} />
-                </label>
-              </Form>
-              {matches?.length === 0 && <p className="muted">No matches.</p>}
-              {searchError && <p className="error-banner" role="alert">{searchError}</p>}
-              {matches?.map((person) => (
-                <button
-                  className="btn"
-                  type="button"
-                  key={person.userID}
-                  disabled={g.members.some((m) => m.userID === person.userID)}
-                  onClick={async () => {
-                    setSearchError("");
-                    try {
-                      await save(`/v1/groups/${g.id}/members`, { id: crypto.randomUUID(), ...person });
-                      setMatches(null);
-                    } catch (error) {
-                      setSearchError(error instanceof Error ? error.message : "Could not add this person.");
-                    }
-                  }}
-                >
-                  Add {person.name}
-                </button>
-              ))}
-            </div>
-
-            <div className="card card-pad">
-              <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 12 }}>Invites ({invites.length} active)</h3>
-              <Form
-                label="Create invite link"
-                submit={async (f) => {
-                  const memberID = value(f, "member");
-                  const res = await request<{ url: string; code: string }>(`/v1/groups/${g.id}/invites`, memberID ? { memberID } : {});
-                  setNewInviteURL(res.url);
-                  const refreshed = await request<{ invites: ActiveInvite[] }>(`/v1/groups/${g.id}/invites`);
-                  setInvites(refreshed.invites ?? []);
-                }}
-              >
-                <label className="field">
-                  Invite target
-                  <select name="member">
-                    <option value="">General group link (anyone)</option>
-                    {g.members.filter((m) => !m.userID && !m.removed).map((m) => (
-                      <option key={m.id} value={m.id}>
-                        Claim placeholder: {m.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              </Form>
-
-              {newInviteURL && (
-                <div style={{ marginTop: 12, display: "flex", gap: 6 }}>
-                  <input type="text" readOnly value={newInviteURL} style={{ flex: 1 }} className="mono" />
-                  <button type="button" className="btn btn-sm" onClick={() => void navigator.clipboard?.writeText(newInviteURL)}>
-                    Copy
-                  </button>
-                </div>
-              )}
-
-              {invites.length > 0 && (
-                <div className="panel" style={{ marginTop: 14 }}>
-                  {invites.map((inv) => (
-                    <div className="row" key={inv.id} style={{ padding: "8px 12px" }}>
-                      <div>
-                        <strong style={{ fontSize: 12.5 }}>
-                          {inv.kind === "member" ? `For ${inv.memberName}` : "General group invite"}
-                        </strong>
-                        <div className="muted" style={{ fontSize: 11.5 }}>
-                          Expires {new Date(inv.expiresAt).toLocaleDateString()}
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        className="btn btn-xs btn-danger"
-                        onClick={async () => {
-                          await request(`/v1/groups/${g.id}/invites/${inv.id}/revoke`, {});
-                          setInvites((list) => list.filter((x) => x.id !== inv.id));
-                        }}
-                      >
-                        Delete invite
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Group Settings & Payment Handles */}
-          <div className="grid-2">
-            <div className="card card-pad">
-              <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 12 }}>Trip & Group Details</h3>
-              <Form
-                label="Save group details"
-                submit={async (f) => {
-                  await save(`/v1/groups/${g.id}/update`, {
-                    name: value(f, "name"),
-                    description: value(f, "description"),
-                    startDate: value(f, "startDate") || null,
-                    endDate: value(f, "endDate") || null,
-                  });
-                  setSettingsSaved(true);
-                  setTimeout(() => setSettingsSaved(false), 2000);
-                }}
-              >
-                <label className="field">
-                  Name
-                  <input type="text" name="name" defaultValue={g.name} required maxLength={80} />
-                </label>
-                <label className="field">
-                  Description
-                  <textarea name="description" defaultValue={g.description ?? ""} maxLength={400} placeholder="Notes about this trip or household…" />
-                </label>
-                <div className="form-row">
-                  <label className="field">
-                    Start date
-                    <input type="date" name="startDate" defaultValue={g.startDate ?? ""} />
-                  </label>
-                  <label className="field">
-                    End date
-                    <input type="date" name="endDate" defaultValue={g.endDate ?? ""} />
-                  </label>
-                </div>
-                {settingsSaved && <p className="ok-banner">Saved group details</p>}
-              </Form>
-            </div>
-
-            <div className="card card-pad">
-              <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 12 }}>Your Payment Handles (for Settle Up)</h3>
-              <Form
-                label="Save payment handles"
-                submit={async (f) => {
-                  await save(`/v1/groups/${g.id}/payment-profile`, {
-                    venmo: value(f, "venmo") || undefined,
-                    paypal: value(f, "paypal") || undefined,
-                    mercado: value(f, "mercado") || undefined,
-                    alias: value(f, "alias") || undefined,
-                  });
-                }}
-              >
-                <div className="form-row">
-                  <label className="field">
-                    Venmo username
-                    <input type="text" name="venmo" defaultValue={me?.payment?.venmo ?? ""} placeholder="harris-k" />
-                  </label>
-                  <label className="field">
-                    PayPal.Me username
-                    <input type="text" name="paypal" defaultValue={me?.payment?.paypal ?? ""} placeholder="harrisk" />
-                  </label>
-                </div>
-                <label className="field">
-                  Argentine Alias / CVU
-                  <input type="text" name="alias" defaultValue={me?.payment?.alias ?? ""} placeholder="harris.split.mp" />
-                </label>
-                <label className="field">
-                  Mercado Pago link
-                  <input type="text" name="mercado" defaultValue={me?.payment?.mercado ?? ""} placeholder="https://link.mercadopago.com.ar/..." />
-                </label>
-              </Form>
-            </div>
-          </div>
-        </div>
-      )}
+      {tab === "settings" && <GroupSettings g={g} entries={entries} showRates={selectedTab === "rates"} />}
 
       {/* Slide-over Expense Inspector */}
       {inspected && (
@@ -1293,7 +811,7 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
           entry={inspected}
           onClose={() => {
             setInspectID(null);
-            if (expenseID) setTab("ledger");
+            if (expenseID) setTab("ledger", { view: "transactions" });
           }}
           onOpenReceipt={(id) => {
             setInspectID(null);
@@ -1302,70 +820,6 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
         />
       )}
 
-      {/* Member Remove / Retain as Entity Modal */}
-      {memberModal && (
-        <div className="modal-backdrop" onClick={() => setMemberModal(null)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 6 }}>
-              {memberModal.removed ? `Restore ${memberModal.name}` : `Remove ${memberModal.name}`}
-            </h3>
-            {memberModal.removed ? (
-              <>
-                <p className="muted" style={{ fontSize: 13.5, marginBottom: 16 }}>
-                  {memberModal.name} is currently retained as a historical entity. Restoring them adds them back to new expense defaults.
-                </p>
-                <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-                  <button className="btn" onClick={() => setMemberModal(null)}>Cancel</button>
-                  <button
-                    className="btn btn-primary"
-                    onClick={async () => {
-                      await save(`/v1/groups/${g.id}/members/${memberModal.id}/remove`, { mode: "restore" });
-                      setMemberModal(null);
-                    }}
-                  >
-                    Restore member
-                  </button>
-                </div>
-              </>
-            ) : (
-              <>
-                <p className="muted" style={{ fontSize: 13.5, marginBottom: 14 }}>
-                  Choose whether to <strong>retain {memberModal.name} as an archived entity</strong> (keeps past charges and balances intact, hides them from new splits) or <strong>permanently delete</strong> them (if they cancelled before any expenses).
-                </p>
-                {memberErr && <p className="error-banner" style={{ marginBottom: 12 }}>{memberErr}</p>}
-                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                  <button
-                    className="btn btn-primary"
-                    onClick={async () => {
-                      await save(`/v1/groups/${g.id}/members/${memberModal.id}/remove`, { mode: "archive" });
-                      setMemberModal(null);
-                    }}
-                  >
-                    Retain as archived entity (keep history)
-                  </button>
-                  <button
-                    className="btn btn-danger"
-                    onClick={async () => {
-                      try {
-                        setMemberErr("");
-                        await save(`/v1/groups/${g.id}/members/${memberModal.id}/remove`, { mode: "delete" });
-                        setMemberModal(null);
-                      } catch (e) {
-                        setMemberErr(e instanceof Error ? e.message : "Could not delete member.");
-                      }
-                    }}
-                  >
-                    Delete permanently (only if 0 expenses)
-                  </button>
-                  <button className="btn btn-ghost" onClick={() => setMemberModal(null)}>
-                    Cancel
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-      )}
     </>
   );
 }

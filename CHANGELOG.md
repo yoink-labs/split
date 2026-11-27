@@ -23,6 +23,7 @@ is noted next to each release. The CLI is versioned separately with
 ### Changed
 
 - Redesigned the web currency converter with 161 currency codes, charge-date rates with a latest-rate fallback, trip and expense overrides, and a comparison with the amount posted on your statement.
+- Redesigned the web group ledger with expandable spending breakdowns and a filterable transaction table, and moved trip exchange rates into group Settings.
 
 ## [0.9.0] - 2026-11-27
 

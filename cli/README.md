@@ -93,6 +93,17 @@ split import splitwise --file export.csv --me Harris        # new group; --group
 split profile avatar --avatar preset:ocean
 ```
 
+### Importing Splitwise exports
+
+The CLI uses the same CSV parser as the web importer. It accepts localized exports, friend exports, and files with multiple supported currencies.
+
+```sh
+split import splitwise --file trip.csv --file apartment.csv
+split import splitwise --file trip.csv --file apartment.csv --me Harris
+```
+
+Omit both `--me` and `--group` to preview the member names in each file. When you repeat `--file`, the other options apply to every file. Run separate commands when names, mappings, or destinations differ. The batch reports a result or error for each file in input order and exits with status 1 if any file failed. Successful imports are saved independently.
+
 ## Shared group settings
 
 ```sh

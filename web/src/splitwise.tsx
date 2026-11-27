@@ -1,9 +1,9 @@
 // Import from Splitwise: pick one or more "Export as spreadsheet" CSVs (one group each),
 // preview, map names to people, then import each group atomically.
-import { useState } from "react";
+import { useEffect, useRef, useState, type DragEvent } from "react";
 import { Link } from "react-router-dom";
 import { useLedger } from "./context";
-import { Avatar } from "./ui";
+import { Avatar, CategoryIcon } from "./ui";
 import { currencies, money, type Group } from "./data";
 import {
   importGroupID,
@@ -12,6 +12,7 @@ import {
   reconcile,
   type SplitwiseGroup,
 } from "../../worker/src/splitwiseCsv";
+import "./splitwise.css";
 
 type Mapping = "me" | "new" | string;
 interface Pending {
@@ -68,34 +69,80 @@ export function SplitwiseImport() {
   const { data, user, request, refresh } = useLedger();
   const [items, setItems] = useState<Pending[]>([]);
   const [busy, setBusy] = useState(false);
+  const [reading, setReading] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const [fileMessage, setFileMessage] = useState("");
+  const dragDepth = useRef(0);
   const own = data.groups.filter((g) => g.members.some((m) => m.userID === user));
+
+  useEffect(() => {
+    // File drops outside the chooser should leave the in-progress review open.
+    function preventFileNavigation(e: globalThis.DragEvent) {
+      if (e.dataTransfer?.types.includes("Files")) e.preventDefault();
+    }
+    window.addEventListener("dragover", preventFileNavigation);
+    window.addEventListener("drop", preventFileNavigation);
+    return () => {
+      window.removeEventListener("dragover", preventFileNavigation);
+      window.removeEventListener("drop", preventFileNavigation);
+    };
+  }, []);
 
   async function choose(files: FileList | null) {
     if (!files?.length) return;
-    const next: Pending[] = [];
-    for (const file of Array.from(files)) {
-      const key = file.name + ":" + file.size + ":" + file.lastModified;
-      if (file.size > 2_000_000) {
-        next.push({ key, file: file.name, error: "Choose a file under 2 MB.", name: "", currency: "USD", target: "new", mapping: {}, status: "failed" });
-        continue;
-      }
-      try {
-        const parsed = await parseSplitwise(await file.text(), file.name);
-        next.push({
-          key,
-          file: file.name,
-          parsed,
-          name: parsed.name,
-          currency: mainCurrency(parsed),
-          target: "new",
-          mapping: guessMapping(parsed, undefined, user),
-          status: "ready",
-        });
-      } catch (e) {
-        next.push({ key, file: file.name, error: e instanceof Error ? e.message : "Could not read this file.", name: "", currency: "USD", target: "new", mapping: {}, status: "failed" });
-      }
+    if (reading || busy) {
+      setFileMessage("Wait for the current files to finish, then add more.");
+      return;
     }
-    setItems((old) => [...old.filter((o) => !next.some((n) => n.key === o.key)), ...next]);
+    setFileMessage("");
+    setReading(true);
+    try {
+      const next: Pending[] = [];
+      for (const file of Array.from(files)) {
+        const key = file.name + ":" + file.size + ":" + file.lastModified;
+        try {
+          if (!/\.csv$/i.test(file.name) && file.type !== "text/csv") {
+            throw new Error("Choose a CSV export from Splitwise.");
+          }
+          if (file.size > 2_000_000) throw new Error("Choose a file that is 2 MB or smaller.");
+          const parsed = await parseSplitwise(await file.text(), file.name);
+          next.push({
+            key,
+            file: file.name,
+            parsed,
+            name: parsed.name,
+            currency: mainCurrency(parsed),
+            target: "new",
+            mapping: guessMapping(parsed, undefined, user),
+            status: "ready",
+          });
+        } catch (e) {
+          next.push({ key, file: file.name, error: e instanceof Error ? e.message : "Could not read this file.", name: "", currency: "USD", target: "new", mapping: {}, status: "failed" });
+        }
+      }
+      setItems((old) => [...old.filter((o) => !next.some((n) => n.key === o.key)), ...next]);
+    } finally {
+      setReading(false);
+    }
+  }
+
+  function dragEnter(e: DragEvent<HTMLLabelElement>) {
+    if (!e.dataTransfer.types.includes("Files")) return;
+    e.preventDefault();
+    dragDepth.current += 1;
+    if (!reading && !busy) setDragging(true);
+  }
+
+  function dragLeave() {
+    dragDepth.current = Math.max(0, dragDepth.current - 1);
+    if (!dragDepth.current) setDragging(false);
+  }
+
+  function drop(e: DragEvent<HTMLLabelElement>) {
+    e.preventDefault();
+    dragDepth.current = 0;
+    setDragging(false);
+    void choose(e.dataTransfer.files);
   }
 
   function update(key: string, change: Partial<Pending>) {
@@ -152,58 +199,104 @@ export function SplitwiseImport() {
   }
 
   const ready = items.filter((i) => i.status === "ready" && i.parsed && !problem(i));
+  const hasPendingGroups = items.some((i) => i.parsed && i.status !== "done");
   return (
-    <>
-      <p className="eyebrow">Free · no Splitwise account link needed</p>
-      <h1>Import from Splitwise</h1>
-      <section className="panel steps">
-        <h2>Export from Splitwise</h2>
-        <ol>
-          <li>
-            On <b>splitwise.com</b>, open the group, select the <b>settings gear</b>, then{" "}
-            <b>Export as spreadsheet</b>.
-          </li>
-          <li>
-            In the Splitwise app, open the group, scroll the buttons under the group name to the
-            right, then tap <b>Export</b>.
-          </li>
-          <li>Repeat for each group. Choose all the CSV files here at once; each becomes a group.</li>
-        </ol>
-        <small>
-          Files in any language work. Split checks the imported balances against Splitwise’s
-          Total balance row. Steps from{" "}
-          <a href="https://kb.splitwise.com/account-issues/how-do-i-export-my-splitwise-data" target="_blank" rel="noreferrer">
-            Splitwise Help
-          </a>
-          .
-        </small>
-        <label className="file-pick">
-          <span className="primary">Choose Splitwise CSV files</span>
-          <input
-            type="file"
-            multiple
-            accept=".csv,text/csv"
-            onChange={(e) => {
-              void choose(e.target.files);
-              e.target.value = "";
+    <div className="splitwise-import">
+      <header className="splitwise-heading">
+        <h1>Import from Splitwise</h1>
+        <p>Bring your expenses, payments, and balances into Split from a group export.</p>
+      </header>
+
+      <div className="splitwise-start">
+        <section className="panel splitwise-upload" aria-labelledby="splitwise-upload-title">
+          <h2 id="splitwise-upload-title">Add group exports</h2>
+          <p>Review your entries and match people before you import.</p>
+          <label
+            className="splitwise-dropzone"
+            data-dragging={dragging}
+            onDragEnter={dragEnter}
+            onDragLeave={dragLeave}
+            onDragOver={(e) => {
+              if (e.dataTransfer.types.includes("Files")) {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = busy || reading ? "none" : "copy";
+              }
             }}
-          />
-        </label>
-      </section>
+            onDrop={drop}
+          >
+            <input
+              className="splitwise-file-input"
+              type="file"
+              multiple
+              accept=".csv,text/csv"
+              aria-label="Choose Splitwise CSV files"
+              aria-describedby="splitwise-file-help"
+              disabled={busy || reading}
+              onChange={(e) => {
+                void choose(e.target.files);
+                e.target.value = "";
+              }}
+            />
+            <span className="splitwise-file-icon" aria-hidden="true">CSV</span>
+            <span className="btn btn-primary splitwise-file-button">
+              {busy ? "Importing…" : reading ? "Reading files…" : items.length ? "Add CSV files" : "Choose CSV files"}
+            </span>
+            <span className="splitwise-drop-hint">or drag files here</span>
+          </label>
+          <p id="splitwise-file-help" className="splitwise-file-help">
+            One CSV per group, up to 2 MB each. You can add several at once.
+          </p>
+          {fileMessage && <p className="splitwise-file-help" role="status">{fileMessage}</p>}
+        </section>
 
-      {items.map((i) => (
-        <Preview key={i.key} item={i} groups={own} user={user} problem={problem(i)} update={(c) => update(i.key, c)} remove={() => setItems(items.filter((x) => x.key !== i.key))} />
-      ))}
+        <aside className="splitwise-guide" aria-labelledby="splitwise-guide-title">
+          <h2 id="splitwise-guide-title">Get your CSV files</h2>
+          <dl>
+            <div>
+              <dt>On the web</dt>
+              <dd>Open your group on Splitwise, select the settings gear, then choose <strong>Export as spreadsheet</strong>.</dd>
+            </div>
+            <div>
+              <dt>In the Splitwise app</dt>
+              <dd>Open your group, scroll the buttons under the group name to the right, then tap <strong>Export</strong>.</dd>
+            </div>
+          </dl>
+          <a href="https://kb.splitwise.com/account-issues/how-do-i-export-my-splitwise-data" target="_blank" rel="noreferrer">
+            Splitwise export help
+          </a>
+        </aside>
+      </div>
 
-      {items.some((i) => i.parsed) && (
-        <div className="import-bar">
-          <button className="primary" disabled={busy || !ready.length} onClick={() => void importAll()}>
-            {busy ? "Importing…" : `Import ${ready.length} ${ready.length === 1 ? "group" : "groups"}`}
+      <span className="splitwise-sr-only" role="status">
+        {reading ? "Reading files." : items.length ? `${items.length} ${items.length === 1 ? "file" : "files"} in review.` : ""}
+      </span>
+      {items.length > 0 && (
+        <section className="splitwise-review" aria-labelledby="splitwise-review-title">
+          <h2 id="splitwise-review-title">Review files</h2>
+          {items.map((i) => (
+            <Preview
+              key={i.key}
+              item={i}
+              groups={own}
+              user={user}
+              busy={busy}
+              problem={problem(i)}
+              update={(change) => update(i.key, change)}
+              remove={() => setItems((old) => old.filter((x) => x.key !== i.key))}
+            />
+          ))}
+        </section>
+      )}
+
+      {hasPendingGroups && (
+        <div className="splitwise-actions">
+          <p>Split saves each group in one import. Reimporting skips entries already in Split.</p>
+          <button className="btn btn-primary" disabled={busy || reading || !ready.length} onClick={() => void importAll()}>
+            {busy ? "Importing…" : ready.length ? `Import ${ready.length} ${ready.length === 1 ? "group" : "groups"}` : "Import groups"}
           </button>
-          <small>Each group imports all at once or not at all. Importing the same file again adds nothing.</small>
         </div>
       )}
-    </>
+    </div>
   );
 }
 
@@ -211,6 +304,7 @@ function Preview({
   item: i,
   groups,
   user,
+  busy,
   problem,
   update,
   remove,
@@ -218,161 +312,184 @@ function Preview({
   item: Pending;
   groups: Group[];
   user: string;
+  busy: boolean;
   problem: string | null;
   update: (c: Partial<Pending>) => void;
   remove: () => void;
 }) {
-  if (!i.parsed)
+  if (!i.parsed) {
     return (
-      <section className="panel import-card">
-        <div className="row">
-          <strong>{i.file}</strong>
-          <button className="link" onClick={remove}>Remove</button>
+      <article className="panel splitwise-preview">
+        <header className="splitwise-preview-header">
+          <h3>{i.file}</h3>
+          <button className="btn btn-ghost" disabled={busy} onClick={remove}>Remove</button>
+        </header>
+        <div className="splitwise-preview-body">
+          <p className="splitwise-feedback splitwise-error" role="alert">{i.error}</p>
         </div>
-        <p className="error">{i.error}</p>
-      </section>
+      </article>
     );
+  }
+
   const g = i.parsed;
   const target = groups.find((x) => x.id === i.target);
   const mismatches = reconcile(g);
+  const totalCurrencies = Object.keys(g.totals).sort();
   const expenses = g.rows.filter((r) => !r.payment).length;
+  const payments = g.rows.length - expenses;
   const done = i.status === "done";
+
   return (
-    <section className="panel import-card" aria-label={"Preview of " + i.file}>
-      <div className="row">
+    <article className="panel splitwise-preview" aria-label={"Preview of " + i.file}>
+      <header className="splitwise-preview-header">
         <div>
-          <strong>{i.target === "new" ? i.name || g.name : target?.name}</strong>
-          <small>
-            {i.file} · {expenses} {expenses === 1 ? "expense" : "expenses"} · {g.rows.length - expenses}{" "}
-            {g.rows.length - expenses === 1 ? "payment" : "payments"} · {g.members.length} people
-          </small>
+          <h3>{i.target === "new" ? i.name.trim() || "Untitled group" : target?.name ?? i.name}</h3>
+          <p>{i.file}</p>
         </div>
-        {!done && <button className="link" onClick={remove}>Remove</button>}
-      </div>
-      {mismatches.length ? (
-        <div className="notice warn" role="alert">
-          <strong>Doesn’t match Splitwise’s Total balance</strong>
-          {mismatches.map((m) => (
-            <small key={m.currency + m.member}>
-              {m.member}: Splitwise {signed(m.expected, m.currency)}, Split {signed(m.imported, m.currency)}
-            </small>
-          ))}
-          <small>Check the file wasn’t edited, then export it again from Splitwise.</small>
-        </div>
-      ) : Object.keys(g.totals).length ? (
-        <p className="notice ok">✓ Matches Splitwise’s Total balance to the cent ({Object.keys(g.totals).sort().join(", ")}).</p>
-      ) : (
-        <p className="notice warn">This file has no Total balance row, so the balances can’t be checked.</p>
-      )}
-      {!done && (
-        <fieldset disabled={i.status === "importing"}>
-          <div className="columns">
-            <label>
-              Import into
-              <select
-                value={i.target}
-                onChange={(e) => {
-                  const t = e.target.value;
-                  update({ target: t, mapping: guessMapping(g, groups.find((x) => x.id === t), user) });
-                }}
-              >
-                <option value="new">A new group</option>
-                {groups.map((x) => (
-                  <option key={x.id} value={x.id}>
-                    {x.name} ({x.currency})
-                  </option>
-                ))}
-              </select>
-            </label>
-            {i.target === "new" ? (
-              <label>
-                Currency
-                <select value={i.currency} onChange={(e) => update({ currency: e.target.value })}>
-                  {currencies.map((c) => (
-                    <option key={c}>{c}</option>
-                  ))}
-                </select>
-              </label>
-            ) : (
-              <span />
-            )}
-          </div>
-          {i.target === "new" && (
-            <label>
-              Group name
-              <input value={i.name} maxLength={80} onChange={(e) => update({ name: e.target.value })} />
-            </label>
-          )}
-          <h2>People</h2>
-          {g.members.map((name) => (
-            <label className="row map" key={name}>
-              <Avatar name={name} size={36} />
-              <span className="map-name">
-                <strong>{name}</strong>
-                <small>{standing(g.totals, name)}</small>
-              </span>
-              <select
-                value={i.mapping[name] ?? "new"}
-                onChange={(e) => update({ mapping: { ...i.mapping, [name]: e.target.value } })}
-              >
-                <option value="me">Me</option>
-                {target?.members
-                  .filter((m) => m.userID !== user)
-                  .map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.name}
-                    </option>
-                  ))}
-                <option value="new">New placeholder</option>
-              </select>
-            </label>
-          ))}
-          {problem && <p className="error">{problem}</p>}
-        </fieldset>
-      )}
-      <h2>Entries</h2>
-      <div className="import-entries">
-        {g.rows.slice(0, 5).map((r, n) => (
-          <p className="row" key={n}>
-            <span>
-              <strong>{r.title}</strong>
-              <small>
-                {shortDay(r.day)} · {r.payment ? "Payment" : r.category ?? "General"} · {(r.payers ?? [{ name: r.payer }]).map((p) => p.name).join(" & ")} paid
-              </small>
-            </span>
-            <b>{money(r.amount, r.currency)}</b>
+        {done ? (
+          <Link className="btn" to={"/g/" + i.target}>Open group</Link>
+        ) : (
+          <button className="btn btn-ghost" disabled={busy} onClick={remove} aria-label={"Remove " + i.file}>
+            Remove
+          </button>
+        )}
+      </header>
+      <div className="splitwise-preview-body">
+        <ul className="splitwise-counts" aria-label="File summary">
+          <li><b>{expenses}</b> {expenses === 1 ? "expense" : "expenses"}</li>
+          <li><b>{payments}</b> {payments === 1 ? "payment" : "payments"}</li>
+          <li><b>{g.members.length}</b> {g.members.length === 1 ? "person" : "people"}</li>
+        </ul>
+        {i.result && (
+          <p className={`splitwise-feedback ${done ? "splitwise-ok" : "splitwise-error"}`} role={done ? "status" : "alert"}>
+            {i.result}
           </p>
-        ))}
+        )}
+        {mismatches.length ? (
+          <div className="splitwise-feedback splitwise-warning">
+            <strong>Balances differ from the Splitwise export</strong>
+            <ul>
+              {mismatches.map((m) => (
+                <li key={JSON.stringify([m.currency, m.member])}>
+                  {m.member}: Splitwise {signed(m.expected, m.currency)}, Split {signed(m.imported, m.currency)}
+                </li>
+              ))}
+            </ul>
+            <p>Export a fresh copy from Splitwise and check the balances again.</p>
+          </div>
+        ) : totalCurrencies.length ? (
+          <p className="splitwise-feedback splitwise-ok">
+            <span aria-hidden="true">✓</span> Balances match Splitwise to the cent ({totalCurrencies.join(", ")}).
+          </p>
+        ) : (
+          <p className="splitwise-feedback splitwise-warning">
+            Balance verification needs a Total balance row in the export.
+          </p>
+        )}
+
+        <div className="splitwise-review-grid" data-complete={done}>
+          {!done && (
+            <fieldset className="splitwise-settings" disabled={busy} aria-label="Group settings and people">
+              <h4>Group settings</h4>
+              <div className="splitwise-fields">
+                <label className="field">
+                  Import into
+                  <select
+                    value={i.target}
+                    onChange={(e) => {
+                      const targetID = e.target.value;
+                      update({ target: targetID, mapping: guessMapping(g, groups.find((x) => x.id === targetID), user) });
+                    }}
+                  >
+                    <option value="new">A new group</option>
+                    {groups.map((x) => (
+                      <option key={x.id} value={x.id}>{x.name} ({x.currency})</option>
+                    ))}
+                  </select>
+                </label>
+                {i.target === "new" && (
+                  <label className="field">
+                    Currency
+                    <select value={i.currency} onChange={(e) => update({ currency: e.target.value })}>
+                      {currencies.map((c) => <option key={c}>{c}</option>)}
+                    </select>
+                  </label>
+                )}
+              </div>
+              {i.target === "new" && (
+                <label className="field">
+                  Group name
+                  <input type="text" value={i.name} maxLength={80} onChange={(e) => update({ name: e.target.value })} />
+                </label>
+              )}
+
+              <div className="splitwise-people">
+                <h4>Match people</h4>
+                <p className="splitwise-hint">Choose your name and match anyone already in the group.</p>
+                {g.members.map((name) => (
+                  <div className="splitwise-person" key={name}>
+                    <Avatar name={name} size={32} />
+                    <div>
+                      <strong>{name}</strong>
+                      {totalCurrencies.length > 0 && <small>{standing(g.totals, name)}</small>}
+                    </div>
+                    <select
+                      aria-label={"Match " + name}
+                      value={i.mapping[name] ?? "new"}
+                      onChange={(e) => update({ mapping: { ...i.mapping, [name]: e.target.value } })}
+                    >
+                      <option value="me">Me</option>
+                      {target?.members
+                        .filter((m) => m.userID !== user)
+                        .map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+                      <option value="new">New placeholder</option>
+                    </select>
+                  </div>
+                ))}
+                {problem && <p className="splitwise-feedback splitwise-warning">{problem}</p>}
+              </div>
+            </fieldset>
+          )}
+
+          <section className="splitwise-entries" aria-label="Entry preview">
+            <h4>Entries</h4>
+            <ul className="splitwise-entry-list">
+              {g.rows.slice(0, 5).map((row, index) => <EntryPreview key={index} row={row} />)}
+            </ul>
+            {g.rows.length > 5 && (
+              <details>
+                <summary>Show {g.rows.length - 5} more {g.rows.length === 6 ? "entry" : "entries"}</summary>
+                <ul className="splitwise-entry-list">
+                  {g.rows.slice(5).map((row, index) => <EntryPreview key={index} row={row} />)}
+                </ul>
+              </details>
+            )}
+            {g.skipped.length > 0 && (
+              <details>
+                <summary>{g.skipped.length} {g.skipped.length === 1 ? "row" : "rows"} left out</summary>
+                <ul className="splitwise-skipped">
+                  {g.skipped.map((message, index) => <li key={index}>{message}</li>)}
+                </ul>
+              </details>
+            )}
+          </section>
+        </div>
       </div>
-      {g.rows.length > 5 && (
-        <details>
-          <summary>{g.rows.length - 5} more</summary>
-          {g.rows.slice(5).map((r, n) => (
-            <p className="row" key={n}>
-              <span>
-                <strong>{r.title}</strong>
-                <small>{shortDay(r.day)} · {r.payer} paid</small>
-              </span>
-              <b>{money(r.amount, r.currency)}</b>
-            </p>
-          ))}
-        </details>
-      )}
-      {g.skipped.length > 0 && (
-        <details>
-          <summary>{g.skipped.length} left out</summary>
-          {g.skipped.map((s) => (
-            <small key={s}>{s}</small>
-          ))}
-        </details>
-      )}
-      {i.result && <p className={done ? "notice ok" : "error"}>{i.result}</p>}
-      {done && (
-        <Link className="secondary" to={"/g/" + i.target}>
-          Open group
-        </Link>
-      )}
-    </section>
+    </article>
+  );
+}
+
+function EntryPreview({ row }: { row: SplitwiseGroup["rows"][number] }) {
+  const payers = (row.payers ?? [{ name: row.payer }]).map((payer) => payer.name).join(" & ");
+  return (
+    <li className="splitwise-entry">
+      <CategoryIcon category={row.category} settlement={row.payment} />
+      <div>
+        <strong>{row.title}</strong>
+        <small>{shortDay(row.day)} · {row.payment ? "Payment" : row.category ?? "General"} · {payers} paid</small>
+      </div>
+      <b>{money(row.amount, row.currency)}</b>
+    </li>
   );
 }
 

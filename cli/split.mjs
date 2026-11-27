@@ -15,12 +15,12 @@ export { version };
 const spelling = tool => tool.name.replaceAll('_',' ');
 function usage(tool) {
   const { properties, required } = tool.inputSchema;
-  const args = Object.entries(properties).map(([key, spec]) => {
+  const args = Object.entries(properties).filter(([key]) => key !== 'file' || !properties.csv).map(([key, spec]) => {
+    if (key === 'csv') return '(--file PATH [--file PATH ...] | --csv VALUE [--file NAME])';
     const flag = '--' + key + (spec.type === 'boolean' ? '' : (spec.type === 'array' || spec.type === 'object') ? ' JSON' : ' VALUE');
     return required.includes(key) ? flag : '[' + flag + ']';
   });
   if (properties.photos) args.push('[--photo PATH ...]');
-  if (properties.csv) args.push('[--file PATH]');
   if (outputs.has(tool.name)) args.push('[--out PATH]');
   return 'split ' + [spelling(tool), ...args].join(' ');
 }
@@ -32,6 +32,10 @@ const help = ['Split by Yoink Labs', 'Usage: split [--json] COMMAND [flags]', ''
   'SPLIT_API_URL selects a server. SPLIT_TOKEN supplies a device credential.', '',
   'Source, issues and contributing: https://github.com/yoink-labs/split'].join('\n');
 const print = (value, compact) => console.log(JSON.stringify(value, null, compact ? undefined : 2));
+
+async function csvFile(path) {
+  return { csv: await readFile(path, 'utf8'), file: basename(path) };
+}
 
 async function login(c, options) {
   const pending = await c.request('/v1/device/start', { name: options.name || hostname() }, false);
@@ -60,7 +64,12 @@ export async function main(argv = process.argv.slice(2)) {
     if (words[0] === '--version') return compact ? print({ version }, true) : console.log('split ' + version);
     const tool = tools.find(t => spelling(t).split(' ').every((word,i) => words[i] === word));
     if (wantsHelp || !words.length) {
-      const message = tool ? [usage(tool),tool.description,...Object.entries(tool.inputSchema.properties).map(([key,s]) => '  --'+key+'  '+s.description)].join('\n') : help;
+      const message = tool ? [usage(tool), tool.description, ...Object.entries(tool.inputSchema.properties).map(([key, spec]) => {
+        const description = key === 'file' && tool.inputSchema.properties.csv
+          ? 'Path to a CSV export. Repeat for multiple files. With --csv, supply a file name.'
+          : spec.description;
+        return '  --' + key + '  ' + description;
+      })].join('\n') : help;
       return compact ? print({ help: message }, true) : console.log(message);
     }
     const c = await client();
@@ -85,15 +94,10 @@ export async function main(argv = process.argv.slice(2)) {
     if (!tool) throw new Error('Unknown command. Run split --help.');
     const options = Object.fromEntries(Object.entries(tool.inputSchema.properties).map(([key,spec]) => [key, {type:spec.type === 'boolean' ? 'boolean' : 'string'}]));
     if (tool.inputSchema.properties.photos) options.photo = { type:'string', multiple:true };
-    if (tool.inputSchema.properties.csv) options.file = { type:'string' };
+    if (tool.inputSchema.properties.csv) options.file = { type:'string', multiple:true };
     if (outputs.has(tool.name)) options.out = { type:'string' };
-    const { values } = parseArgs({ args: words.slice(spelling(tool).split(' ').length), options });
-    const paths = values.photo, out = values.out;
-    delete values.photo; delete values.out;
-    if (tool.inputSchema.properties.csv && typeof values.file === 'string' && !values.csv) {
-      values.csv = await readFile(values.file, 'utf8');
-      values.file = basename(values.file);
-    }
+    const parsed = parseArgs({ args: words.slice(spelling(tool).split(' ').length), options });
+    const { photo: paths, file: files, out, ...values } = parsed.values;
     for (const [key,value] of Object.entries(values)) {
       const type = tool.inputSchema.properties[key].type;
       if (type === 'array' || type === 'object') {
@@ -110,6 +114,25 @@ export async function main(argv = process.argv.slice(2)) {
       values.photos = await Promise.all(paths.map(photoData));
     }
     const run = args => c.request('/v1/cli', { name:tool.name, arguments:args });
+    if (files?.length > 1) {
+      if (values.csv !== undefined) throw new Error('Use repeated --file flags or --csv for a single export.');
+      const results = [];
+      for (const path of files) {
+        try {
+          const result = await run({ ...values, ...await csvFile(path) });
+          results.push({ file: path, result });
+        } catch (error) {
+          results.push({ file: path, error: error.message });
+          process.exitCode = 1;
+        }
+      }
+      return print({ files: results }, compact);
+    }
+    if (files?.length) {
+      const [path] = files;
+      if (values.csv) values.file = path;
+      else Object.assign(values, await csvFile(path));
+    }
     if (tool.annotations.destructiveHint && values.yes) {
       const preview = await run({ ...values, yes:false });
       console.error(JSON.stringify(preview));

@@ -1,0 +1,373 @@
+.splitwise-import {
+  container: splitwise / inline-size;
+  width: min(100%, 1040px);
+  margin: 0 auto;
+  padding-top: clamp(8px, 2vw, 28px);
+  display: grid;
+  gap: 24px;
+}
+
+.splitwise-heading h1 {
+  font-size: clamp(28px, 4vw, 42px);
+  font-weight: 800;
+  line-height: 1.12;
+  letter-spacing: -0.045em;
+}
+
+.splitwise-heading p {
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 15px;
+  max-width: 54ch;
+}
+
+.splitwise-start {
+  display: grid;
+  grid-template-columns: minmax(0, 1.8fr) minmax(0, 1fr);
+  align-items: start;
+  gap: 20px;
+}
+
+.splitwise-upload,
+.splitwise-guide {
+  padding: clamp(16px, 3vw, 24px);
+  border-radius: var(--radius-lg);
+}
+
+.splitwise-upload,
+.splitwise-preview {
+  box-shadow: var(--shadow-sm);
+}
+
+.splitwise-import h2,
+.splitwise-preview h3 {
+  font-size: 18px;
+  line-height: 1.3;
+  letter-spacing: -0.025em;
+}
+
+.splitwise-upload > p,
+.splitwise-guide dd,
+.splitwise-hint {
+  color: var(--muted);
+  margin-top: 5px;
+}
+
+.splitwise-dropzone {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: 8px;
+  min-height: 184px;
+  margin: 18px 0 10px;
+  padding: 16px;
+  background: var(--primary-soft);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  text-align: center;
+}
+
+.splitwise-dropzone:hover,
+.splitwise-dropzone[data-dragging="true"] {
+  border-color: var(--primary);
+}
+
+.splitwise-dropzone:focus-within,
+.splitwise-entries summary:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 3px;
+}
+
+.splitwise-dropzone:has(input:disabled) {
+  cursor: wait;
+}
+
+.splitwise-dropzone:has(input:disabled) .splitwise-file-button {
+  opacity: 0.6;
+  cursor: inherit;
+}
+
+.splitwise-file-input,
+.splitwise-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  clip-path: inset(50%);
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.splitwise-file-icon {
+  display: grid;
+  place-items: end center;
+  width: 37px;
+  height: 44px;
+  padding-bottom: 5px;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px 11px 5px 5px;
+  background: var(--surface);
+  color: var(--ink-2);
+  font-size: 10px;
+  font-weight: 800;
+  box-shadow: var(--shadow-sm);
+}
+
+.splitwise-dropzone .splitwise-file-button {
+  min-height: 42px;
+  margin-top: 4px;
+}
+
+.splitwise-drop-hint,
+.splitwise-file-help {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.splitwise-guide {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+
+.splitwise-guide dl {
+  display: grid;
+  gap: 14px;
+  margin: 14px 0;
+}
+
+.splitwise-guide dt {
+  font-weight: 700;
+}
+
+.splitwise-guide dd {
+  margin: 3px 0 0;
+  font-size: 13px;
+}
+
+.splitwise-guide a {
+  color: var(--ink-2);
+  font-size: 13px;
+  font-weight: 650;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.splitwise-review {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.splitwise-preview {
+  border-radius: var(--radius-lg);
+  overflow-wrap: anywhere;
+}
+
+.splitwise-preview-header,
+.splitwise-preview-body {
+  padding: clamp(14px, 2.5vw, 22px);
+}
+
+.splitwise-preview-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: start;
+  gap: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.splitwise-preview-header p {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.splitwise-preview-header .btn,
+.splitwise-actions .btn {
+  min-height: 40px;
+  flex-shrink: 0;
+}
+
+.splitwise-preview-body {
+  display: grid;
+  gap: 16px;
+}
+
+.splitwise-counts,
+.splitwise-entry-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.splitwise-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 18px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.splitwise-counts b {
+  color: var(--ink);
+  font-size: 15px;
+}
+
+.splitwise-feedback {
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+}
+
+.splitwise-feedback ul,
+.splitwise-skipped {
+  margin: 4px 0;
+  padding-inline-start: 20px;
+}
+
+.splitwise-ok {
+  color: var(--pos);
+  background: var(--pos-soft);
+}
+
+.splitwise-warning {
+  color: var(--warn);
+  background: var(--warn-soft);
+}
+
+.splitwise-error {
+  color: var(--neg);
+  background: var(--neg-soft);
+}
+
+.splitwise-review-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: clamp(16px, 3vw, 28px);
+}
+
+.splitwise-review-grid[data-complete="true"] {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.splitwise-preview h4 {
+  font-size: 15px;
+  font-weight: 750;
+}
+
+.splitwise-settings {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  min-inline-size: 0;
+  padding: 0;
+  margin: 0;
+  border: 0;
+}
+
+.splitwise-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 100px);
+  gap: 8px;
+}
+
+.splitwise-fields:has(> :only-child) {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.splitwise-settings input,
+.splitwise-settings select {
+  width: 100%;
+  min-width: 0;
+  min-height: 40px;
+}
+
+.splitwise-people {
+  margin-top: 4px;
+}
+
+.splitwise-hint {
+  font-size: 13px;
+  margin-bottom: 6px;
+}
+
+.splitwise-person,
+.splitwise-entry {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.splitwise-person {
+  grid-template-columns: 32px minmax(0, 1fr) minmax(0, 45%);
+}
+
+.splitwise-person small,
+.splitwise-entry small {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.splitwise-people .splitwise-feedback {
+  margin-top: 10px;
+}
+
+.splitwise-entries {
+  min-width: 0;
+}
+
+.splitwise-entry > b {
+  max-width: 14ch;
+  text-align: right;
+}
+
+.splitwise-entries summary {
+  padding: 9px 0;
+  color: var(--ink-2);
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.splitwise-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.splitwise-actions p {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+@container splitwise (max-width: 670px) {
+  .splitwise-start,
+  .splitwise-review-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 480px) {
+  .splitwise-import { gap: 18px; }
+  .splitwise-actions .btn { width: 100%; }
+}
+
+@media (max-width: 390px) {
+  .splitwise-person {
+    grid-template-columns: 32px minmax(0, 1fr);
+  }
+
+  .splitwise-person select { grid-column: 2; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .splitwise-import .btn { transition: none; }
+}

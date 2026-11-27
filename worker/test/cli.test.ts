@@ -4,6 +4,11 @@ import worker, { handle } from '../src/index';
 import { manageDevices } from '../src/cli/devices';
 import { saveProfile } from '../src/people';
 import tripCSV from '../../fixtures/splitwise/buenos-aires-trip_2026-11-18_export.csv?raw';
+import pisoCSV from '../../fixtures/splitwise/piso-compartido_2026-11-18_export.csv?raw';
+import wgCSV from '../../fixtures/splitwise/wg-kasse_2026-11-18_export.csv?raw';
+import friendCSV from '../../fixtures/splitwise/friend-maya_2026-11-18_export.csv?raw';
+import excelCSV from '../../fixtures/splitwise/excel-resaved.csv?raw';
+import editedCSV from '../../fixtures/splitwise/edited-totals_export.csv?raw';
 
 function req(path: string, data?: unknown, token?: string, headers: Record<string,string> = {}) {
   return new Request(env.APP_URL + path, {
@@ -288,6 +293,28 @@ describe('CLI and MCP', () => {
     const imported = await run('import_splitwise',{csv:tripCSV,file:'buenos-aires-trip_2026-11-18_export.csv',me:preview.members[0]});
     expect(imported.inserted).toBeGreaterThan(0);
     await expect(run('import_splitwise',{csv:tripCSV,me:'Nobody'})).rejects.toMatchObject({status:422});
+  });
+  it('previews and imports localized, friend, resaved and edited Splitwise exports through the CLI', async () => {
+    const token = await authorize('alex');
+    const fixtures = [
+      ['piso-compartido_2026-11-18_export.csv', pisoCSV, 'José Núñez'],
+      ['wg-kasse_2026-11-18_export.csv', wgCSV, 'Person1'],
+      ['friend-maya_2026-11-18_export.csv', friendCSV, 'Alex'],
+      ['excel-resaved.csv', excelCSV, 'Alex'],
+      ['edited-totals_export.csv', editedCSV, 'Harris'],
+    ];
+    for (const [file, csv, me] of fixtures) {
+      const run = (args: object) => fetch('/v1/cli', { name: 'import_splitwise', arguments: { file, csv, ...args } }, token);
+      const preview = await run({});
+      expect(preview.status, file).toBe(200);
+      const result = await preview.json<{ preview: boolean; members: string[]; rows: number }>();
+      expect(result.preview, file).toBe(true);
+      expect(result.members, file).toContain(me);
+      expect(result.rows, file).toBeGreaterThan(0);
+      const imported = await run({ me });
+      expect(imported.status, file).toBe(200);
+      expect(await imported.json(), file).toMatchObject({ created: true, inserted: result.rows });
+    }
   });
   it('serves stateless Streamable HTTP with the same token and rejects foreign origins', async () => {
     const token = await authorize('alex');

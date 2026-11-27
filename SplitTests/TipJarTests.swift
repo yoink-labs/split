@@ -7,6 +7,7 @@ private final class FakeTipClient: TipStoreClient, @unchecked Sendable {
     var paymentsAllowed = true
     var productsResult: Result<[TipProduct], Error> = .success([])
     var purchaseResult: Result<TipPurchaseResult, Error> = .success(.cancelled)
+    var onPurchase: (@Sendable (String) async -> Void)?
     var storefront: String?
     private(set) var purchasedIDs: [String] = []
     let updates: AsyncStream<String>
@@ -26,6 +27,7 @@ private final class FakeTipClient: TipStoreClient, @unchecked Sendable {
 
     func purchase(productID: String) async throws -> TipPurchaseResult {
         purchasedIDs.append(productID)
+        await onPurchase?(productID)
         return try purchaseResult.get()
     }
 
@@ -281,14 +283,18 @@ final class TipJarStoreTests: XCTestCase {
 
     func testPurchaseWhileAnotherIsInFlightIsIgnored() async {
         let client = FakeTipClient()
-        client.purchaseResult = .success(.success(productID: TipTier.small.productID))
+        let first = tip(.small, price: 0.99)
+        let second = tip(.xl, price: 9.99)
+        client.purchaseResult = .success(.success(productID: first.id))
         let store = TipJarStore(client: client)
 
-        async let first: Void = store.purchase(tip(.small, price: 0.99))
-        async let second: Void = store.purchase(tip(.xl, price: 9.99))
-        _ = await (first, second)
+        client.onPurchase = { [weak store] productID in
+            guard productID == first.id else { return }
+            await store?.purchase(second)
+        }
+        await store.purchase(first)
 
-        XCTAssertEqual(client.purchasedIDs.count, 1)
+        XCTAssertEqual(client.purchasedIDs, [first.id])
     }
 
     func testDebugConfigClientStorefront() async throws {

@@ -1,7 +1,8 @@
 # Importing from Splitwise
 
-Split imports Splitwise's per-group **Export as spreadsheet** CSV on iOS and
-the web. It is free and needs no Splitwise account connection.
+Split imports Splitwise's **Export as spreadsheet** CSV on iOS, the web, and
+the [CLI](../cli/README.md#importing-splitwise-exports). It is free and needs
+no Splitwise account connection.
 
 ## Exporting from Splitwise
 

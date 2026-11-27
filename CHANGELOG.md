@@ -10,8 +10,14 @@ is noted next to each release. The CLI is versioned separately with
 
 ## [Unreleased]
 
-- Redesigned Splitwise import on the web with drag-and-drop CSV selection, clearer balance checks, and a mobile layout for matching people and reviewing entries.
+### Added
+
+- Split CLI 0.3.0 creates personal invitations and can set, correct, or clear a placeholder member’s email for verified account linking.
 - Review or import several Splitwise CSV exports in one CLI command by repeating `--file`.
+
+### Changed
+
+- Redesigned Splitwise import on the web with drag-and-drop CSV selection, clearer balance checks, and a mobile layout for matching people and reviewing entries.
 
 ## [0.9.0] - 2026-11-27
 

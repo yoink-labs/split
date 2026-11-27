@@ -2,6 +2,7 @@ import { env } from 'cloudflare:test';
 import { beforeEach, describe, expect, it } from 'vitest';
 import worker, { handle } from '../src/index';
 import { manageDevices } from '../src/cli/devices';
+import { saveProfile } from '../src/people';
 import tripCSV from '../../fixtures/splitwise/buenos-aires-trip_2026-11-18_export.csv?raw';
 import pisoCSV from '../../fixtures/splitwise/piso-compartido_2026-11-18_export.csv?raw';
 import wgCSV from '../../fixtures/splitwise/wg-kasse_2026-11-18_export.csv?raw';
@@ -61,6 +62,63 @@ describe('device authorization', () => {
   });
 });
 describe('CLI and MCP', () => {
+  it('invites individuals, corrects placeholder emails and links verified accounts to their history', async () => {
+    const token = await authorize('alex'), outsider = await authorize('maya');
+    const send = (name:string, args:object, device=token) => fetch('/v1/cli',{name,arguments:args},device);
+    async function run(name:string, args:object) {
+      const response = await send(name,args);
+      const result = await response.json();
+      if (!response.ok) throw new Error(JSON.stringify(result));
+      return result;
+    }
+    const {id:group,members:[owner]} = await run('groups_create',{name:'Trip',self:'Alex'});
+    const {id:otherGroup} = await run('groups_create',{name:'Other',self:'Alex'});
+    expect((await send('invite',{group,email:'maya@example.test'})).status).toBe(422);
+    expect((await send('invite',{group,name:'Maya',email:'broken'})).status).toBe(422);
+    expect(await run('members_list',{group})).toHaveLength(1);
+
+    const {memberID:member,code} = await run('invite',{group,name:'Maya',email:'Old@EXAMPLE.TEST'});
+    const contact = () => env.DB.prepare('SELECT email,phone FROM member_contacts WHERE member_id=?').bind(member).first();
+    expect(await contact()).toEqual({email:'old@example.test',phone:null});
+    await env.DB.prepare('UPDATE member_contacts SET phone=? WHERE member_id=?').bind('+1 555 0100',member).run();
+    const expense = await run('expenses_add',{group,payer:owner.id,title:'Dinner',amount:'10.01',participants:[owner.id,member]});
+    const update = {group,member,email:'maya@example.test'};
+    expect((await send('members_update',update,outsider)).status).toBe(404);
+    const emailRoute = '/v1/groups/'+group+'/members/'+member+'/email';
+    await expect(handle(req(emailRoute,{email:update.email}),env,'maya')).rejects.toMatchObject({status:403});
+    expect((await send('members_update',{...update,group:otherGroup})).status).toBe(422);
+    expect((await send('members_update',{...update,member:owner.id})).status).toBe(422);
+    expect((await send('members_update',{...update,email:'broken'})).status).toBe(422);
+    expect(await contact()).toEqual({email:'old@example.test',phone:'+1 555 0100'});
+    expect((await send('invite',{group,member,name:'Maya'})).status).toBe(422);
+
+    expect(await run('members_update',update)).toEqual({id:member,email:'maya@example.test'});
+    expect((await send('join',{invite:code},outsider)).status).toBe(404);
+    expect(await run('members_update',{group,member,email:'none'})).toEqual({id:member,email:null});
+    expect(await contact()).toEqual({email:null,phone:'+1 555 0100'});
+
+    const personal = await run('invite',{group,member,email:'Maya@EXAMPLE.TEST'});
+    expect(personal).toMatchObject({memberID:member,url:expect.stringContaining(personal.code)});
+    expect(await run('members_update',update)).toEqual({id:member,email:'maya@example.test'});
+    expect((await run('invites_list',{group})).invites).toHaveLength(1);
+    expect(await contact()).toEqual({email:'maya@example.test',phone:'+1 555 0100'});
+    expect((await run('members_list',{group})).find((m:{id:string})=>m.id===member)).not.toHaveProperty('email');
+
+    await run('members_remove',{group,member});
+    expect((await send('members_update',update)).status).toBe(422);
+    await run('members_remove',{group,member,mode:'restore'});
+    await saveProfile(env.DB,{userID:'other',name:'Other',username:null,email:'old@example.test'});
+    expect(await env.DB.prepare('SELECT user_id FROM members WHERE id=?').bind(member).first('user_id')).toBeNull();
+    await saveProfile(env.DB,{userID:'maya',name:'Maya',username:null,email:'maya@example.test'});
+    const joined = await send('groups_show',{group},outsider);
+    expect(await joined.json()).toMatchObject({members:expect.arrayContaining([{...owner,payment:{}},
+      {id:member,groupID:group,userID:'maya',name:'Maya',payment:{}}])});
+    const history = await send('expenses_list',{group},outsider);
+    expect(await history.json()).toMatchObject([{id:expense.id,splits:expense.splits}]);
+    expect((await send('members_update',update)).status).toBe(422);
+    expect((await send('invite',{group,member,email:'other@example.test'})).status).toBe(422);
+  });
+
   it('uploads four full-size receipt photos over both MCP transports', async () => {
     const token = await authorize('alex');
     const outsider = await authorize('maya');

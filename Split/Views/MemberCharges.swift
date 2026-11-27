@@ -58,6 +58,7 @@ extension Snapshot {
 /// A member's statement: who they are and where they stand, then every charge
 /// they are part of, grouped by trip or group. Rows open the receipt.
 struct MemberCharges: View {
+    @EnvironmentObject private var fx: FXStore
     let user: String?
     let groupID: String
     let seatID: String
@@ -137,16 +138,20 @@ struct MemberCharges: View {
 
     private func header(name: String, isMe: Bool, person: Person, statements: [Statement], memberships: [(ExpenseGroup, Person)]) -> some View {
         var net: [String: Int64] = [:]
-        var paid: [String: Int64] = [:]
-        var share: [String: Int64] = [:]
+        var paid: Int64 = 0
+        var share: Int64 = 0
+        var missing = false
+        var approximate = false
         for statement in statements {
             let entries = store.entries(in: statement.group)
             for currency in Set(entries.map(\.settling.currency)) {
                 net[currency, default: 0] += Ledger.balances(entries, currency: currency)[statement.person.id] ?? 0
             }
-            for entry in statement.charges.map(\.settling) {
-                paid[entry.currency, default: 0] += Ledger.paid(entry, by: statement.person.id)
-                share[entry.currency, default: 0] += Ledger.share(entry, of: statement.person.id)
+            for original in statement.charges {
+                approximate = approximate || original.currency != fx.home
+                guard let entry = fx.homeEntry(original) else { missing = true; continue }
+                paid += Ledger.paid(entry, by: statement.person.id)
+                share += Ledger.share(entry, of: statement.person.id)
             }
         }
         let count = statements.reduce(0) { $0 + $1.charges.count }
@@ -156,9 +161,8 @@ struct MemberCharges: View {
             }
             return "\(statements.count) shared groups"
         }()
-        func text(_ values: [String: Int64]) -> String {
-            let parts = values.keys.sorted().compactMap { key in values[key].flatMap { $0 == 0 ? nil : Money.text($0, key) } }
-            return parts.isEmpty ? "—" : parts.joined(separator: " · ")
+        func text(_ amount: Int64) -> String {
+            missing ? "Rate unavailable" : (approximate ? "≈ " : "") + Money.text(amount, fx.home)
         }
         return HeroHeader(title: name, subtitle: subtitle) {
             Avatar(name: person.name, size: 52, tint: Palette.lime)
@@ -166,9 +170,6 @@ struct MemberCharges: View {
             HeroBalances(balances: net.keys.sorted().map { ($0, net[$0] ?? 0) },
                          positive: isMe ? "you’re owed" : "gets back",
                          negative: isMe ? "you owe" : "owes")
-            if net.values.contains(where: { $0 != 0 }) {
-                ApproxTotal(amounts: net, onHero: true, positive: isMe ? "you’re owed" : "gets back", negative: isMe ? "you owe" : "owes")
-            }
             HeroStats(items: [("Paid", text(paid)), ("Share", text(share)), ("Charges", "\(count)")])
         }
     }
@@ -220,8 +221,8 @@ struct MemberCharges: View {
             let to = entry.splits.first.map { memberName($0.memberID, in: statement.group) } ?? "Someone"
             LedgerRow(title: "\(memberName(entry.paidBy, in: statement.group)) → \(to)",
                       detail: date,
-                      value: Money.text(entry.amount, entry.currency),
-                      valueCaption: "payment") {
+                      value: fx.entryText(entry, amount: entry.amount),
+                      valueCaption: entry.currency == fx.home ? "payment" : "Sent " + Money.text(entry.amount, entry.currency)) {
                 Image(systemName: "arrow.left.arrow.right")
                     .font(.body.weight(.semibold))
                     .frame(width: 40, height: 40)
@@ -234,12 +235,12 @@ struct MemberCharges: View {
             let payers = entry.allPayers.map { memberName($0.memberID, in: statement.group) }
             LedgerRow(title: entry.title,
                       detail: "\(date) · \(payers.count > 1 ? "\(payers.count) people" : payers.first ?? "Someone") paid",
-                      value: Money.text(share, entry.currency),
-                      valueCaption: "of \(Money.text(entry.amount, entry.currency))",
+                      value: fx.portionText(entry, memberID: statement.person.id),
+                      valueCaption: "of \(fx.entryText(entry, amount: entry.amount))",
                       valueTint: share == 0 ? Color.secondary : Palette.ink) {
                 CategoryBadge(category: entry.category, size: 40)
             }
-            .accessibilityValue("\(isMe ? "Your" : "Their") share \(Money.text(share, entry.currency)) of \(Money.text(entry.amount, entry.currency))")
+            .accessibilityValue("\(isMe ? "Your" : "Their") share \(fx.portionText(entry, memberID: statement.person.id)) of \(fx.entryText(entry, amount: entry.amount))")
         }
     }
 }

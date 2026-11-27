@@ -2,6 +2,7 @@ import SwiftUI
 
 enum GroupDetailSheet: Identifiable {
     case expense(ExpenseGroup)
+    case draft(ExpenseGroup, ReceiptDraft)
     case settlement(ExpenseGroup)
     case balances(ExpenseGroup)
     case receipt(LedgerEntry)
@@ -9,6 +10,7 @@ enum GroupDetailSheet: Identifiable {
     var id: String {
         switch self {
         case .expense(let group): "expense-\(group.id)"
+        case .draft(_, let draft): "draft-\(draft.id)"
         case .settlement(let group): "settlement-\(group.id)"
         case .balances(let group): "balances-\(group.id)"
         case .receipt(let entry): "receipt-\(entry.id)"
@@ -18,6 +20,7 @@ enum GroupDetailSheet: Identifiable {
     @ViewBuilder var content: some View {
         switch self {
         case .expense(let group): AddExpenseView(group: group)
+        case .draft(let group, let draft): AddExpenseView(group: group, draft: draft)
         case .settlement(let group): SettleUpView(group: group)
         case .balances(let group): GroupBalancesView(groupID: group.id)
         case .receipt(let entry): EntrySheet(entry: entry)
@@ -26,26 +29,58 @@ enum GroupDetailSheet: Identifiable {
 }
 
 struct GroupDetail: View {
+    @EnvironmentObject private var fx: FXStore
     var groupID: String
     var onPresentSheet: ((GroupDetailSheet) -> Void)? = nil
     @EnvironmentObject private var store: ExpenseStore
     @EnvironmentObject private var session: SessionStore
-    @Environment(\.horizontalSizeClass) private var size
     @State private var presentedSheet: GroupDetailSheet?
     @State private var inviting = false
     @State private var settings = false
     @State private var insights = false
-    @State private var openOnly = false
+    @State private var section: Section = .overview
+    @State private var filter: LedgerFilter = .all
+    @State private var query = ""
+    @State private var category = ""
+    @State private var payer = ""
+    @State private var participant = ""
+
+    private enum Section: String, CaseIterable {
+        case overview = "Overview", ledger = "Ledger", receipts = "Receipts"
+    }
+
+    private enum LedgerFilter: String, CaseIterable {
+        case all = "All entries", receipt = "With receipts", open = "Open purchases", recurring = "Recurring"
+
+        func includes(_ entry: LedgerEntry) -> Bool {
+            switch self {
+            case .all: true
+            case .receipt: entry.hasReceipt
+            case .open: entry.openPurchaseCount > 0
+            case .recurring: entry.recurrence != nil && entry.recurrence != "off"
+            }
+        }
+    }
 
     private var group: ExpenseGroup? { store.group(groupID) }
     private var entries: [LedgerEntry] { group.map { store.entries(in: $0) } ?? [] }
     private var summary: GroupSummary? { group.map { store.summary(for: $0) } }
-    private var months: [(String, [LedgerEntry])] {
-        let filtered = entries.filter { !openOnly || ($0.bill?.openCount ?? 0) > 0 }
-        let grouped = Dictionary(grouping: filtered) { String($0.createdAt.prefix(7)) }
-        return grouped.keys.sorted(by: >).map { ($0, grouped[$0]?.sorted { $0.createdAt > $1.createdAt } ?? []) }
+    private var openCount: Int { entries.reduce(0) { $0 + $1.openPurchaseCount } }
+
+    private func ledgerSections(_ group: ExpenseGroup) -> [(String, [LedgerEntry])] {
+        let search = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let filtered = entries.filter { entry in
+            filter.includes(entry)
+                && (category.isEmpty || (entry.category ?? "Other") == category)
+                && (payer.isEmpty || entry.allPayers.contains { $0.memberID == payer })
+                && (participant.isEmpty || entry.splits.contains { $0.memberID == participant }
+                    || entry.allPayers.contains { $0.memberID == participant })
+                && (search.isEmpty || [entry.title, entry.notes, entry.category]
+                    .compactMap { $0 }.contains { $0.localizedStandardContains(search) })
+        }
+        let grouped = Dictionary(grouping: filtered) { String($0.createdAt.prefix(group.kind == "trip" ? 10 : 7)) }
+        return grouped.keys.sorted(by: >).map { ($0, grouped[$0] ?? []) }
     }
-    private var openCount: Int { entries.compactMap(\.bill).reduce(0) { $0 + $1.openCount } }
 
     var body: some View {
         Group {
@@ -56,7 +91,24 @@ struct GroupDetail: View {
                         if store.isDemo { Label("Sample group · changes stay in this preview", systemImage: "sparkles").font(.caption).foregroundStyle(.secondary) }
                         if store.pending > 0 { Label("\(store.pending) pending · saved on this device", systemImage: "arrow.triangle.2.circlepath").font(.caption).foregroundStyle(.secondary) }
                         if let error = store.error { InlineError(text: error) }
-                        expensesSection(group)
+                        Picker("Group workspace", selection: $section) {
+                            ForEach(Section.allCases, id: \.self) { tab in Text(tab.rawValue).tag(tab) }
+                        }
+                        .pickerStyle(.segmented)
+                        .accessibilityIdentifier("group-workspace")
+                        .frame(minHeight: HitTarget.minimum)
+                        if section != .receipts { expenseActions(group) }
+                        switch section {
+                        case .overview:
+                            overview(group)
+                        case .ledger:
+                            expensesSection(group)
+                        case .receipts:
+                            GroupReceiptsView(group: group, entries: entries) {
+                                present(.expense(group))
+                            } openExpense: { present(.receipt($0)) }
+                            continueDraft: { present(.draft(group, $0)) }
+                        }
                     }
                     .padding(16)
                     .frame(maxWidth: 960)
@@ -90,6 +142,10 @@ struct GroupDetail: View {
                     .background(AppBackground())
             }
         }
+        .onChange(of: groupID) {
+            section = .overview
+            clearLedgerFilters()
+        }
         .ledgerDestinations()
         .navigationTitle(group?.name ?? "Group")
         .navigationBarTitleDisplayMode(.inline)
@@ -110,183 +166,203 @@ struct GroupDetail: View {
     }
 
     private func header(_ group: ExpenseGroup) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            VStack(alignment: .leading, spacing: 16) {
-                HStack(alignment: .center, spacing: 12) {
-                    Image(systemName: group.symbol)
-                        .font(.system(size: 20, weight: .semibold))
-                        .frame(width: 48, height: 48)
-                        .background(Palette.lime, in: RoundedRectangle(cornerRadius: 15, style: .continuous))
-                        .foregroundStyle(Palette.hero)
-                        .accessibilityHidden(true)
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(group.name)
-                            .font(.splitDisplay(24))
-                            .foregroundStyle(Palette.onHero)
-                            .lineLimit(2)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .accessibilityAddTraits(.isHeader)
-                        Text("\(group.members.count) \(group.members.count == 1 ? "person" : "people") · \(group.kind == "trip" ? "Trip" : group.kind == "home" ? "Home" : "Group") · \(group.currency)")
-                            .font(.caption)
-                            .foregroundStyle(Palette.lime.opacity(0.62))
+        let people = group.members.filter { $0.removed != true }
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: group.symbol)
+                    .font(.headline)
+                    .frame(width: 44, height: 44)
+                    .background(Palette.evergreen.opacity(0.12), in: RoundedRectangle(cornerRadius: Radius.badge))
+                    .foregroundStyle(Palette.evergreen)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(group.name)
+                        .font(.title2.bold())
+                        .foregroundStyle(Palette.ink)
+                        .accessibilityAddTraits(.isHeader)
+                    Text("\(group.kind == "trip" ? "Trip" : group.kind == "home" ? "Home" : "Friends") · \(group.currency) · \(people.count) \(people.count == 1 ? "person" : "people")")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    if let dates = tripDates(group) {
+                        Text(dates).font(.subheadline).foregroundStyle(.secondary)
                     }
-                    Spacer(minLength: 8)
-                    if size == .regular {
-                        HStack(spacing: -8) {
-                            ForEach(group.members.prefix(4)) { member in
-                                Avatar(name: member.userID == store.currentUserID ? "You" : member.name, size: 30, tint: Palette.lime)
-                                    .background(Palette.hero, in: Circle())
-                                    .overlay(Circle().stroke(Palette.hero, lineWidth: 2))
-                            }
-                            if group.members.count > 4 {
-                                Text("+\(group.members.count - 4)")
-                                    .font(.caption2.weight(.bold))
-                                    .frame(width: 30, height: 30)
-                                    .background(Palette.onHero.opacity(0.12), in: Circle())
-                                    .foregroundStyle(Palette.onHero)
-                                    .overlay(Circle().stroke(Palette.hero, lineWidth: 2))
-                            }
-                        }
-                        .accessibilityHidden(true)
+                    if let description = group.description {
+                        Text(description).font(.subheadline).foregroundStyle(.secondary)
                     }
                 }
-                if let summary {
-                    ViewThatFits(in: .horizontal) {
-                        HStack(alignment: .bottom, spacing: 16) {
-                            VStack(alignment: .leading, spacing: 2) { netSummary(summary) }
-                            Spacer(minLength: 8)
-                            totalSpent(summary, group: group, alignment: .trailing)
-                        }
-                        VStack(alignment: .leading, spacing: 10) {
-                            VStack(alignment: .leading, spacing: 2) { netSummary(summary) }
-                            totalSpent(summary, group: group, alignment: .leading)
-                        }
-                    }
-                    if !summary.isSettled {
-                        ApproxTotal(amounts: summary.mine, onHero: true)
-                    }
-                }
-            }
-            .padding(18)
-            .background(
-                LinearGradient(colors: [Palette.hero, Palette.hero.opacity(0.94)], startPoint: .topLeading, endPoint: .bottomTrailing),
-                in: RoundedRectangle(cornerRadius: Radius.header)
-            )
-            .overlay(RoundedRectangle(cornerRadius: Radius.header).stroke(Palette.lime.opacity(0.16), lineWidth: 1))
-
-            ActionBar {
-                SplitActionButton(title: "Add expense", symbol: "plus", prominent: true) { present(.expense(group)) }
-                    .accessibilityIdentifier("group-add-expense")
-                SplitActionButton(title: "Settle up", symbol: "arrow.left.arrow.right") { present(.settlement(group)) }
+                Spacer(minLength: 0)
             }
         }
     }
 
-    @ViewBuilder private func totalSpent(_ summary: GroupSummary, group: ExpenseGroup, alignment: HorizontalAlignment) -> some View {
-        let totals = summary.currencies.compactMap { currency -> (String, Int64)? in
-            guard let value = summary.totalSpend[currency], value > 0 else { return nil }
-            return (currency, value)
+    private func expenseActions(_ group: ExpenseGroup) -> some View {
+        ActionBar {
+            SplitActionButton(title: "Add expense", symbol: "plus", prominent: true) { present(.expense(group)) }
+                .accessibilityIdentifier("group-add-expense")
+            SplitActionButton(title: "Settle up", symbol: "arrow.left.arrow.right") { present(.settlement(group)) }
         }
-        if !totals.isEmpty {
-            VStack(alignment: alignment, spacing: 2) {
-                Text("Total spent").font(.caption2.weight(.semibold)).foregroundStyle(Palette.lime.opacity(0.55))
-                ForEach(totals, id: \.0) { currency, value in
-                    Text(Money.text(value, currency))
-                        .font(.splitAmount(15))
-                        .foregroundStyle(Palette.onHero.opacity(0.9))
-                        .lineLimit(1)
-                }
+    }
+
+    private func tripDates(_ group: ExpenseGroup) -> String? {
+        let start = group.startDate.flatMap(Exchange.date(fromDay:))
+        let end = group.endDate.flatMap(Exchange.date(fromDay:))
+        switch (start, end) {
+        case let (start?, end?):
+            let formatter = DateIntervalFormatter()
+            formatter.dateStyle = .medium
+            formatter.timeStyle = .none
+            return formatter.string(from: start, to: end)
+        case let (start?, nil): return "Starts " + start.formatted(date: .abbreviated, time: .omitted)
+        case let (nil, end?): return "Ends " + end.formatted(date: .abbreviated, time: .omitted)
+        case (nil, nil): return nil
+        }
+    }
+
+    private func overviewTotals(_ group: ExpenseGroup) -> some View {
+        let me = group.members.filter { $0.userID == store.currentUserID && $0.userID != nil }
+        let expenses = entries.filter { $0.kind == "expense" }
+        let projected = expenses.compactMap(fx.homeEntry)
+        let spending = Analytics.personSpend(group, entries: projected, currency: fx.home, people: me).first
+        let share = projected.count == expenses.count
+            ? (expenses.contains { $0.currency != fx.home } ? "≈ " : "") + Money.text(spending?.share ?? 0, fx.home)
+            : "Rate unavailable"
+        let balances = summary?.mine ?? [:]
+        let net = fx.total(balances, in: fx.home)
+        return LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 10)], alignment: .leading, spacing: 10) {
+            statistic("Group spend", value: fx.spendingText(expenses))
+            statistic("Your share", value: share)
+            statistic("Your net balance", value: fx.homeTotalText(balances, signed: true),
+                      tint: !net.missing.isEmpty ? Palette.ink : net.amount < 0 ? Palette.negative : Palette.positive)
+            Button { section = .receipts } label: {
+                statistic("Unclaimed items", value: String(openCount), tint: openCount > 0 ? Palette.amber : Palette.positive)
             }
+            .buttonStyle(.plain)
+            .accessibilityHint("Opens receipts")
+        }
+    }
+
+    private func statistic(_ label: String, value: String, tint: Color = Palette.ink) -> some View {
+        Card(padding: 12) {
+            VStack(alignment: .leading, spacing: 5) {
+                Text(label).font(.subheadline).foregroundStyle(.secondary)
+                Text(value).font(.title3.weight(.semibold).monospacedDigit()).foregroundStyle(tint)
+            }
+            .frame(minHeight: 60, alignment: .topLeading)
             .accessibilityElement(children: .combine)
         }
     }
 
-    @ViewBuilder private func netSummary(_ summary: GroupSummary) -> some View {
-        if summary.isSettled {
-            Label("Settled up", systemImage: "checkmark.circle.fill")
-                .font(.headline)
-                .foregroundStyle(Palette.lime)
-        } else {
-            ForEach(summary.currencies, id: \.self) { currency in
-                let amount = summary.mine[currency] ?? 0
-                if amount != 0 {
-                    HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        Text(Money.text(abs(amount), currency))
-                            .font(.splitAmount(summary.currencies.count > 1 ? 20 : 26, weight: .bold))
-                            .foregroundStyle(amount > 0 ? Palette.lime : Color(red: 1, green: 0.72, blue: 0.60))
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.7)
-                            .contentTransition(.numericText())
-                        Text(amount > 0 ? "you’re owed" : "you owe")
-                            .font(.caption.weight(.medium))
-                            .foregroundStyle(Palette.onHero.opacity(0.65))
-                    }
-                    .accessibilityElement(children: .combine)
+    private func overview(_ group: ExpenseGroup) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            overviewTotals(group)
+            PendingSettlementsView(groupID: group.id)
+            ActionBar {
+                SplitActionButton(title: "Spending insights", symbol: "chart.bar.xaxis") { insights = true }
+                SplitActionButton(title: "Balances", symbol: "chart.pie") { present(.balances(group)) }
+            }
+            SectionHeader(title: "Recent activity", actionTitle: entries.isEmpty ? nil : "View ledger") {
+                clearLedgerFilters()
+                section = .ledger
+            }
+            if entries.isEmpty {
+                Card {
+                    EmptyPanel(title: "No expenses yet", message: "Add a shared expense or save a receipt for later.", symbol: "receipt")
                 }
+            } else {
+                entryList(Array(entries.prefix(5)), group: group, showDate: true)
             }
         }
     }
 
     private func expensesSection(_ group: ExpenseGroup) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .center) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Expenses").font(.headline).foregroundStyle(Palette.ink)
-                    Text(openOnly ? "Showing open purchases" : "\(entries.count) \(entries.count == 1 ? "entry" : "entries")")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-                Spacer(minLength: 8)
-                if openCount > 0 || openOnly {
-                    Chip(title: openOnly ? "Open only" : "\(openCount) open", symbol: "basket", selected: openOnly) {
-                        withAnimation(.snappy) { openOnly.toggle() }
+        let sections = ledgerSections(group)
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                TextField("Search ledger", text: $query)
+                    .padding(.horizontal, 12)
+                    .frame(minHeight: HitTarget.minimum)
+                    .background(Palette.card, in: RoundedRectangle(cornerRadius: Radius.badge))
+                    .overlay(RoundedRectangle(cornerRadius: Radius.badge).strokeBorder(Palette.line))
+                    .accessibilityLabel("Search ledger")
+                Menu {
+                    Picker("Status", selection: $filter) {
+                        ForEach(LedgerFilter.allCases, id: \.self) { option in Text(option.rawValue).tag(option) }
                     }
-                    .frame(minHeight: 44)
-                    .accessibilityLabel(openOnly ? "Show all expenses" : "Show \(openCount) open purchases")
+                    Picker("Category", selection: $category) {
+                        Text("All categories").tag("")
+                        ForEach(Set(entries.map { $0.category ?? "Other" }).sorted(), id: \.self) { Text($0).tag($0) }
+                    }
+                    Picker("Payer", selection: $payer) {
+                        Text("Any payer").tag("")
+                        ForEach(group.members) { Text($0.name).tag($0.id) }
+                    }
+                    Picker("Participant", selection: $participant) {
+                        Text("Any person").tag("")
+                        ForEach(group.members) { Text($0.name).tag($0.id) }
+                    }
+                    if hasLedgerFilters { Button("Clear filters", action: clearLedgerFilters) }
+                } label: {
+                    Label("Filter", systemImage: hasLedgerFilters ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease")
+                        .frame(minWidth: HitTarget.minimum, minHeight: HitTarget.minimum)
+                        .labelStyle(.iconOnly)
                 }
+                .accessibilityValue(filter.rawValue)
             }
-            if months.isEmpty {
-                Card {
-                    EmptyPanel(
-                        title: openOnly ? "All purchases claimed" : "No expenses yet",
-                        message: openOnly ? "Turn off the open filter to see everything." : "Add the first shared expense and Split does the math.",
-                        symbol: openOnly ? "checkmark.seal" : "receipt",
-                        actionTitle: openOnly ? "Show all" : "Add an expense"
-                    ) {
-                        if openOnly { openOnly = false } else { present(.expense(group)) }
-                    }
-                }
+
+            if sections.isEmpty {
+                ContentUnavailableView("No matching entries", systemImage: "magnifyingglass")
             } else {
-                ForEach(months, id: \.0) { month, monthEntries in
+                ForEach(sections, id: \.0) { key, items in
                     VStack(alignment: .leading, spacing: 8) {
-                        MonthHeader(date: monthDate(month), total: monthTotal(monthEntries, group: group))
-                        Card(padding: 0) {
-                            VStack(spacing: 0) {
-                                ForEach(Array(monthEntries.enumerated()), id: \.element.id) { index, entry in
-                                    Button { present(.receipt(entry)) } label: {
-                                        EntryRow(entry: entry, group: group, currentUserID: store.currentUserID)
-                                            .padding(.horizontal, 14)
-                                            .padding(.vertical, 12)
-                                    }
-                                    .buttonStyle(.plain)
-                                    if index < monthEntries.count - 1 {
-                                        Divider().overlay(Palette.line).padding(.leading, 66)
-                                    }
-                                }
-                            }
+                        if group.kind == "trip" {
+                            let day = Exchange.date(fromDay: key)
+                            SectionHeader(title: day?.formatted(date: .abbreviated, time: .omitted) ?? key,
+                                          subtitle: monthTotal(items))
+                        } else {
+                            MonthHeader(date: monthDate(key), total: monthTotal(items))
                         }
+                        entryList(items, group: group)
                     }
                 }
             }
         }
     }
 
+    private var hasLedgerFilters: Bool {
+        filter != .all || !category.isEmpty || !payer.isEmpty || !participant.isEmpty
+    }
+
+    private func clearLedgerFilters() {
+        filter = .all
+        category = ""
+        payer = ""
+        participant = ""
+        query = ""
+    }
+
+    private func entryList(_ items: [LedgerEntry], group: ExpenseGroup, showDate: Bool = false) -> some View {
+        Card(padding: 0) {
+            ForEach(items) { entry in
+                Button { present(.receipt(entry)) } label: {
+                    EntryRow(entry: entry, group: group, currentUserID: store.currentUserID, showDate: showDate)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 12)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                if entry.id != items.last?.id { RowDivider() }
+            }
+        }
+    }
+
     private func monthDate(_ month: String) -> Date {
-        let formatter = DateFormatter(); formatter.locale = Locale(identifier: "en_US_POSIX"); formatter.dateFormat = "yyyy-MM"
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM"
         return formatter.date(from: month) ?? Date()
     }
-    private func monthTotal(_ entries: [LedgerEntry], group: ExpenseGroup) -> String? {
-        let total = entries.map(\.settling).filter { $0.currency == group.currency && $0.kind == "expense" }.reduce(0) { $0 + $1.amount }
-        return total == 0 ? nil : Money.text(total, group.currency)
+    private func monthTotal(_ entries: [LedgerEntry]) -> String? {
+        entries.contains { $0.kind == "expense" } ? fx.spendingText(entries) : nil
     }
 }
 
@@ -308,11 +384,11 @@ struct GroupBalancesView: View {
                 LazyVStack(alignment: .leading, spacing: 18) {
                     if let group {
                         if let error = store.error { InlineError(text: error) }
-                        if currencies.contains(where: { $0 != fx.display }) { convertedSection(group) }
+                        convertedSection(group)
                         ForEach(currencies, id: \.self) { currency in
                             currencySection(group, currency: currency)
                         }
-                        Text("Balances are simplified within this group, separately for each currency. Recording a payment does not move money.")
+                        Text("Balance estimates use available exchange rates. Record each payment in the currency sent.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     } else {
@@ -337,58 +413,14 @@ struct GroupBalancesView: View {
 
     private func currencySection(_ group: ExpenseGroup, currency: String) -> some View {
         let values = Ledger.balances(entries, currency: currency)
-        let rows = group.members.compactMap { member -> (Person, Int64)? in
-            let value = values[member.id] ?? 0
-            return value == 0 ? nil : (member, value)
-        }.sorted { abs($0.1) > abs($1.1) }
         let transfers = group.simplify == false
             ? Ledger.directPlan(values, currency: currency)
             : Ledger.plan(values, currency: currency)
-        return VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(currency).font(.headline)
-                Spacer()
-                Text("\(rows.count) \(rows.count == 1 ? "balance" : "balances")").font(.caption).foregroundStyle(.secondary)
-            }
-            Card(padding: 0) {
-                if rows.isEmpty {
-                    HStack(spacing: 10) {
-                        Image(systemName: "checkmark.seal.fill").foregroundStyle(Palette.evergreen)
-                        Text("Everyone’s square.").font(.subheadline).foregroundStyle(.secondary)
-                        Spacer()
-                    }.padding(14)
-                } else {
-                    VStack(spacing: 0) {
-                        ForEach(Array(rows.enumerated()), id: \.element.0.id) { index, row in
-                            NavigationLink(value: LedgerRoute.member(group: group.id, seat: row.0.id)) {
-                                HStack(spacing: 10) {
-                                    Avatar(name: row.0.userID == store.currentUserID ? "You" : row.0.name, size: 36)
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(row.0.userID == store.currentUserID ? "You" : row.0.name).font(.subheadline.weight(.semibold))
-                                        Text(row.1 > 0 ? "gets back" : "owes").font(.caption).foregroundStyle(.secondary)
-                                    }
-                                    Spacer()
-                                    Text(Money.text(abs(row.1), currency))
-                                        .font(.splitAmount(15))
-                                        .foregroundStyle(row.1 > 0 ? Palette.positive : Palette.negative)
-                                    Image(systemName: "chevron.right")
-                                        .font(.caption2.weight(.bold))
-                                        .foregroundStyle(.tertiary)
-                                }
-                                .padding(.horizontal, 14)
-                                .padding(.vertical, 11)
-                                .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                            if index < rows.count - 1 { Divider().overlay(Palette.line).padding(.leading, 62) }
-                        }
-                    }
-                }
-            }
+        return Group {
             if !transfers.isEmpty {
                 Card {
                     VStack(alignment: .leading, spacing: 10) {
-                        Text("Suggested payments").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                        Text("Suggested payments · \(currency)").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                         ForEach(transfers) { transfer in
                             Button { settling = transfer } label: {
                                 HStack(spacing: 10) {
@@ -396,15 +428,22 @@ struct GroupBalancesView: View {
                                         Text("\(name(transfer.from, group)) → \(name(transfer.to, group))")
                                             .font(.subheadline.weight(.semibold))
                                             .foregroundStyle(Palette.ink)
-                                        Text(Money.text(transfer.amount, currency)).font(.caption).foregroundStyle(.secondary)
+                                        Text(fx.homeText(transfer.amount, currency: currency)).font(.subheadline.weight(.semibold))
+                                        if currency != fx.home {
+                                            Text("Pay \(Money.text(transfer.amount, currency))")
+                                                .font(.caption).foregroundStyle(.secondary)
+                                        }
                                     }
                                     Spacer()
-                                    Text("Settle").font(.caption.weight(.bold)).foregroundStyle(Palette.evergreen)
+                                    if group.members.contains(where: { $0.id == transfer.from && $0.userID == store.currentUserID }) {
+                                        Text("Settle").font(.caption.weight(.bold)).foregroundStyle(Palette.evergreen)
+                                    }
                                 }
                                 .frame(minHeight: 44)
                                 .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
+                            .disabled(!group.members.contains { $0.id == transfer.from && $0.userID == store.currentUserID && $0.removed != true })
                             .accessibilityLabel("Settle \(name(transfer.from, group)) to \(name(transfer.to, group)) \(Money.text(transfer.amount, currency))")
                             if transfer.id != transfers.last?.id { Divider().overlay(Palette.line) }
                         }
@@ -419,48 +458,42 @@ struct GroupBalancesView: View {
         return person?.userID == store.currentUserID ? "You" : (person?.name ?? "Member")
     }
 
-    /// Every currency folded into the "Show in" currency at today's rate, per person.
     private func convertedSection(_ group: ExpenseGroup) -> some View {
         let perCurrency = Dictionary(uniqueKeysWithValues: currencies.map { ($0, Ledger.balances(entries, currency: $0)) })
-        let rows = group.members.compactMap { member -> (Person, Int64)? in
-            var amounts: [String: Int64] = [:]
-            for (currency, values) in perCurrency { if let v = values[member.id], v != 0 { amounts[currency] = v } }
-            guard !amounts.isEmpty else { return nil }
-            let result = fx.total(amounts, in: fx.display)
-            return result.missing.isEmpty ? (member, result.amount) : nil
-        }.sorted { abs($0.1) > abs($1.1) }
-        let all = perCurrency.mapValues { $0.values.filter { $0 > 0 }.reduce(0, +) }
+        let rows = group.members.compactMap { member -> (Person, [String: Int64])? in
+            let amounts = perCurrency.mapValues { $0[member.id] ?? 0 }
+            return amounts.values.contains { $0 != 0 } ? (member, amounts) : nil
+        }
         return VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("All currencies").font(.headline)
-                Spacer()
-                ShowInMenu()
-            }
+            Text("Balances · \(fx.home)").font(.headline)
             Card(padding: 0) {
-                VStack(spacing: 0) {
-                    ForEach(Array(rows.enumerated()), id: \.element.0.id) { index, row in
-                        HStack(spacing: 10) {
-                            Avatar(name: row.0.userID == store.currentUserID ? "You" : row.0.name, size: 32)
-                            Text(row.0.userID == store.currentUserID ? "You" : row.0.name).font(.subheadline.weight(.semibold))
-                            Spacer()
-                            Text("≈ " + Money.text(abs(row.1), fx.display))
-                                .font(.splitAmount(15))
-                                .foregroundStyle(row.1 > 0 ? Palette.positive : row.1 < 0 ? Palette.negative : Palette.ink)
-                            Text(row.1 > 0 ? "gets back" : row.1 < 0 ? "owes" : "square").font(.caption).foregroundStyle(.secondary)
+                if rows.isEmpty {
+                    Label("Everyone’s square", systemImage: "checkmark.seal.fill")
+                        .font(.subheadline).foregroundStyle(.secondary).padding(14)
+                } else {
+                    VStack(spacing: 0) {
+                        ForEach(Array(rows.enumerated()), id: \.element.0.id) { index, row in
+                            NavigationLink(value: LedgerRoute.member(group: group.id, seat: row.0.id)) {
+                                HStack(spacing: 10) {
+                                    Avatar(name: name(row.0.id, group), size: 32)
+                                    Text(name(row.0.id, group)).font(.subheadline.weight(.semibold))
+                                    Spacer()
+                                    BalanceLabel(amounts: row.1)
+                                    Image(systemName: "chevron.right").font(.caption2.weight(.bold)).foregroundStyle(.tertiary)
+                                }
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 10)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            if index < rows.count - 1 { Divider().overlay(Palette.line).padding(.leading, 56) }
                         }
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 10)
-                        .accessibilityElement(children: .combine)
-                        if index < rows.count - 1 { Divider().overlay(Palette.line).padding(.leading, 56) }
                     }
-                    Divider().overlay(Palette.line)
-                    ApproxTotal(amounts: all, positive: "owed in total", negative: "owed in total", showsMenu: false)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 10)
                 }
             }
         }
     }
+
 }
 
 struct SettleUpView: View {
@@ -470,7 +503,8 @@ struct SettleUpView: View {
     @EnvironmentObject private var store: ExpenseStore
     @EnvironmentObject private var session: SessionStore
     @Environment(\.dismiss) private var dismiss
-    @State private var from = ""
+    @State private var paymentID = UUID().uuidString
+    @State private var paymentDate = ISO8601DateFormatter().string(from: Date())
     @State private var to = ""
     @State private var amount = ""
     @State private var currency = ""
@@ -501,11 +535,12 @@ struct SettleUpView: View {
             return currentGroup.simplify == false
                 ? Ledger.directPlan(values, currency: currency)
                 : Ledger.plan(values, currency: currency)
-        }
+        }.filter { transfer in transfer.from == from && activeMembers.contains { $0.id == transfer.to } }
     }
     private var me: Person? { Analytics.me(in: currentGroup, userID: session.userID) }
     private var recipient: Person? { currentGroup.members.first { $0.id == to } }
-    private var fromPerson: Person? { currentGroup.members.first { $0.id == from } }
+    private var activeMembers: [Person] { currentGroup.members.filter { $0.removed != true } }
+    private var from: String { me?.id ?? "" }
 
     var body: some View {
         Group {
@@ -516,11 +551,12 @@ struct SettleUpView: View {
     private var content: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
+                PendingSettlementsView(groupID: group.id)
                 if suggestions.isEmpty && transfer == nil {
                     Card {
                         HStack(spacing: 12) {
                             Image(systemName: "checkmark.seal.fill").foregroundStyle(Palette.evergreen)
-                            Text("You’re all settled up in this group.").font(.subheadline.weight(.medium))
+                            Text("No suggested payments from you.").font(.subheadline.weight(.medium))
                             Spacer()
                         }
                     }
@@ -540,11 +576,11 @@ struct SettleUpView: View {
                 }
                 if let error { InlineError(text: error) }
                 Button { save() } label: {
-                    Label(saving ? "Recording…" : "Record payment", systemImage: "checkmark")
+                    Label(saving ? "Sending…" : "Request approval", systemImage: "checkmark")
                 }
                 .buttonStyle(SolidButton())
-                .disabled(saving)
-                Text("Record a payment you’ve already made. Split won’t transfer money.")
+                .disabled(saving || from.isEmpty || to.isEmpty)
+                Text("Request approval for a payment you already made. The recipient confirms it before balances update.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .center)
@@ -569,15 +605,8 @@ struct SettleUpView: View {
         Card {
             VStack(alignment: .leading, spacing: 14) {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Who’s paying?").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                    Picker("From", selection: $from) {
-                        ForEach(currentGroup.members) { member in
-                            Text(member.id == me?.id ? "You" : member.name).tag(member.id)
-                        }
-                    }
-                    .pickerStyle(.menu)
-                    .labelsHidden()
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    Text("Paid by").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                    Text("You").font(.subheadline.weight(.semibold))
                 }
                 HStack {
                     Image(systemName: "arrow.down")
@@ -588,7 +617,7 @@ struct SettleUpView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Who gets it?").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                     Picker("To", selection: $to) {
-                        ForEach(currentGroup.members.filter { $0.id != from }) { member in
+                        ForEach(activeMembers.filter { $0.id != from }) { member in
                             Text(member.id == me?.id ? "You" : member.name).tag(member.id)
                         }
                     }
@@ -608,6 +637,11 @@ struct SettleUpView: View {
                     }
                     .labelsHidden()
                     .accessibilityLabel("Currency")
+                }
+                if currency != fx.home, let paid = Money.parse(amount), paid > 0 {
+                    Text(fx.homeText(paid, currency: currency))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
                 if converts { paymentConversion }
                 TextField("Note (optional)", text: $note, axis: .vertical)
@@ -651,6 +685,7 @@ struct SettleUpView: View {
             }
             .font(.caption.weight(.semibold))
         }
+        .task(id: [currency, fx.home]) { await fx.refresh(currencies: [currency], into: fx.home) }
         .task(id: currency) {
             payQuote = nil; payRateError = nil; payManual = false
             guard converts else { return }
@@ -687,17 +722,16 @@ struct SettleUpView: View {
         guard !initialized else { return }
         initialized = true
         currency = transfer?.currency ?? group.currency
-        from = transfer?.from ?? me?.id ?? currentGroup.members.first?.id ?? ""
-        to = transfer?.to ?? currentGroup.members.first { $0.id != from }?.id ?? ""
+        to = transfer?.to ?? activeMembers.first { $0.id != from }?.id ?? ""
         if let transfer { amount = Money.input(transfer.amount) }
-        else if let suggestion = suggestions.first(where: { $0.from == from }) ?? suggestions.first {
+        else if let suggestion = suggestions.first {
             amount = Money.input(suggestion.amount)
-            from = suggestion.from; to = suggestion.to; currency = suggestion.currency
+            to = suggestion.to; currency = suggestion.currency
         }
     }
 
     private func apply(_ suggestion: Transfer) {
-        from = suggestion.from; to = suggestion.to; amount = Money.input(suggestion.amount); currency = suggestion.currency; error = nil
+        to = suggestion.to; amount = Money.input(suggestion.amount); currency = suggestion.currency; error = nil
     }
 
     private func name(_ id: String) -> String {
@@ -709,14 +743,14 @@ struct SettleUpView: View {
         guard !saving else { return }
         guard from != to else { error = "Choose two different people."; return }
         guard let value = Money.parse(amount), value > 0 else { error = "Enter a payment greater than zero."; return }
-        guard currentGroup.members.contains(where: { $0.id == from }), currentGroup.members.contains(where: { $0.id == to }) else {
+        guard activeMembers.contains(where: { $0.id == from }), activeMembers.contains(where: { $0.id == to }) else {
             error = "Choose both people."; return
         }
         if converts && payExchange == nil { error = "Wait for the rate, or edit it to enter your own."; return }
         saving = true; error = nil
         let cleanNote = note.trimmingCharacters(in: .whitespacesAndNewlines)
         let entry = LedgerEntry(
-            id: UUID().uuidString,
+            id: paymentID,
             groupID: group.id,
             title: "Settle-up payment",
             amount: value,
@@ -725,13 +759,14 @@ struct SettleUpView: View {
             splits: [Portion(memberID: to, amount: value)],
             kind: "settlement",
             splitMode: .exact,
+            createdAt: paymentDate,
             notes: cleanNote.isEmpty ? nil : cleanNote
         )
         var payment = entry
         payment.exchange = payExchange
         Task {
             defer { saving = false }
-            do { try store.add(payment); dismiss() }
+            do { try await store.requestSettlement(payment); dismiss() }
             catch { self.error = error.localizedDescription }
         }
     }

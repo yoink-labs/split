@@ -330,15 +330,17 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   letter-spacing: -0.03em;
 }
 .brand-mark {
-  width: 26px;
-  height: 26px;
-  border-radius: 7px;
-  background: var(--primary-solid);
-  color: var(--on-primary, #fff);
-  display: grid;
-  place-items: center;
-  font-weight: 800;
-  font-size: 13px;
+  display: block;
+  flex-shrink: 0;
+  border-radius: 26%;
+}
+:root[data-theme="dark"] .brand-mark {
+  content: url("/icon-dark.png");
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .brand-mark {
+    content: url("/icon-dark.png");
+  }
 }
 .demo-banner {
   margin: 0 4px 10px;
@@ -1056,3 +1058,107 @@ fieldset.form-stack { min-inline-size: 0; }
 .palette-preview-button { height: 9px; width: 45%; border-radius: 3px; align-self: flex-end; }
 .palette-label { font-size: 13px; font-weight: 600; }
 .palette-note { font-size: 11.5px; color: var(--muted); }
+
+/* Expense composer controls */
+.expense-form {
+  width: min(100%, 760px);
+  margin-inline: auto;
+}
+.expense-form .field select {
+  width: 100%;
+  min-height: 44px;
+  padding-inline: 12px;
+  border-radius: var(--radius-md);
+}
+.expense-form-section,
+.receipt-upload {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+  padding: 14px;
+  min-width: 0;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+.expense-section-head {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+}
+.expense-handled {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px;
+  background: var(--surface-2);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+.expense-handled input { margin-top: 3px; }
+.expense-handled small {
+  display: block;
+  color: var(--muted);
+  margin-top: 3px;
+}
+.receipt-upload-control {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  min-height: 48px;
+  padding: 8px 12px;
+  cursor: pointer;
+  background: var(--surface);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-md);
+}
+.receipt-upload-control:focus-within {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+.receipt-upload-control input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+.receipt-upload-label { color: var(--primary); font-weight: 700; }
+.receipt-file-list { overflow-wrap: anywhere; }
+
+.expense-payer-amounts { display: grid; gap: 8px; }
+.expense-payer-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 36%);
+  align-items: center;
+  gap: 8px;
+  overflow-wrap: anywhere;
+}
+.expense-payer-row input { width: 100%; min-width: 0; }
+
+/* Currency lookup */
+.converter-page { max-width: 640px; }
+.converter { display: grid; gap: 12px; }
+.converter-amount, .converter-rate { display: grid; gap: 14px; }
+.converter-pair { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 8px; align-items: end; }
+.converter-pair label { display: grid; gap: 5px; color: var(--muted); }
+.converter-pair select { width: 100%; min-height: 44px; }
+.converter-swap { min-width: 44px; min-height: 44px; font-size: 21px; }
+.converter-result { display: grid; gap: 4px; padding: 14px; background: var(--primary-soft); border-radius: var(--radius-md); }
+.converter-result span { color: var(--muted); font-size: 13px; }
+.converter-result output { color: var(--ink); font-size: clamp(22px, 4vw, 32px); font-weight: 750; overflow-wrap: anywhere; }
+.converter-rate-head, .converter-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.converter-rate-head { justify-content: space-between; }
+.converter-rate-head h2 { font-size: 16px; }
+.converter-rate > button { justify-self: start; }
+.converter-details { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px 14px; margin: 10px 0 0; }
+.converter-details dt { color: var(--muted); }
+.converter-details dd { margin: 0; }
+.converter-quote p { margin-top: 5px; }
+.converter-rate p, .converter-manual p { font-size: 13px; }
+.converter-manual summary { cursor: pointer; font-weight: 650; }
+.converter-manual[open] > :not(summary) { margin-top: 10px; }

@@ -87,6 +87,7 @@ const pair = (base: string, quote: string) => base + '>' + quote;
 export class FxCache {
   private state: Stored;
   private listeners = new Set<() => void>();
+  private failedHistory = new Map<string, number>();
   private inflight = new Map<string, Promise<Quote | null>>();
   offline = false;
   constructor(private storage: KeyValue, private now: () => number, private fetcher: Fetcher) {
@@ -116,9 +117,13 @@ export class FxCache {
     const own = this.manual(base, quote), reverseOwn = this.manual(quote, base);
     if (own) return { base, quote, rateE8: own, date: '', source: 'Manual', fetchedAt: 0 };
     if (reverseOwn) { const r = inverse(reverseOwn); if (r) return { base, quote, rateE8: r, date: '', source: 'Manual', fetchedAt: 0 }; }
-    const direct = this.cached(base, quote);
+    return this.published(base, quote);
+  }
+  published(base: string, quote: string, date?: string): Quote | null {
+    const suffix = date ? '@' + date : '';
+    const direct = this.state.quotes[pair(base, quote) + suffix];
     if (direct) return direct;
-    const reverse = this.cached(quote, base), r = reverse && inverse(reverse.rateE8);
+    const reverse = this.state.quotes[pair(quote, base) + suffix], r = reverse && inverse(reverse.rateE8);
     return reverse && r ? { ...reverse, base, quote, rateE8: r } : null;
   }
   private async fetchQuote(base: string, quote: string, date?: string): Promise<Quote> {
@@ -140,6 +145,23 @@ export class FxCache {
     this.inflight.set(k, task);
     return task;
   }
+  historical(base: string, quote: string, date: string, retry = false): Promise<Quote | null> {
+    const cached = this.published(base, quote, date);
+    if (cached) return Promise.resolve(cached);
+    const key = pair(base, quote) + '@' + date;
+    const failedAt = this.failedHistory.get(key);
+    if (!retry && failedAt !== undefined && this.now() - failedAt < FRESH_MS) return Promise.resolve(null);
+    const running = this.inflight.get(key);
+    if (running) return running;
+    const task = this.fetchQuote(base, quote, date).then(result => {
+      this.failedHistory.delete(key);
+      this.state.quotes[key] = result;
+      this.changed();
+      return result;
+    }, () => { this.failedHistory.set(key, this.now()); return null; }).finally(() => this.inflight.delete(key));
+    this.inflight.set(key, task);
+    return task;
+  }
   /** The rate for an expense date. Today or later uses the latest rate. Offline uses a cached rate published on or before the date. */
   async forDate(base: string, quote: string, date: string, today: string): Promise<Quote> {
     if (date >= today) {
@@ -147,12 +169,11 @@ export class FxCache {
       if (q && q.date <= date) return q;
       throw new Error('No published rate is available offline. Enter your own rate.');
     }
-    try { return await this.fetchQuote(base, quote, date); }
-    catch {
-      const cached = this.cached(base, quote);
-      if (cached && cached.date <= date) { this.offline = true; return cached; }
-      throw new Error('No published rate for this date. Enter your own rate.');
-    }
+    const historic = await this.historical(base, quote, date, true);
+    if (historic) return historic;
+    const cached = this.cached(base, quote);
+    if (cached && cached.date <= date) { this.offline = true; return cached; }
+    throw new Error('No published rate for this date. Enter your own rate.');
   }
   /** Per-currency amounts summed into one currency. `missing` lists currencies without a known rate. */
   total(amounts: Record<string, number>, target: string) {
@@ -161,8 +182,12 @@ export class FxCache {
       if (!value) continue;
       const q = this.rate(currency, target);
       if (!q) { missing.push(currency); continue; }
-      if (currency !== target) quotes.push(q);
-      amount += convert(value, q.rateE8);
+      try {
+        const next = amount + convert(value, q.rateE8);
+        if (!Number.isSafeInteger(next)) { missing.push(currency); continue; }
+        if (currency !== target) quotes.push(q);
+        amount = next;
+      } catch { missing.push(currency); }
     }
     return { amount, missing, quotes };
   }

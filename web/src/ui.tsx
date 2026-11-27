@@ -3,6 +3,10 @@ import { Link } from "react-router-dom";
 import { avatarStyleFor, categoryMeta } from "./categories";
 import { moneyCompact, type Person } from "./data";
 
+export function SplitLogo({ size = 26 }: { size?: number }) {
+  return <img className="brand-mark" src="/icon.png" alt="" width={size} height={size} />;
+}
+
 export function Avatar({
   name,
   avatarURL,
@@ -122,19 +126,21 @@ export function CategoryIcon({
 export function BalanceBadge({
   amount,
   currency,
+  display,
   positive = "owed",
   negative = "owes",
 }: {
   amount: number;
   currency: string;
+  display?: string;
   positive?: string;
   negative?: string;
 }) {
+  if (display && (amount === 0 || display === "Rate unavailable")) return <span className="tag">{display}</span>;
   if (amount === 0) return <span className="tag">Settled</span>;
   return (
     <span className={amount > 0 ? "tag tag-pos num" : "tag tag-neg num"}>
-      {amount > 0 ? "+" : "−"}
-      {moneyCompact(Math.abs(amount), currency)} {amount > 0 ? positive : negative}
+      {display ?? (amount > 0 ? "+" : "−") + moneyCompact(Math.abs(amount), currency)} {amount > 0 ? positive : negative}
     </span>
   );
 }

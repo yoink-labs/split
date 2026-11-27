@@ -19,3 +19,5 @@ Agent design guidance (instructions for coding agents, not shipped in the app) i
 Historical exchange-rate data comes from [Frankfurter v2](https://frankfurter.dev/). Argentine peso lookups request the Banco Central de la República Argentina provider. Each converted expense retains its source and effective date.
 
 The web client uses React, React DOM, Scheduler and React Router under MIT licenses. Clerk hosts the MIT-licensed ClerkJS sign-in client. The browser distribution includes the applicable [web notices](web/public/NOTICE.txt).
+
+The web receipt reader loads [Tesseract.js 7.0.0](https://github.com/naptha/tesseract.js/tree/v7.0.0), Tesseract.js Core, and the [English Tesseract model](https://github.com/tesseract-ocr/tessdata_best) on demand. The OCR engine and model are available under the [Apache License 2.0](docs/licenses/tesseract.txt).

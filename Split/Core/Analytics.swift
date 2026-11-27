@@ -1,11 +1,5 @@
 import Foundation
 
-struct CurrencyTotal: Identifiable, Equatable {
-    var currency: String
-    var amount: Int64
-    var id: String { currency }
-}
-
 struct PersonBalance: Identifiable, Equatable {
     var key: String
     var name: String
@@ -148,19 +142,17 @@ enum Analytics {
         }
     }
 
-    static func totals(_ people: [PersonBalance]) -> (owed: [CurrencyTotal], owe: [CurrencyTotal], net: [CurrencyTotal]) {
-        var net: [String: Int64] = [:]
-        for person in people {
-            for (currency, amount) in person.amounts { net[currency, default: 0] += amount }
+    /// Groups settle independently. Keep amounts owed and owing separate before converting.
+    static func balanceDirections(_ groupBalances: [[String: Int64]]) -> (owed: [String: Int64], owe: [String: Int64]) {
+        var owed: [String: Int64] = [:]
+        var owe: [String: Int64] = [:]
+        for balances in groupBalances {
+            for (currency, amount) in balances {
+                if amount > 0 { owed[currency, default: 0] += amount }
+                if amount < 0 { owe[currency, default: 0] -= amount }
+            }
         }
-        var owed: [CurrencyTotal] = [], owe: [CurrencyTotal] = [], nets: [CurrencyTotal] = []
-        for currency in net.keys.sorted() {
-            let amount = net[currency] ?? 0
-            nets.append(CurrencyTotal(currency: currency, amount: amount))
-            if amount > 0 { owed.append(CurrencyTotal(currency: currency, amount: amount)) }
-            if amount < 0 { owe.append(CurrencyTotal(currency: currency, amount: -amount)) }
-        }
-        return (owed.sorted { $0.amount > $1.amount }, owe.sorted { $0.amount > $1.amount }, nets.filter { $0.amount != 0 })
+        return (owed, owe)
     }
 
     static func entries(with person: PersonBalance, groups: [ExpenseGroup], entries: [LedgerEntry], userID: String?) -> [LedgerEntry] {
@@ -245,25 +237,24 @@ enum Search {
 }
 
 struct DashboardModel {
-    var owed: [CurrencyTotal]
-    var owe: [CurrencyTotal]
-    var net: [CurrencyTotal]
+    var owed: [String: Int64]
+    var owe: [String: Int64]
     var people: [PersonBalance]
     var groups: [GroupSummary]
     var recent: [LedgerEntry]
-    var settled: Bool { net.isEmpty }
+    var settled: Bool { owed.isEmpty && owe.isEmpty }
 }
 
 extension ExpenseStore {
     var dashboard: DashboardModel {
         let people = Analytics.personBalances(groups: groups, entries: entries, userID: currentUserID)
-        let totals = Analytics.totals(people)
+        let summaries = Analytics.groupSummaries(groups: groups, entries: entries, userID: currentUserID)
+        let totals = Analytics.balanceDirections(summaries.map(\.mine))
         return DashboardModel(
             owed: totals.owed,
             owe: totals.owe,
-            net: totals.net,
             people: people,
-            groups: Analytics.groupSummaries(groups: groups, entries: entries, userID: currentUserID),
+            groups: summaries,
             recent: Array(entries.prefix(8))
         )
     }

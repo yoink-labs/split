@@ -1,6 +1,6 @@
 import { env } from 'cloudflare:test';
 import { beforeEach, describe, expect, it } from 'vitest';
-import worker from '../src/index';
+import worker, { handle } from '../src/index';
 import { manageDevices } from '../src/cli/devices';
 import tripCSV from '../../fixtures/splitwise/buenos-aires-trip_2026-11-18_export.csv?raw';
 
@@ -121,7 +121,11 @@ describe('CLI and MCP', () => {
     await expect(run('expenses_delete',{...target,revision:preview.revision,yes:true})).rejects.toThrow('fresh preview');
     const fresh = await run('expenses_delete',target);
     await run('expenses_delete',{...target,revision:fresh.revision,yes:true});
-    await run('settle_up',{group,from:other,to:payer,amount:'7.01'});
+    const request = await run('settle_up',{group,from:other,to:payer,amount:'7.01'},outsider);
+    expect(request.status).toBe('pending');
+    expect((await run('balances',{group})).find(b=>b.currency==='USD').settlements[0].amount).toBe(701);
+    const approve = new Request('https://test/v1/settlements/'+request.id+'/approve',{method:'POST'});
+    expect((await handle(approve,env,'alex')).status).toBe(200);
     const balances = await run('balances',{group});
     expect(balances.find(b=>b.currency==='USD').settlements).toEqual([]);
     expect(balances.find(b=>b.currency==='EUR').settlements[0].amount).toBe(751);

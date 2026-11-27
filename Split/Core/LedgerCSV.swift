@@ -7,6 +7,7 @@ struct CSVExpense:Codable,Equatable {
     var currency:String; var category:String?; var payment:Bool; var splits:[CSVShare]
     var sourceID:String?; var sourceGroup:String?; var exchange:Exchange?
     var payers:[CSVShare]? = nil
+    var handled: Bool? = nil
 }
 enum LedgerCSV {
     static func table(_ raw:String)throws->[[String]] {
@@ -44,7 +45,8 @@ enum LedgerCSV {
         let people=column(["for whom","participants","teilnehmer","participantes","paid for","fur","split between","beneficiaries"])
         let split=column(["split amounts","split"]),type=column(["type","transaction type","transaktionstyp"])
         let sourceID=column(["split entry id"]),sourceGroup=column(["split group id"]),target=column(["settle currency"]),rate=column(["rate e8"]),rateDate=column(["rate date"]),rateSource=column(["rate source"])
-        let known=Set([description,cost,date,payer,category,currency,people,split,type,sourceID,sourceGroup,target,rate,rateDate,rateSource].compactMap{$0})
+        let expenseStatus=column(["split expense status"])
+        let known=Set([expenseStatus,description,cost,date,payer,category,currency,people,split,type,sourceID,sourceGroup,target,rate,rateDate,rateSource].compactMap{$0})
         let extra=keys.indices.filter{!known.contains($0) && !["notes","notas","notizen","details","detalles","repayments","created date","created by","last changed","last modified by"].contains(keys[$0])}
         let sharePrefix=#"(?i)^(?:impacted(?: to| for)?|paid for|share(?: of)?|bezahlt für)[\s:]+(?=.)"#
         let shareColumns=extra.compactMap { i -> (Int,String)? in guard let range=headers[i].range(of:sharePrefix,options:.regularExpression) else { return nil };return (i,String(headers[i][range.upperBound...])) }
@@ -95,7 +97,7 @@ enum LedgerCSV {
                 guard let units=Int64(cell(rate)),units>0 else {throw invalid}
                 exchange=Exchange(target:cell(target),rateE8:units,date:cell(rateDate),source:cell(rateSource))
             }
-            result.append(CSVExpense(title:title,day:day,payer:by,amount:amount,currency:code,category:cell(category).isEmpty ? nil : cell(category),payment:payment,splits:shares,sourceID:sourceID==nil ? nil : cell(sourceID),sourceGroup:sourceGroup==nil ? nil : cell(sourceGroup),exchange:exchange))
+            result.append(CSVExpense(title:title,day:day,payer:by,amount:amount,currency:code,category:cell(category).isEmpty ? nil : cell(category),payment:payment,splits:shares,sourceID:sourceID==nil ? nil : cell(sourceID),sourceGroup:sourceGroup==nil ? nil : cell(sourceGroup),exchange:exchange,handled:!payment && key(cell(expenseStatus))=="handled" ? true : nil))
         }
         guard (1...80).contains(result.count) else {throw LedgerError.invalid("Choose a file with 1–80 expense rows.")}
         return result
@@ -106,10 +108,10 @@ enum LedgerCSV {
             return "\""+prefix+s.replacingOccurrences(of:"\"",with:"\"\"")+"\""
         }
         let members=group.members
-        var rows=[(["Date","Description","Category","Cost","Currency","Paid by","Split entry ID","Split group ID","Settle currency","Rate E8","Rate date","Rate source"]+members.map(\.name)).map(safe).joined(separator:",")]
+        var rows=[(["Date","Description","Category","Cost","Currency","Paid by","Split entry ID","Split group ID","Settle currency","Rate E8","Rate date","Rate source","Split expense status"]+members.map(\.name)).map(safe).joined(separator:",")]
         for e in entries {
             var columns=[String(e.createdAt.prefix(10)),e.title,e.kind=="settlement" ? "Payment" : (e.category ?? ""),Money.input(e.amount),e.currency,members.first{$0.id==e.paidBy}?.name ?? ""]
-            columns += [e.id,group.id,e.exchange?.target ?? "",e.exchange.map{String($0.rateE8)} ?? "",e.exchange?.date ?? "",e.exchange?.source ?? ""]
+            columns += [e.id,group.id,e.exchange?.target ?? "",e.exchange.map{String($0.rateE8)} ?? "",e.exchange?.date ?? "",e.exchange?.source ?? "",e.isHandled ? "Handled" : ""]
             let nets=members.map{m in Money.input((m.id==e.paidBy ? e.amount : 0)-(e.splits.first{$0.memberID==m.id}?.amount ?? 0))}
             rows.append((columns.map(safe)+nets).joined(separator:","))
         }

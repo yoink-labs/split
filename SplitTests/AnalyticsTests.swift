@@ -34,17 +34,20 @@ final class AnalyticsTests: XCTestCase {
         let userId = "demo-user"
         let people = Analytics.personBalances(groups: snapshot.groups, entries: snapshot.entries, userID: userId)
         XCTAssertFalse(people.isEmpty)
-        let totals = Analytics.totals(people)
-        XCTAssertEqual(totals.net.map(\.amount).reduce(0, +), people.flatMap { $0.amounts.values }.reduce(0, +))
-        XCTAssertTrue(totals.owed.allSatisfy { $0.amount > 0 })
-        XCTAssertTrue(totals.owe.allSatisfy { $0.amount > 0 })
         let all = Analytics.allPeople(groups: snapshot.groups, entries: snapshot.entries, userID: userId)
         XCTAssertGreaterThanOrEqual(all.count, people.count)
-        // The people totals must match the sum of your own group balances.
         let summaries = Analytics.groupSummaries(groups: snapshot.groups, entries: snapshot.entries, userID: userId)
-        var mine: [String: Int64] = [:]
-        for summary in summaries { for (currency, value) in summary.mine { mine[currency, default: 0] += value } }
-        for total in totals.net { XCTAssertEqual(total.amount, mine[total.currency], total.currency) }
+        let totals = Analytics.balanceDirections(summaries.map(\.mine))
+        for currency in Set(totals.owed.keys).union(totals.owe.keys) {
+            let personNet = people.reduce(Int64(0)) { $0 + $1.amount(currency) }
+            XCTAssertEqual((totals.owed[currency] ?? 0) - (totals.owe[currency] ?? 0), personNet, currency)
+        }
+    }
+
+    func testDashboardKeepsIncomingAndOutgoingAmountsEvenWhenTheyOffset() {
+        let totals = Analytics.balanceDirections([["USD": 1200, "EUR": -400], ["USD": -1200, "ARS": 2000]])
+        XCTAssertEqual(totals.owed, ["USD": 1200, "ARS": 2000])
+        XCTAssertEqual(totals.owe, ["USD": 1200, "EUR": 400])
     }
 
     func testPersonAmountIsWhatTheyOweYou() {
@@ -59,7 +62,6 @@ final class AnalyticsTests: XCTestCase {
         let people = Analytics.allPeople(groups: [group], entries: [entry], userID: "u")
         XCTAssertEqual(people.first { $0.name == "Harris" }?.amount("USD"), -3000)
         XCTAssertEqual(people.first { $0.name == "Maya" }?.amount("USD"), 0)
-        XCTAssertEqual(Analytics.totals(people).owe, [CurrencyTotal(currency: "USD", amount: 3000)])
     }
 
     func testGroupSummariesAndSearch() {

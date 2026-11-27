@@ -134,6 +134,6 @@ export const tools = [
   op('expenses_edit','Preview changes to your expense. Review the preview before confirming with yes and revision.', { group, expense, ...allocation, ...confirmation }, ['group','expense'], false, true),
   op('expenses_delete','Preview deletion of your expense. Review the preview before confirming with yes and revision.', { group, expense, ...confirmation }, ['group','expense'], false, true),
   op('balances','Show each member’s net balance and suggested settlements, separately by currency, in minor units.', { group }, ['group'], true),
-  op('settle_up','Record a settlement from one member to another. This records a payment already made.', { group, from: member, to: member, amount: money, currency }, ['group','from','to','amount']),
+  op('settle_up','Request approval for a payment you made. The recipient confirms it in Split.', { group, from: member, to: member, amount: money, currency }, ['group','from','to','amount']),
   op('activity','List expenses and settlements newest first, optionally filtered by group.', { group }, [], true)
 ];

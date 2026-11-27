@@ -17,6 +17,9 @@ struct GroupTools: View {
     @State private var name = ""
     @State private var currency = ""
     @State private var simplify = true
+    @State private var description = ""
+    @State private var start: Date?
+    @State private var end: Date?
     @State private var weights: [String: String] = [:]
     @State private var payment: [String: String] = [:]
     @State private var choose = false
@@ -44,10 +47,11 @@ struct GroupTools: View {
                         ForEach(Money.currencies, id: \.self) { Text($0).tag($0) }
                     }
                     .disabled(!entries.isEmpty)
+                    GroupMetadataFields(description: $description, start: $start, end: $end, isTrip: current.kind == "trip")
                     Toggle("Simplify payments", isOn: $simplify)
                     Button {
                         run {
-                            try await store.updateGroup(current, name: name, currency: currency, simplify: simplify)
+                            try await store.updateGroup(current, name: name, currency: currency, simplify: simplify, description: description, start: start, end: end)
                             message = "Group details saved."
                         }
                     } label: {
@@ -227,6 +231,9 @@ struct GroupTools: View {
         guard !initialized else { return }
         initialized = true
         name = current.name
+        description = current.description ?? ""
+        start = current.startDate.flatMap(Exchange.date(fromDay:))
+        end = current.endDate.flatMap(Exchange.date(fromDay:))
         currency = current.currency
         simplify = current.simplify ?? true
         let defaults = current.defaultWeights ?? [:]

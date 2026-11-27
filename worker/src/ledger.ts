@@ -4,10 +4,10 @@ export const currencies = ['USD', 'ARS', 'EUR', 'GBP', 'BRL', 'CAD', 'AUD', 'MXN
 export type SplitMode = 'equal' | 'exact' | 'percent' | 'shares' | 'adjustment';
 export interface Portion { memberID: string; amount: number }
 export interface Payer { memberID: string; amount: number }
-export interface Entry { exchange?:Exchange; bill?:Bill; category?:string; receiptIDs?:string[]; payers?:Payer[]; notes?:string; id: string; groupID: string; title: string; amount: number; currency: string; paidBy: string; splits: Portion[]; kind: 'expense' | 'settlement'; splitMode: SplitMode; createdAt: string }
+export interface Entry { handled?: boolean; exchange?:Exchange; bill?:Bill; category?:string; receiptIDs?:string[]; payers?:Payer[]; notes?:string; id: string; groupID: string; title: string; amount: number; currency: string; paidBy: string; splits: Portion[]; kind: 'expense' | 'settlement'; splitMode: SplitMode; createdAt: string }
 export class InputError extends Error {}
-export function allocate(total: number, weights: number[]): number[] {
-  if (!Number.isSafeInteger(total) || total <= 0 || total > 100_000_000_000 || !weights.length || weights.length > 50 || weights.some(w => !Number.isSafeInteger(w) || w < 0 || w > 100_000_000_000) || weights.every(w => w === 0)) throw new InputError('Enter valid amounts and at least one participant.');
+export function allocate(total: number, weights: number[], maximumTotal = 100_000_000_000): number[] {
+  if (!Number.isSafeInteger(total) || total <= 0 || total > maximumTotal || !weights.length || weights.length > 50 || weights.some(w => !Number.isSafeInteger(w) || w < 0 || w > 100_000_000_000) || weights.every(w => w === 0)) throw new InputError('Enter valid amounts and at least one participant.');
   const sum = weights.reduce((a,b) => a + BigInt(b), 0n);
   const amounts = weights.map(w => Number(BigInt(total) * BigInt(w) / sum));
   const order = weights.map((w,i) => ({i,r:BigInt(total)*BigInt(w)%sum})).sort((a,b) => a.r === b.r ? a.i-b.i : a.r>b.r ? -1:1);
@@ -38,6 +38,10 @@ export function validateEntry(value: unknown, memberIDs: string[], previous?:Bil
   if (!Array.isArray(e.splits) || !e.splits.length || e.splits.length > memberIDs.length || new Set(e.splits.map(s=>s.memberID)).size !== e.splits.length || e.splits.some(s=>!memberIDs.includes(s.memberID) || !Number.isSafeInteger(s.amount) || s.amount < 0) || e.splits.reduce((n,s)=>n+s.amount,0) !== e.amount) throw new InputError('The split must match the total exactly.');
   if (e.kind === 'settlement' && (e.splits.length !== 1 || e.splits[0].memberID === e.paidBy)) throw new InputError('Choose two different people.');
   const extras:Partial<Entry>={};
+  if(e.handled!==undefined) {
+    if(typeof e.handled!=='boolean' || e.kind!=='expense') throw new InputError('Only expenses can be marked as already handled.');
+    if(e.handled) extras.handled=true;
+  }
   if(e.payers!=null) extras.payers=readPayers(e.payers,memberIDs,e.amount,e.paidBy,e.kind);
   if(e.notes!=null) {
     if(typeof e.notes!=='string') throw new InputError('Write a note of up to 2,000 characters.');
@@ -64,7 +68,7 @@ export function validID(id: unknown): id is string { return typeof id === 'strin
 export function entryPayers(e: Entry): Payer[] { return e.payers?.length ? e.payers : [{memberID:e.paidBy, amount:e.amount}]; }
 export function balances(entries: Entry[], currency: string): Record<string,number> {
   const result: Record<string,number> = {};
-  for (const e of entries.map(settlementEntry).filter(e=>e.currency===currency)) {
+  for (const e of entries.filter(e=>!e.handled).map(settlementEntry).filter(e=>e.currency===currency)) {
     for (const p of entryPayers(e)) result[p.memberID]=(result[p.memberID]??0)+p.amount;
     for (const s of e.splits) result[s.memberID]=(result[s.memberID]??0)-s.amount;
   }

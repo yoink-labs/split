@@ -124,8 +124,13 @@ struct FXCache: Codable, Equatable {
         if let units = manual[FXQuote.key(quote, base)], let inverse = FXMath.inverse(units) {
             return FXQuote(base: base, quote: quote, rateE8: inverse, date: "", source: "Manual", fetchedAt: .distantPast)
         }
-        if let direct = quotes[FXQuote.key(base, quote)] { return direct }
-        if let reverse = quotes[FXQuote.key(quote, base)], let inverse = FXMath.inverse(reverse.rateE8) {
+        return published(base, quote)
+    }
+
+    func published(_ base: String, _ quote: String, day: String? = nil) -> FXQuote? {
+        let suffix = day.map { "@" + $0 } ?? ""
+        if let direct = quotes[FXQuote.key(base, quote) + suffix] { return direct }
+        if let reverse = quotes[FXQuote.key(quote, base) + suffix], let inverse = FXMath.inverse(reverse.rateE8) {
             var flipped = reverse
             flipped.base = base; flipped.quote = quote; flipped.rateE8 = inverse
             return flipped
@@ -153,18 +158,16 @@ struct FXCache: Codable, Equatable {
 final class FXStore: ObservableObject {
     @Published private(set) var cache: FXCache
     /// The person's home currency, set in Account. Shared with the default for new groups.
-    @Published var home: String { didSet { defaults.set(home, forKey: FXStore.homeKey); display = home } }
-    /// The "Show in" currency for approximate totals. Starts as the home currency.
-    @Published var display: String { didSet { defaults.set(display, forKey: FXStore.displayKey) } }
+    @Published var home: String { didSet { defaults.set(home, forKey: FXStore.homeKey) } }
     @Published private(set) var offline = false
     @Published private(set) var refreshing = false
 
     static let homeKey = "split.defaultCurrency"
-    static let displayKey = "split.showInCurrency"
     private let defaults: UserDefaults
     private let fileURL: URL?
     private let fetcher: (URL) async throws -> (Data, URLResponse)
     private let clock: () -> Date
+    private var failedHistory: [String: Date] = [:]
 
     init(defaults: UserDefaults = .standard,
          fileURL: URL? = FXStore.defaultFile(),
@@ -178,7 +181,6 @@ final class FXStore: ObservableObject {
         let local = Locale.current.currency?.identifier
         let resolvedHome = stored.flatMap { Money.currencies.contains($0) ? $0 : nil } ?? local.flatMap { Money.currencies.contains($0) ? $0 : nil } ?? "USD"
         home = resolvedHome
-        display = defaults.string(forKey: FXStore.displayKey).flatMap { Money.currencies.contains($0) ? $0 : nil } ?? resolvedHome
         if let fileURL, let data = try? Data(contentsOf: fileURL), let decoded = try? JSONDecoder().decode(FXCache.self, from: data) {
             cache = decoded
         } else {
@@ -195,6 +197,83 @@ final class FXStore: ObservableObject {
 
     func total(_ amounts: [String: Int64], in target: String) -> (amount: Int64, missing: [String], quotes: [FXQuote]) {
         cache.total(amounts, in: target)
+    }
+
+    func homeText(_ amount: Int64, currency: String, signed: Bool = false) -> String {
+        homeTotalText([currency: amount], signed: signed)
+    }
+
+    func homeTotalText(_ amounts: [String: Int64], signed: Bool = false, magnitude: Bool = false) -> String {
+        let result = total(amounts, in: home)
+        guard result.missing.isEmpty else { return "Rate unavailable" }
+        return (result.quotes.isEmpty ? "" : "≈ ") + Money.text(magnitude ? abs(result.amount) : result.amount, home, signed: signed)
+    }
+
+    private func displayQuote(_ entry: LedgerEntry) -> FXQuote? {
+        let base = entry.currency
+        let day = entry.exchange?.date ?? entry.day
+        return cache.published(base, home, day: day) ?? cache.published(base, home) ?? cache.rate(base, home)
+    }
+
+    func homeEntry(_ entry: LedgerEntry) -> LedgerEntry? {
+        if entry.currency == home {
+            var copy = entry
+            copy.exchange = nil
+            return copy
+        }
+        if let exchange = entry.exchange, exchange.target == home { return try? exchange.converting(entry) }
+        guard let quote = displayQuote(entry) else { return nil }
+        return try? quote.exchange.converting(entry, maximumTotal: Int64.max)
+    }
+
+    func entryText(_ entry: LedgerEntry, amount: Int64? = nil, signed: Bool = false) -> String {
+        let value = amount ?? entry.amount
+        if entry.currency == home || value == 0 { return Money.text(value, home, signed: signed) }
+        let converted: Int64?
+        if amount == nil || value == entry.amount {
+            converted = homeEntry(entry)?.amount
+        } else if let exchange = entry.exchange, exchange.target == home {
+            converted = FXMath.convert(value, rateE8: exchange.rateE8)
+        } else {
+            converted = displayQuote(entry).flatMap { FXMath.convert(value, rateE8: $0.rateE8) }
+        }
+        guard let converted else { return "Rate unavailable" }
+        return "≈ " + Money.text(converted, home, signed: signed)
+    }
+
+    func portionText(_ entry: LedgerEntry, memberID: String, paid: Bool = false) -> String {
+        guard let projected = homeEntry(entry) else { return "Rate unavailable" }
+        let amount = paid ? Ledger.paid(projected, by: memberID) : Ledger.share(projected, of: memberID)
+        return (entry.currency == home ? "" : "≈ ") + Money.text(amount, home)
+    }
+
+    func spendingText(_ entries: [LedgerEntry]) -> String {
+        let expenses = entries.filter { $0.kind == "expense" }
+        let converted = expenses.compactMap(homeEntry)
+        guard converted.count == expenses.count else { return "Rate unavailable" }
+        return (expenses.contains { $0.currency != home } ? "≈ " : "") + Money.text(converted.reduce(0) { $0 + $1.amount }, home)
+    }
+
+    func displayHistory(_ entries: [LedgerEntry], into target: String) async {
+        let today = Exchange.localDay(clock())
+        var seen = Set<String>()
+        defer { persist() }
+        for entry in entries where entry.currency != target && entry.exchange?.target != target && !Task.isCancelled {
+            let base = entry.currency
+            let day = entry.exchange?.date ?? entry.day
+            let key = FXQuote.key(base, target) + "@" + day
+            guard base != target, day < today, Exchange.date(fromDay: day) != nil,
+                  seen.insert(key).inserted, cache.published(base, target, day: day) == nil,
+                  failedHistory[key].map({ clock().timeIntervalSince($0) > FXCache.freshFor }) ?? true else { continue }
+            do {
+                let quote = try await fetchQuote(base: base, quote: target, date: day)
+                guard !Task.isCancelled else { break }
+                cache.quotes[key] = quote
+                failedHistory[key] = nil
+            } catch {
+                if !Task.isCancelled { failedHistory[key] = clock() }
+            }
+        }
     }
 
     func setManual(_ base: String, _ quote: String, rateE8: Int64?) {
@@ -231,11 +310,12 @@ final class FXStore: ObservableObject {
     /// A rate for an expense date. Falls back to the cached latest rate when offline.
     func quote(base: String, target: String, date: String) async throws -> FXQuote {
         let today = Exchange.localDay(clock())
+        if date < today, let cached = cache.published(base, target, day: date) { return cached }
         do {
             let fetched = try await fetchQuote(base: base, quote: target, date: date >= today ? nil : date)
-            if date >= today {
-                var next = cache; next.quotes[fetched.key] = fetched; cache = next; persist()
-            }
+            let key = fetched.key + (date < today ? "@" + date : "")
+            cache.quotes[key] = fetched
+            persist()
             offline = false
             return fetched
         } catch {

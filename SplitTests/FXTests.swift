@@ -98,4 +98,34 @@ final class FXTests: XCTestCase {
         } catch {}
         try? FileManager.default.removeItem(at: file)
     }
+    @MainActor
+    func testHomeDisplayUsesOriginalFrozenAndHistoricalAmounts() async throws {
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: UUID().uuidString))
+        let today = try XCTUnwrap(Exchange.date(fromDay: "2026-11-27"))
+        var requests: [URL] = []
+        let store = FXStore(defaults: defaults, fileURL: nil, fetcher: { url in
+            requests.append(url)
+            let body = Data(#"{"date":"2026-11-13","base":"EUR","quote":"USD","rate":1.1}"#.utf8)
+            return (body, HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+        }, clock: { today })
+        store.home = "USD"
+        store.setManual("EUR", "USD", rateE8: 900_000_000)
+        let entry = LedgerEntry(groupID: "g", title: "Dinner", amount: 101, currency: "EUR", paidBy: "a",
+                                splits: [Portion(memberID: "a", amount: 50), Portion(memberID: "b", amount: 51)],
+                                createdAt: "2026-11-15T12:00:00Z")
+        XCTAssertEqual(store.homeEntry(entry)?.amount, 909, "A manual rate is available as a fallback")
+        await store.displayHistory([entry, entry], into: "USD")
+        await store.displayHistory([entry], into: "USD")
+        XCTAssertEqual(requests.count, 1)
+        XCTAssertEqual(store.homeEntry(entry)?.amount, 111)
+        XCTAssertEqual(store.homeEntry(entry)?.splits.map(\.amount), [55, 56])
+
+        var frozen = entry
+        frozen.exchange = Exchange(target: "USD", rateE8: 200_000_000, date: "2026-11-15", source: "Manual")
+        XCTAssertEqual(store.homeEntry(frozen)?.amount, 202)
+        store.home = "EUR"
+        XCTAssertEqual(store.homeEntry(frozen)?.settling.amount, 101)
+        XCTAssertEqual(frozen.settling.amount, 202, "Display conversion leaves the ledger entry intact")
+    }
+
 }

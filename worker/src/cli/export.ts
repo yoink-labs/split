@@ -38,7 +38,7 @@ export function exportGroup(group: Group, entries: Entry[], format: 'ledger'|'su
     return { filename: slug + '-summary.csv', mimeType: 'text/csv', content: table(rows) + plan };
   }
   const header = ['Date', 'Type', 'Title', 'Category', 'Notes', 'Original Currency', 'Original Amount', 'FX Rate', 'FX Source',
-    'Settlement Currency', 'Settlement Amount', 'Paid By', 'Split', 'Receipt Items', ...group.members.map(m => m.name)];
+    'Settlement Currency', 'Settlement Amount', 'Paid By', 'Split', 'Receipt Items', 'Expense Status', ...group.members.map(m => m.name)];
   const rows = sorted.map(e => {
     const se = settlementEntry(e), payers = entryPayers(se);
     return [e.createdAt.slice(0, 10), e.kind, e.title, e.category ?? '', e.notes ?? '', e.currency, e.amount,
@@ -46,7 +46,8 @@ export function exportGroup(group: Group, entries: Entry[], format: 'ledger'|'su
       payers.map(p => nameOf(p.memberID) + ' ' + decimal(p.amount)).join('; '),
       se.splits.map(p => nameOf(p.memberID) + ' ' + decimal(p.amount)).join('; '),
       e.bill ? grossItems(e.bill).map(i => i.title + ' ' + decimal(i.gross) + ' [' + (i.memberIDs.map(nameOf).join('+') || 'open') + ']').join('; ') : '',
-      ...group.members.map(m => payers.filter(p => p.memberID === m.id).reduce((s, p) => s + p.amount, 0) - (se.splits.find(p => p.memberID === m.id)?.amount ?? 0))];
+      e.handled ? 'Handled' : '',
+      ...group.members.map(m => e.handled ? 0 : payers.filter(p => p.memberID === m.id).reduce((s, p) => s + p.amount, 0) - (se.splits.find(p => p.memberID === m.id)?.amount ?? 0))];
   });
   return { filename: slug + '.csv', mimeType: 'text/csv', content: table([header, ...rows]) };
 }

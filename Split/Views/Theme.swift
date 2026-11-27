@@ -2,24 +2,24 @@ import SwiftUI
 import UIKit
 
 enum Palette {
-    static let paper = Color(light: 0xF7F4ED, dark: 0x0A100E)
+    static let paper = Color(light: 0xF7F8F5, dark: 0x0C120F)
     static let background = paper
-    static let card = Color(light: 0xFFFEFA, dark: 0x111A16)
-    static let raised = Color(light: 0xF0EDE3, dark: 0x17231D)
-    static let ink = Color(light: 0x0F241C, dark: 0xEAF2EC)
+    static let card = Color(light: 0xFFFFFF, dark: 0x131B16)
+    static let raised = Color(light: 0xEFF2EC, dark: 0x1A241E)
+    static let ink = Color(light: 0x13201A, dark: 0xECF3EE)
     /// The ink card stays dark in both appearances; it is the one loud surface.
-    static let hero = Color(light: 0x0F241C, dark: 0x122A20)
+    static let hero = Color(light: 0x13201A, dark: 0x122A20)
     /// Body text on the ink hero in both appearances.
     static let onHero = Color(hex: 0xF4F1E8)
-    static let evergreen = Color(light: 0x1D4C3A, dark: 0x7BC7A0)
+    static let evergreen = Color(light: 0x166534, dark: 0x4ADE80)
     static let green = evergreen
     static let lime = Color(light: 0xD6F294, dark: 0xC9EC86)
     static let mint = Color(light: 0xC9E7D4, dark: 0x2B4A39)
-    static let coral = Color(light: 0xB84A2E, dark: 0xF08A6C)
-    static let amber = Color(light: 0x986B16, dark: 0xE8B957)
-    static let line = Color(light: 0xE2DED2, dark: 0x25322B)
+    static let coral = Color(light: 0xC2410C, dark: 0xFB923C)
+    static let amber = Color(light: 0xA16207, dark: 0xFBBF24)
+    static let line = Color(light: 0xE1E6DC, dark: 0x243129)
     static let muted = Color.secondary
-    static let positive = Color(light: 0x2C6E52, dark: 0x8BD3AC)
+    static let positive = Color(light: 0x0F766E, dark: 0x2DD4BF)
     static let negative = coral
     static let sky = Color(light: 0x2F6E86, dark: 0x8EC8DC)
     static let lavender = Color(light: 0x6C5A93, dark: 0xB7A6E0)
@@ -59,67 +59,17 @@ extension Color {
 extension Font {
     static func splitDisplay(_ size: CGFloat, weight: Font.Weight = .bold) -> Font {
         let scaled = min(UIFontMetrics.default.scaledValue(for: size), size * 1.5)
-        return .system(size: scaled, weight: weight, design: .rounded)
+        return .system(size: scaled, weight: weight, design: .default)
     }
     static func splitAmount(_ size: CGFloat, weight: Font.Weight = .semibold) -> Font {
         let scaled = min(UIFontMetrics.default.scaledValue(for: size), size * 1.45)
-        return .system(size: scaled, weight: weight, design: .rounded).monospacedDigit()
+        return .system(size: scaled, weight: weight, design: .default).monospacedDigit()
     }
     static var splitEyebrow: Font { .caption.weight(.semibold) }
 }
 
 struct AppBackground: View {
-    @Environment(\.colorScheme) private var scheme
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var drift = false
-
-    var body: some View {
-        GeometryReader { proxy in
-            let size = max(proxy.size.width, proxy.size.height)
-            ZStack {
-                Palette.background
-                Circle()
-                    .fill(Palette.mint.opacity(scheme == .dark ? 0.16 : 0.34))
-                    .frame(width: size * 0.54, height: size * 0.54)
-                    .blur(radius: 90)
-                    .offset(x: proxy.size.width * (drift ? 0.34 : 0.24), y: -proxy.size.height * 0.34)
-                Circle()
-                    .fill(Palette.sky.opacity(scheme == .dark ? 0.10 : 0.12))
-                    .frame(width: size * 0.48, height: size * 0.48)
-                    .blur(radius: 100)
-                    .offset(x: -proxy.size.width * (drift ? 0.30 : 0.18), y: -proxy.size.height * 0.18)
-                Circle()
-                    .fill(Palette.lime.opacity(scheme == .dark ? 0.06 : 0.18))
-                    .frame(width: size * 0.52, height: size * 0.52)
-                    .blur(radius: 100)
-                    .offset(x: -proxy.size.width * (drift ? 0.30 : 0.20), y: proxy.size.height * (drift ? 0.40 : 0.30))
-                Circle()
-                    .fill(Palette.coral.opacity(scheme == .dark ? 0.10 : 0.12))
-                    .frame(width: size * 0.36, height: size * 0.36)
-                    .blur(radius: 90)
-                    .offset(x: proxy.size.width * (drift ? 0.42 : 0.30), y: proxy.size.height * (drift ? 0.48 : 0.36))
-                Circle()
-                    .fill(Palette.lavender.opacity(scheme == .dark ? 0.08 : 0.09))
-                    .frame(width: size * 0.40, height: size * 0.40)
-                    .blur(radius: 100)
-                    .offset(x: proxy.size.width * 0.32, y: proxy.size.height * 0.08)
-                if scheme == .light {
-                    Circle()
-                        .fill(Palette.evergreen.opacity(0.06))
-                        .frame(width: size * 0.44, height: size * 0.44)
-                        .blur(radius: 100)
-                        .offset(x: -proxy.size.width * 0.38, y: -proxy.size.height * (drift ? 0.12 : 0.04))
-                }
-            }
-            .frame(width: proxy.size.width, height: proxy.size.height)
-            .clipped()
-        }
-        .ignoresSafeArea()
-        .onAppear {
-            guard !reduceMotion else { return }
-            withAnimation(.easeInOut(duration: 24).repeatForever(autoreverses: true)) { drift = true }
-        }
-    }
+    var body: some View { Palette.background.ignoresSafeArea() }
 }
 
 private struct GlassSurface: ViewModifier {
@@ -214,6 +164,8 @@ struct SolidButton: ButtonStyle {
 }
 
 struct GhostButton: ButtonStyle {
+    @Environment(\.isEnabled) private var enabled
+
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.subheadline.weight(.semibold))
@@ -222,7 +174,7 @@ struct GhostButton: ButtonStyle {
             .frame(minHeight: 44)
             .foregroundStyle(Palette.ink)
             .glassCapsule(tint: Palette.card.opacity(0.40))
-            .opacity(configuration.isPressed ? 0.72 : 1)
+            .opacity(enabled ? (configuration.isPressed ? 0.72 : 1) : 0.48)
     }
 }
 
@@ -249,7 +201,7 @@ struct Avatar: View {
     }
     var body: some View {
         Text(initials)
-            .font(.system(size: max(11, size * 0.36), weight: .bold, design: .rounded))
+            .font(.system(size: max(11, size * 0.36), weight: .bold, design: .default))
             .frame(width: size, height: size)
             .background(color.opacity(0.16))
             .foregroundStyle(color)
@@ -265,108 +217,69 @@ struct Avatar: View {
 }
 
 struct BalanceHero: View {
-    var net: [CurrencyTotal]
-    var owed: [CurrencyTotal]
-    var owe: [CurrencyTotal]
-    var subtitle: String? = nil
-    /// When set, adds an approximate total in the "Show in" currency with its picker.
-    var approx: [String: Int64]? = nil
-    @Environment(\.horizontalSizeClass) private var size
+    let owed: [String: Int64]
+    let owe: [String: Int64]
+    let subtitle: String
+
+    @EnvironmentObject private var fx: FXStore
+    @Environment(\.dynamicTypeSize) private var typeSize
+
 
     var body: some View {
-        Group {
-            if size == .regular {
-                HStack(alignment: .top, spacing: 24) {
-                    VStack(alignment: .leading, spacing: 10) {
-                        netStack(compact: false)
-                        if let approx { ApproxTotal(amounts: approx, onHero: true) }
-                    }
-                    Rectangle()
-                        .fill(Palette.lime.opacity(0.16))
-                        .frame(width: 1)
-                        .padding(.vertical, 2)
-                    VStack(alignment: .leading, spacing: 16) {
-                        heroStat("You owe", value: owe, tint: Color(red: 1, green: 0.74, blue: 0.64))
-                        Rectangle().fill(Palette.lime.opacity(0.12)).frame(height: 1)
-                        heroStat("You’re owed", value: owed, tint: Palette.lime)
-                    }
-                    .frame(width: 300, alignment: .leading)
-                }
-            } else {
-                VStack(alignment: .leading, spacing: 10) {
-                    netStack(compact: true)
-                    if let approx { ApproxTotal(amounts: approx, onHero: true) }
-                    HStack(spacing: 12) {
-                        heroStat("You owe", value: owe, tint: Color(red: 1, green: 0.74, blue: 0.64))
-                        Rectangle().fill(Palette.lime.opacity(0.18)).frame(width: 1).padding(.vertical, 2)
-                        heroStat("You’re owed", value: owed, tint: Palette.lime)
-                    }
-                    .fixedSize(horizontal: false, vertical: true)
-                }
+        let target = fx.home
+        let incoming = fx.total(owed, in: target)
+        let outgoing = fx.total(owe, in: target)
+        let incomingApproximate = owed.keys.contains { $0 != target }
+        let outgoingApproximate = owe.keys.contains { $0 != target }
+        let needsConversion = incomingApproximate || outgoingApproximate
+        let missingRates = !incoming.missing.isEmpty || !outgoing.missing.isEmpty
+        let net = incoming.amount - outgoing.amount
+        let layout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 12))
+            : AnyLayout(HStackLayout(alignment: .top, spacing: 16))
+
+        VStack(alignment: .leading, spacing: 12) {
+            Text(subtitle).font(.subheadline.weight(.semibold)).foregroundStyle(Palette.onHero)
+            Text(missingRates ? "Net balance unavailable" : balanceText(net, currency: target, approximate: needsConversion, signed: true))
+                .font(.title.bold().monospacedDigit())
+                .foregroundStyle(net < 0 && !missingRates ? Palette.heroNegative : Palette.lime)
+                .contentTransition(.numericText())
+                .accessibilityLabel(missingRates ? "Net balance unavailable" : "Net balance, " + balanceText(net, currency: target, approximate: needsConversion, signed: true))
+
+            Rectangle().fill(Palette.lime.opacity(0.18)).frame(height: 1)
+                .accessibilityHidden(true)
+
+            layout {
+                stat("You owe", amount: outgoing.missing.isEmpty ? outgoing.amount : nil, approximate: outgoingApproximate, tint: Palette.heroNegative)
+                stat("You’re owed", amount: incoming.missing.isEmpty ? incoming.amount : nil, approximate: incomingApproximate, tint: Palette.lime)
+            }
+
+            if needsConversion {
+                Text(missingRates ? (fx.refreshing ? "Getting exchange rates…" : "Some exchange rates are unavailable.")
+                                  : (fx.offline ? "Approximate · Using saved rates" : "Approximate · Available exchange rates"))
+                    .font(.caption)
+                    .foregroundStyle(Palette.onHero.opacity(0.75))
             }
         }
-        .padding(.horizontal, size == .regular ? 24 : 16)
-        .padding(.vertical, size == .regular ? 22 : 14)
-        .background(
-            LinearGradient(colors: [Palette.hero, Palette.hero.opacity(0.94)], startPoint: .topLeading, endPoint: .bottomTrailing)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: Radius.header))
-        .overlay(
-            RoundedRectangle(cornerRadius: Radius.header)
-                .stroke(Palette.lime.opacity(0.16), lineWidth: 1)
-        )
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Palette.hero, in: RoundedRectangle(cornerRadius: Radius.header))
+        .overlay(RoundedRectangle(cornerRadius: Radius.header).strokeBorder(Palette.lime.opacity(0.16)))
     }
 
-    private func netStack(compact: Bool) -> some View {
+    private func stat(_ title: String, amount: Int64?, approximate: Bool, tint: Color) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 8) {
-                Text(subtitle ?? "Your balance")
-                    .font(.splitEyebrow)
-                    .foregroundStyle(Palette.lime.opacity(0.72))
-                Spacer(minLength: 8)
-                if !compact {
-                    Image(systemName: "equal.circle.fill")
-                        .font(.system(size: 22, weight: .light))
-                        .foregroundStyle(Palette.lime.opacity(0.32))
-                        .accessibilityHidden(true)
-                }
-            }
-            if net.isEmpty {
-                Text("All settled")
-                    .font(.splitDisplay(compact ? 30 : 40))
-                    .foregroundStyle(Palette.lime)
-            } else {
-                ForEach(net) { total in
-                    Text(Money.text(total.amount, total.currency, signed: true))
-                        .font(.splitDisplay(compact ? (net.count > 1 ? 24 : 30) : (net.count > 1 ? 30 : 38), weight: .bold))
-                        .foregroundStyle(total.amount < 0 ? Color(red: 1, green: 0.72, blue: 0.60) : Palette.lime)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.6)
-                        .contentTransition(.numericText())
-                }
-            }
+            Text(title).font(.subheadline).foregroundStyle(Palette.onHero.opacity(0.75))
+            Text(amount.map { balanceText($0, currency: fx.home, approximate: approximate) } ?? "Unavailable")
+                .font(.headline.monospacedDigit())
+                .foregroundStyle(tint)
+                .contentTransition(.numericText())
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
     }
 
-    private func heroStat(_ title: String, value: [CurrencyTotal], tint: Color) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(title)
-                .font(.splitEyebrow)
-                .foregroundStyle(Palette.lime.opacity(0.58))
-            if value.isEmpty {
-                Text("—").font(.splitAmount(17)).foregroundStyle(tint.opacity(0.8))
-            } else {
-                ForEach(value) { item in
-                    Text(Money.text(item.amount, item.currency))
-                        .font(.splitAmount(17))
-                        .foregroundStyle(tint)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.7)
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
+    private func balanceText(_ amount: Int64, currency: String, approximate: Bool, signed: Bool = false) -> String {
+        (approximate ? "≈ " : "") + Money.text(amount, currency, signed: signed)
     }
 }
 
@@ -377,7 +290,8 @@ struct Card<Content: View>: View {
         VStack(alignment: .leading, spacing: 0) { content }
             .padding(padding)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .glassSurface(cornerRadius: 18, tint: Palette.card.opacity(0.52))
+            .background(Palette.card, in: RoundedRectangle(cornerRadius: Radius.card))
+            .overlay(RoundedRectangle(cornerRadius: Radius.card).strokeBorder(Palette.line))
     }
 }
 
@@ -424,8 +338,10 @@ struct AmountText: View {
     var currency: String
     var size: CGFloat = 16
     var signed: Bool = false
+    var entry: LedgerEntry? = nil
+    @EnvironmentObject private var fx: FXStore
     var body: some View {
-        Text(Money.text(minor, currency, signed: signed))
+        Text(entry.map { fx.entryText($0, amount: minor, signed: signed) } ?? Money.text(minor, currency, signed: signed))
             .font(.splitAmount(size))
             .foregroundStyle(signed && minor < 0 ? Palette.negative : Palette.ink)
             .lineLimit(1)
@@ -481,47 +397,16 @@ struct PersonBalanceRow: View {
     var person: PersonBalance
     var showsChevron: Bool = true
     @EnvironmentObject private var fx: FXStore
-    private var approx: Int64? {
-        let open = person.amounts.filter { $0.value != 0 }
-        guard open.keys.contains(where: { $0 != fx.display }) else { return nil }
-        let result = fx.total(open, in: fx.display)
-        return result.missing.isEmpty ? result.amount : nil
-    }
     var body: some View {
         HStack(spacing: 12) {
             Avatar(name: person.name, size: 42)
             VStack(alignment: .leading, spacing: 3) {
                 Text(person.name).font(.subheadline.weight(.semibold)).foregroundStyle(Palette.ink)
-                if person.currencies.count > 1 {
-                    Text("\(person.currencies.count) currencies · \(person.groupIDs.count) \(person.groupIDs.count == 1 ? "group" : "groups")")
-                        .font(.caption).foregroundStyle(.secondary)
-                } else {
-                    Text("\(person.groupIDs.count) shared \(person.groupIDs.count == 1 ? "group" : "groups")")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+                Text("\(person.groupIDs.count) shared \(person.groupIDs.count == 1 ? "group" : "groups")")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             Spacer(minLength: 8)
-            VStack(alignment: .trailing, spacing: 2) {
-                ForEach(person.currencies, id: \.self) { currency in
-                    let amount = person.amount(currency)
-                    Text(Money.text(abs(amount), currency))
-                        .font(.splitAmount(15))
-                        .foregroundStyle(amount < 0 ? Palette.negative : Palette.positive)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.7)
-                    Text(amount < 0 ? "you owe" : "owes you")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-                if let approx, person.currencies.count > 1 || person.currencies.first != fx.display {
-                    Text("≈ " + Money.text(abs(approx), fx.display))
-                        .font(.caption2.monospacedDigit())
-                        .foregroundStyle(.tertiary)
-                        .lineLimit(1)
-                        .accessibilityLabel("About \(Money.text(abs(approx), fx.display)) in total")
-                }
-            }
+            BalanceLabel(amounts: person.amounts, positive: "owes you", negative: "you owe")
             .layoutPriority(1)
             if showsChevron {
                 Image(systemName: "chevron.right").font(.caption2.weight(.bold)).foregroundStyle(.tertiary)
@@ -533,6 +418,7 @@ struct PersonBalanceRow: View {
 }
 
 struct EntryRow: View {
+    @EnvironmentObject private var fx: FXStore
     var entry: LedgerEntry
     var group: ExpenseGroup
     var currentUserID: String?
@@ -599,7 +485,7 @@ struct EntryRow: View {
 
     @ViewBuilder private var openLine: some View {
         if let bill = entry.bill, bill.openCount > 0 {
-            Text("\(bill.openCount) open \(bill.openCount == 1 ? "purchase" : "purchases") · \(Money.text(bill.openTotal, entry.currency))")
+            Text("\(bill.openCount) open \(bill.openCount == 1 ? "purchase" : "purchases") · \(fx.entryText(entry, amount: bill.openTotal))")
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(Palette.amber)
         }
@@ -622,8 +508,12 @@ struct EntryRow: View {
     }
 
     @ViewBuilder private var netLine: some View {
-        if entry.kind == "expense" && mine != 0 {
-            Text(mine > 0 ? "you lent \(Money.text(mine, entry.currency))" : "you owe \(Money.text(abs(mine), entry.currency))")
+        if entry.isHandled {
+            Label("Handled", systemImage: "checkmark.circle")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(Palette.positive)
+        } else if entry.kind == "expense" && mine != 0 {
+            Text(mine > 0 ? "you lent \(fx.entryText(entry, amount: mine))" : "you owe \(fx.entryText(entry, amount: abs(mine)))")
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(mine > 0 ? Palette.positive : Palette.negative)
                 .lineLimit(2)
@@ -640,7 +530,7 @@ struct EntryRow: View {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     titleView
                     Spacer(minLength: 4)
-                    AmountText(minor: entry.amount, currency: entry.currency, size: 15)
+                    AmountText(minor: entry.amount, currency: entry.currency, size: 15, entry: entry)
                         .layoutPriority(1)
                 }
                 metaLine
@@ -664,7 +554,7 @@ struct EntryRow: View {
             }
             Spacer(minLength: 6)
             VStack(alignment: .trailing, spacing: 3) {
-                AmountText(minor: entry.amount, currency: entry.currency, size: 15)
+                AmountText(minor: entry.amount, currency: entry.currency, size: 15, entry: entry)
                 netLine
                     .multilineTextAlignment(.trailing)
             }
@@ -708,29 +598,8 @@ struct GroupCard: View {
         .accessibilityElement(children: .combine)
     }
 
-    @ViewBuilder private var groupBalances: some View {
-        if summary.isSettled {
-            Text("Settled up")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(Palette.evergreen)
-        } else {
-            ForEach(summary.currencies, id: \.self) { currency in
-                let amount = summary.mine[currency] ?? 0
-                if amount != 0 {
-                    HStack(spacing: 4) {
-                        Text(Money.text(abs(amount), currency))
-                            .font(.splitAmount(summary.currencies.count > 1 ? 16 : 19))
-                            .foregroundStyle(amount > 0 ? Palette.positive : Palette.negative)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.7)
-                        Text(amount > 0 ? "you’re owed" : "you owe")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
-                }
-            }
-        }
+    private var groupBalances: some View {
+        BalanceLabel(amounts: summary.mine, positive: "you’re owed", negative: "you owe", alignment: .leading)
     }
 
     @ViewBuilder private var groupEntryCount: some View {
@@ -795,46 +664,37 @@ struct FlowLayout: Layout {
         return subview.sizeThatFits(ProposedViewSize(width: maxWidth, height: nil))
     }
 
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let maxWidth = proposal.width ?? .infinity
+    private func arrange(_ subviews: Subviews, width: CGFloat) -> (CGSize, [CGRect]) {
         let rowGap = lineSpacing ?? spacing
-        var width: CGFloat = 0
-        var height: CGFloat = 0
-        var rowWidth: CGFloat = 0
+        var frames: [CGRect] = []
+        var x: CGFloat = 0
+        var y: CGFloat = 0
         var rowHeight: CGFloat = 0
+        var usedWidth: CGFloat = 0
         for subview in subviews {
-            let size = measure(subview, maxWidth: maxWidth)
-            if rowWidth > 0, rowWidth + spacing + size.width > maxWidth {
-                width = max(width, rowWidth)
-                height += rowHeight + rowGap
-                rowWidth = size.width
-                rowHeight = size.height
-            } else {
-                rowWidth += (rowWidth == 0 ? 0 : spacing) + size.width
-                rowHeight = max(rowHeight, size.height)
-            }
-        }
-        width = max(width, rowWidth)
-        height += rowHeight
-        return CGSize(width: width, height: height)
-    }
-
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        let rowGap = lineSpacing ?? spacing
-        var x = bounds.minX
-        var y = bounds.minY
-        var rowHeight: CGFloat = 0
-        for subview in subviews {
-            let size = measure(subview, maxWidth: bounds.width)
-            if x > bounds.minX, x + size.width > bounds.maxX {
-                x = bounds.minX
+            let size = measure(subview, maxWidth: width)
+            if x > 0, x + size.width > width {
+                x = 0
                 y += rowHeight + rowGap
                 rowHeight = 0
             }
-            subview.place(at: CGPoint(x: x, y: y), anchor: .topLeading,
-                          proposal: ProposedViewSize(width: size.width, height: size.height))
+            frames.append(CGRect(origin: CGPoint(x: x, y: y), size: size))
+            usedWidth = max(usedWidth, x + size.width)
             x += size.width + spacing
             rowHeight = max(rowHeight, size.height)
+        }
+        return (CGSize(width: usedWidth, height: y + rowHeight), frames)
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        arrange(subviews, width: proposal.width ?? .infinity).0
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let (_, frames) = arrange(subviews, width: proposal.width ?? .infinity)
+        for (subview, frame) in zip(subviews, frames) {
+            subview.place(at: CGPoint(x: bounds.minX + frame.minX, y: bounds.minY + frame.minY),
+                          anchor: .topLeading, proposal: ProposedViewSize(frame.size))
         }
     }
 }
@@ -918,9 +778,11 @@ extension View {
 }
 
 struct ReceiptSummaryRail: View {
+    @EnvironmentObject private var fx: FXStore
     var bill: ReceiptBill
     var currency: String
     var openLabel: String = "unassigned"
+    var entry: LedgerEntry? = nil
 
     var body: some View {
         let open = bill.openCount
@@ -936,7 +798,7 @@ struct ReceiptSummaryRail: View {
         pill(open == 0 ? "All assigned" : "\(open) \(openLabel)",
              symbol: open == 0 ? "checkmark.circle.fill" : "circle.dashed",
              tint: open == 0 ? Palette.positive : Palette.amber)
-        pill(Money.text(bill.total, currency), symbol: "sum", tint: Palette.ink, strong: true)
+        pill(entry.map { fx.entryText($0) } ?? Money.text(bill.total, currency), symbol: "sum", tint: Palette.ink, strong: true)
     }
 
     private func pill(_ text: String, symbol: String, tint: Color, strong: Bool = false) -> some View {

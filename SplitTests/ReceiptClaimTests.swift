@@ -58,6 +58,83 @@ final class ReceiptClaimTests: XCTestCase {
         XCTAssertEqual(try receipt.split(payer: "a"), [Portion(memberID: "a", amount: 501), Portion(memberID: "b", amount: 500)])
     }
 
+    func testFractionalClaimsAndHistoricalWeightsKeepEveryCent() throws {
+        let data = Data("""
+        {"items":[
+          {"id":"one","title":"Pizza","amount":1001,"memberIDs":["a","b"],"shares":{"b":50}},
+          {"id":"two","title":"Wine","amount":1001,"memberIDs":["a","b"],"roundingSeats":["a","a","b"],"roundingWeights":[100,50,100]}
+        ],"tax":0,"tip":0,"closed":false}
+        """.utf8)
+        let receipt = try JSONDecoder().decode(ReceiptBill.self, from: data)
+        let split = try receipt.split(payer: "a")
+
+        XCTAssertEqual(split, [
+            Portion(memberID: "a", amount: 1268),
+            Portion(memberID: "b", amount: 734),
+        ])
+        XCTAssertEqual(split.reduce(0) { $0 + $1.amount }, receipt.total)
+        let encoded = try JSONEncoder().encode(receipt)
+        XCTAssertEqual(try JSONDecoder().decode(ReceiptBill.self, from: encoded), receipt)
+    }
+
+    func testReceiptDraftsRoundTripAndOlderCacheStillDecodes() throws {
+        let legacy = Data(#"{"snapshot":{"groups":[],"entries":[]},"outbox":[]}"#.utf8)
+        var state = try JSONDecoder().decode(DiskState.self, from: legacy)
+        XCTAssertNil(state.receiptDrafts)
+        let photo = ReceiptPhoto(data: Data([1, 2, 3]))
+        let draft = ReceiptDraft(groupID: "trip", title: "Dinner", photos: [photo])
+        state.receiptDrafts = [draft]
+
+        let encoded = try JSONEncoder().encode(state)
+        let decoded = try JSONDecoder().decode(DiskState.self, from: encoded)
+        let restored = try XCTUnwrap(decoded.receiptDrafts?.first)
+        XCTAssertEqual(restored.id, draft.id)
+        XCTAssertEqual(restored.groupID, "trip")
+        XCTAssertEqual(restored.title, "Dinner")
+        XCTAssertEqual(restored.capturedAt, draft.capturedAt)
+        XCTAssertEqual(restored.photos.first?.id, photo.id)
+        XCTAssertEqual(restored.photos.first?.data, photo.data)
+    }
+
+    @MainActor
+    func testSavedReceiptDraftBecomesAnExpenseWithTheSamePhoto() async throws {
+        let store = ExpenseStore()
+        await store.activate(userID: "demo-user", demo: true)
+        let group = try XCTUnwrap(store.groups.first)
+        let payer = try XCTUnwrap(group.members.first)
+        let photo = ReceiptPhoto(data: Data([1, 2, 3]))
+        var draft = ReceiptDraft(groupID: group.id, title: "Dinner", photos: [photo])
+        try store.saveReceiptDraft(draft)
+
+        draft.title = "Dinner at Don Julio"
+        try store.saveReceiptDraft(draft)
+        let restored = try XCTUnwrap(store.receiptDrafts(in: group.id).first)
+        XCTAssertEqual(store.receiptDrafts(in: group.id).count, 1)
+        XCTAssertEqual(restored.title, draft.title)
+
+        let entry = LedgerEntry(id: restored.id, groupID: group.id, title: restored.title, amount: 9900,
+                                currency: group.currency, paidBy: payer.id,
+                                splits: [Portion(memberID: payer.id, amount: 9900)])
+        try await store.saveReceipted(entry, original: nil, photos: restored.photos)
+        try store.removeReceiptDraft(restored.id)
+
+        XCTAssertTrue(store.receiptDrafts(in: group.id).isEmpty)
+        XCTAssertEqual(store.entries(in: group).first { $0.id == restored.id }?.receiptIDs, [photo.id])
+        let savedPhoto = try await store.image(entry: entry.id, id: photo.id)
+        XCTAssertEqual(savedPhoto, photo.data)
+    }
+
+    func testHandledExpenseKeepsPayerAndSharesOutOfNetBalance() {
+        var expense = LedgerEntry(groupID: "roommates", title: "Airbnb", amount: 1201, currency: "USD",
+                                  paidBy: "payer", splits: [Portion(memberID: "guest", amount: 1201)])
+        XCTAssertEqual(Ledger.balances([expense], currency: "USD"), ["payer": 1201, "guest": -1201])
+        expense.handled = true
+        XCTAssertEqual(Ledger.balances([expense], currency: "USD"), [:])
+        XCTAssertEqual(Ledger.net(expense, for: "guest"), 0)
+        XCTAssertEqual(Ledger.paid(expense, by: "payer"), 1201)
+        XCTAssertEqual(Ledger.share(expense, of: "guest"), 1201)
+    }
+
     func testSharesAndPercentModesUseLargestRemainder() throws {
         XCTAssertEqual(try Ledger.split(total: 10001, people: ["a", "b", "c"], mode: .shares, values: ["a": "2", "b": "1", "c": "1"]).map(\.amount), [5001, 2500, 2500])
         XCTAssertEqual(try Ledger.split(total: 100, people: ["a", "b", "c"], mode: .percent, values: ["a": "33.33", "b": "33.33", "c": "33.34"]).map(\.amount), [33, 33, 34])

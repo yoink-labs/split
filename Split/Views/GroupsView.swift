@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct GroupsView: View {
+    @EnvironmentObject private var fx: FXStore
     @EnvironmentObject private var store: ExpenseStore
     @Environment(\.horizontalSizeClass) private var size
     @State private var selection: String?
@@ -140,23 +141,12 @@ struct GroupsView: View {
 
     private func accessibility(_ summary: GroupSummary) -> String {
         if summary.isSettled { return "\(summary.group.name), settled up" }
-        let amounts = summary.currencies.compactMap { currency -> String? in
-            let value = summary.mine[currency] ?? 0
-            guard value != 0 else { return nil }
-            return (value > 0 ? "you are owed " : "you owe ") + Money.text(abs(value), currency)
-        }.joined(separator: ", ")
-        return "\(summary.group.name), \(amounts)"
+        return "\(summary.group.name), net balance \(fx.homeTotalText(summary.mine, signed: true))"
     }
 }
 
 struct GroupSidebarRow: View {
     var summary: GroupSummary
-    private var balances: [(String, Int64)] {
-        summary.currencies.compactMap { currency in
-            let amount = summary.mine[currency] ?? 0
-            return amount == 0 ? nil : (currency, amount)
-        }
-    }
     private var kind: String {
         summary.group.kind == "trip" ? "Trip" : summary.group.kind == "home" ? "Home" : "Group"
     }
@@ -203,20 +193,7 @@ struct GroupSidebarRow: View {
     }
 
     private func balance(alignment: HorizontalAlignment) -> some View {
-        VStack(alignment: alignment, spacing: 2) {
-            if let first = balances.first {
-                BalanceLabel(amount: first.1, currency: first.0, positive: "you’re owed", negative: "you owe", alignment: alignment)
-                if balances.count > 1 {
-                    Text("+\(balances.count - 1) more")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            } else {
-                Text("Settled up")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(Palette.evergreen)
-            }
-        }
+        BalanceLabel(amounts: summary.mine, positive: "you’re owed", negative: "you owe", alignment: alignment)
     }
 }
 

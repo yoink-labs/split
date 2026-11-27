@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct FriendsView: View {
+    @EnvironmentObject private var fx: FXStore
     @EnvironmentObject private var store: ExpenseStore
     @Environment(\.horizontalSizeClass) private var size
     @State private var selection: String?
@@ -72,22 +73,12 @@ struct FriendsView: View {
 
     private func accessibility(_ person: PersonBalance) -> String {
         guard person.hasBalance else { return "\(person.name), settled up" }
-        let amounts = person.currencies.map { currency in
-            let value = person.amount(currency)
-            return (value > 0 ? "they owe you " : "you owe them ") + Money.text(abs(value), currency)
-        }.joined(separator: ", ")
-        return "\(person.name), \(amounts)"
+        return "\(person.name), net balance \(fx.homeTotalText(person.amounts, signed: true))"
     }
 }
 
 struct FriendSidebarRow: View {
     var person: PersonBalance
-    private var balances: [(String, Int64)] {
-        person.currencies.compactMap { currency in
-            let amount = person.amount(currency)
-            return amount == 0 ? nil : (currency, amount)
-        }
-    }
     var body: some View {
         HStack(alignment: .center, spacing: Spacing.s) {
             Avatar(name: person.name, size: 40)
@@ -102,20 +93,7 @@ struct FriendSidebarRow: View {
                     .lineLimit(1)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            VStack(alignment: .trailing, spacing: 2) {
-                if balances.isEmpty {
-                    Text("Settled up")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(Palette.evergreen)
-                } else {
-                    BalanceLabel(amount: balances[0].1, currency: balances[0].0, positive: "owes you", negative: "you owe")
-                    if balances.count > 1 {
-                        Text("+\(balances.count - 1) more")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
+            BalanceLabel(amounts: person.amounts, positive: "owes you", negative: "you owe")
             .layoutPriority(1)
             Image(systemName: "chevron.right")
                 .font(.footnote.weight(.semibold))
@@ -129,6 +107,7 @@ struct FriendSidebarRow: View {
 }
 
 private struct FriendHistoryRow: View {
+    @EnvironmentObject private var fx: FXStore
     var entry: LedgerEntry
     var group: ExpenseGroup
     var currentUserID: String?
@@ -155,9 +134,9 @@ private struct FriendHistoryRow: View {
             }
             Spacer(minLength: 6)
             VStack(alignment: .trailing, spacing: 2) {
-                AmountText(minor: entry.amount, currency: entry.currency, size: 14)
+                AmountText(minor: entry.amount, currency: entry.currency, size: 14, entry: entry)
                 if entry.kind == "expense" && net != 0 {
-                    Text(net > 0 ? "you lent \(Money.text(net, entry.currency))" : "you owe \(Money.text(abs(net), entry.currency))")
+                    Text(net > 0 ? "you lent \(fx.entryText(entry, amount: net))" : "you owe \(fx.entryText(entry, amount: abs(net)))")
                         .font(.caption2.weight(.semibold))
                         .foregroundStyle(net > 0 ? Palette.positive : Palette.negative)
                         .lineLimit(2)
@@ -258,28 +237,7 @@ struct FriendDetail: View {
                     }
                     Spacer(minLength: 0)
                 }
-                if person.hasBalance {
-                    FlowLayout(spacing: 18, lineSpacing: 8) {
-                        ForEach(person.currencies, id: \.self) { currency in
-                            let amount = person.amount(currency)
-                            if amount != 0 {
-                                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                                    Text(Money.text(abs(amount), currency))
-                                        .font(.splitAmount(person.currencies.count > 1 ? 20 : 26, weight: .bold))
-                                        .foregroundStyle(amount > 0 ? Palette.lime : Color(red: 1, green: 0.72, blue: 0.60))
-                                        .contentTransition(.numericText())
-                                    Text(amount > 0 ? "owes you" : "you owe")
-                                        .font(.caption.weight(.medium)).foregroundStyle(Palette.onHero.opacity(0.65))
-                                }
-                                .accessibilityElement(children: .combine)
-                            }
-                        }
-                    }
-                } else {
-                    Label("Settled up", systemImage: "checkmark.circle.fill")
-                        .font(.headline)
-                        .foregroundStyle(Palette.lime)
-                }
+                HeroBalances(balances: person.currencies.map { ($0, person.amount($0)) }, positive: "owes you", negative: "you owe")
             }
             .padding(18)
             .background(

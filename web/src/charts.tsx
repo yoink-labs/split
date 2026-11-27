@@ -1,3 +1,4 @@
+import { useHomeMoney } from "./homeMoney";
 import { useState } from "react";
 import { categoryMeta } from "./categories";
 import {
@@ -296,6 +297,7 @@ export function MoneyFlowGraph({
   entries: Expense[];
   currency: string;
 }) {
+  const homeMoney = useHomeMoney();
   const [mode, setMode] = useState<"simplified" | "raw">("simplified");
   const net = balances(entries, currency);
   const simplified = simplify(net);
@@ -399,7 +401,7 @@ export function MoneyFlowGraph({
                   fontSize="11"
                   fontWeight="700"
                 >
-                  {moneyCompact(e.amount, currency)}
+                  {homeMoney.totalText({ [currency]: e.amount })}
                 </text>
               </g>
             );
@@ -419,7 +421,7 @@ export function MoneyFlowGraph({
                   {memberName(g, m.id).split(" ")[0]}
                 </text>
                 <text y="51" textAnchor="middle" fill={b > 0 ? "var(--pos)" : b < 0 ? "var(--neg)" : "var(--muted)"} fontSize="10.5" fontWeight="600">
-                  {b === 0 ? "settled" : (b > 0 ? "+" : "−") + moneyCompact(Math.abs(b), currency)}
+                  {b === 0 ? "settled" : (b > 0 ? "+" : "−") + homeMoney.totalText({ [currency]: Math.abs(b) })}
                 </text>
               </g>
             );

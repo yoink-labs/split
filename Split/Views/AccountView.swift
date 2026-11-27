@@ -240,7 +240,7 @@ struct AccountView: View {
                     settingsRow(
                         icon: "banknote",
                         title: "Home currency",
-                        subtitle: "New groups and approximate totals"
+                        subtitle: "Display currency for expenses and balances"
                     ) {
                         Picker("Home currency", selection: $fx.home) {
                             ForEach(Money.currencies, id: \.self) { code in

@@ -20,7 +20,8 @@ export async function generateRecurring(db:D1Database,today:string) {
     const id='repeat-'+row.due+'-'+row.entry_id;
     // Hash long client IDs to keep generated entries within the regular ID contract.
     const key=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(id))),b=>b.toString(16).padStart(2,'0')).join('');
-    const e={...original,id:key,createdAt:row.due+'T12:00:00Z'};
+    const {handled: _handled,...futureExpense}=original;
+    const e={...futureExpense,id:key,createdAt:row.due+'T12:00:00Z'};
     const where='entry_id=? AND due=? AND cadence=? AND EXISTS(SELECT 1 FROM entries WHERE id=entry_id AND payload=?)';
     const guard=[row.entry_id,row.due,row.cadence,row.payload];
     await db.batch([

@@ -1,3 +1,4 @@
+import { preserveStatementAmount } from './exchange';
 import {groupTools,generateRecurring} from './groupTools';
 import { purchaseRoute, attachments } from './receipts';
 import { optionalDescription, socialRoute } from './social';
@@ -77,6 +78,22 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
       visible=(await env.DB.prepare(`SELECT m.id,m.group_id AS groupID,m.user_id AS userID,m.name,(SELECT details FROM payment_profiles WHERE member_id=m.id) AS payment FROM members m
         JOIN members viewer ON viewer.group_id=m.group_id WHERE viewer.user_id=? ORDER BY m.rowid`).bind(userID).all<Member>()).results;
     }
+    const tripRates=new Map<string,Record<string,number>>();
+    if(groups.some(g=>g.kind==='trip')) {
+      try {
+        const rows=(await env.DB.prepare(`SELECT r.group_id,r.currency,r.rate_e8 FROM trip_exchange_rates r
+          JOIN members m ON m.group_id=r.group_id WHERE m.user_id=?`).bind(userID)
+          .all<{group_id:string;currency:string;rate_e8:number}>()).results;
+        for(const row of rows) {
+          const rates=tripRates.get(row.group_id)??{};
+          rates[row.currency]=row.rate_e8;
+          tripRates.set(row.group_id,rates);
+        }
+      } catch (err) {
+        // During rollout the ledger should still load before migration 0016 is applied.
+        if(!String(err).includes('no such table: trip_exchange_rates')) throw err;
+      }
+    }
     const all=groups.map(({weights,simplify,archivedAt,description,startDate,endDate,...g})=>{
       const roster=visible.filter(m=>m.groupID===g.id && !aliases.has(m.id));
       const active=new Set(roster.filter(m=>!m.removedAt).map(m=>m.id));
@@ -88,6 +105,7 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
       return {...g,simplify:Boolean(simplify),archived:Boolean(archivedAt),
         ...(description?{description}:{}),...(startDate?{startDate}:{}),...(endDate?{endDate}:{}),
         defaultWeights:defaults,
+        ...(tripRates.has(g.id)?{tripRates:tripRates.get(g.id)}:{}),
         members:roster.map(({payment,removedAt,avatarURL,...m})=>({
           ...m,
           payment:JSON.parse(payment??'{}'),
@@ -220,7 +238,7 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
     let payload: string | undefined;
     if (!deleting) {
       if (old.kind==='settlement') throw new InputError('Payments cannot be edited.');
-      const updated=validateEntry(b.entry,ids,canonical.bill);
+      const updated=validateEntry(preserveStatementAmount(b.entry,canonical),ids,canonical.bill);
       if(updated.id!==revise[1] || updated.groupID!==saved.group_id || updated.createdAt!==old.createdAt || updated.kind!==old.kind)
         throw new InputError('Invalid edit.');
       if(Boolean(updated.handled)!==Boolean(canonical.handled)) {
@@ -240,7 +258,7 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
     }
     const conditional=!deleting || b.original!==undefined;
     if (conditional) {
-      const original=validateEntry(b.original,ids,canonical.bill);
+      const original=validateEntry(preserveStatementAmount(b.original,canonical),ids,canonical.bill);
       if (JSON.stringify(original)!==JSON.stringify(canonical)) throw new HTTPError(409,'This entry changed. Refresh and try again.');
     }
     const statement=deleting

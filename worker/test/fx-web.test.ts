@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { convert, decodeQuote, FxCache, inverse, quoteURL, rateE8, rateText, sourceLabel, type Fetcher } from '../src/fx';
+import { convert, decodeQuote, FxCache, impliedRate, inverse, quoteURL, rateE8, rateText, sourceLabel, type Fetcher } from '../src/fx';
 
 function memory() {
   const map = new Map<string, string>();
@@ -25,6 +25,10 @@ describe('conversion math', () => {
     expect(convert(100_000_000_000, 1_000_000_000_000)).toBe(1_000_000_000_000_000);
     expect(() => convert(100_000_000_000, 1_000_000_000_000_000)).toThrow('too large'); // no float overflow or drift
     expect(() => convert(1, 0)).toThrow();
+    expect(convert(1234, 15_000_000_000, 2, 0)).toBe(1851); // USD 12.34 → JPY 1,851
+    expect(convert(1851, 666_667, 0, 2)).toBe(1234);
+    expect(impliedRate(1234, 1851, 2, 0)).toBe(15_000_000_000);
+    expect(impliedRate(0, 100)).toBeNull();
   });
   it('parses decimal rates without floating point and formats them', () => {
     expect(rateE8('1200')).toBe(120_000_000_000);
@@ -41,12 +45,14 @@ describe('conversion math', () => {
     expect(rateText(90_344_000)).toBe('0.90344');
     expect(rateText(110_730_000)).toBe('1.1073');
     expect(rateText(64_433)).toBe('0.000644');
+    expect(rateText(123)).toBe('0.00000123');
     expect(sourceLabel({ source: 'Frankfurter', date: '2026-11-18' })).toBe('Frankfurter · ECB, Nov 18');
     expect(sourceLabel({ source: 'BCRA', date: '2026-11-13' })).toBe('BCRA official, Nov 13');
   });
   it('uses BCRA for ARS and ECB otherwise', () => {
     expect(quoteURL('USD', 'ARS', '2026-11-15')).toBe('https://api.frankfurter.dev/v2/rate/USD/ARS?date=2026-11-15&providers=bcra');
     expect(quoteURL('EUR', 'GBP')).toBe('https://api.frankfurter.dev/v2/rate/EUR/GBP?providers=ecb');
+    expect(quoteURL('USD', 'AED')).toBe('https://api.frankfurter.dev/v2/rate/USD/AED');
   });
 });
 
@@ -58,7 +64,7 @@ describe('dates and caching', () => {
     expect(decodeQuote({ ...friday, quote: 'EUR' }, 'USD', 'ARS', '2026-11-15', 0)).toBeNull();
     expect(decodeQuote({ status: 404, message: 'not found' }, 'USD', 'ARS', undefined, 0)).toBeNull();
   });
-  it('fetches the dated rate for a past expense and falls back to an older cached rate offline', async () => {
+  it('prefers the dated rate and falls back to the latest available rate', async () => {
     let now = Date.parse('2026-11-18T12:00:00Z');
     const log: string[] = [];
     const responses: Record<string, unknown> = {
@@ -69,9 +75,26 @@ describe('dates and caching', () => {
     expect((await cache.forDate('USD', 'ARS', '2026-11-15', '2026-11-18')).date).toBe('2026-11-13');
     expect((await cache.forDate('USD', 'ARS', '2026-11-18', '2026-11-18')).rateE8).toBe(155_200_000_000);
     responses['USD/ARS?date=2026-11-17'] = 'offline';
-    expect((await cache.forDate('USD', 'ARS', '2026-11-17', '2026-11-18')).date).toBe('2026-11-17');
+    expect(await cache.forDate('USD', 'ARS', '2026-11-10', '2026-11-18'))
+      .toMatchObject({ date: '2026-11-17', fallback: true });
+    now += 7 * 3600 * 1000;
+    responses['USD/ARS?providers'] = 'offline';
+    expect(await cache.forDate('USD', 'ARS', '2026-11-17', '2026-11-18'))
+      .toMatchObject({ date: '2026-11-17', fallback: true, saved: true });
     expect(cache.offline).toBe(true);
-    await expect(cache.forDate('USD', 'ARS', '2026-11-10', '2026-11-18')).rejects.toThrow('Enter your own rate');
+    await expect(cache.forDate('USD', 'AED', '2026-11-10', '2026-11-18')).rejects.toThrow('Enter your own rate');
+  });
+  it('tries the blended rate when a preferred central bank has no quote', async () => {
+    const log: string[] = [];
+    const cache = new FxCache(memory(), () => 0, async (url) => {
+      log.push(url);
+      return {
+        ok: !url.includes('providers'),
+        json: async () => ({ date: '2026-11-17', base: 'ARS', quote: 'JPY', rate: 0.12 }),
+      };
+    });
+    expect(await cache.latest('ARS', 'JPY')).toMatchObject({ source: 'Frankfurter blended', rateE8: 12_000_000 });
+    expect(log).toHaveLength(2);
   });
   it('reuses fresh rates for six hours, persists them, and serves cached rates offline', async () => {
     let now = 1_000_000;

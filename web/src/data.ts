@@ -48,6 +48,7 @@ export interface Group {
   archived?: boolean;
   members: Person[];
   defaultWeights?: Record<string, number>;
+  tripRates?: Record<string, number>;
 }
 
 export interface Snapshot {

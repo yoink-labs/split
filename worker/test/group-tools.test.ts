@@ -35,6 +35,87 @@ describe('Group tools',()=>{
     expect(Object.values(balances([expense],'ARS')).reduce((a,b)=>a+b)).toBe(0);
     await expect(call('/v1/entries',{...expense,id:'wrong-fx',exchange:{...fx,target:'GBP'}})).rejects.toThrow('group settlement');
   });
+  it('shares rates only inside the trip and leaves saved expense rates frozen',async()=>{
+    const tripID='trip-rates', seat='trip-seat';
+    await call('/v1/groups',{id:tripID,name:'Trip',kind:'trip',currency:'USD',members:[{id:seat,name:'Alex',userID:'owner'}]});
+    const tripPath='/v1/groups/'+tripID+'/trip-rate';
+    const rate={currency:'JPY',target:'USD',rateE8:700_000};
+    await expect(call(tripPath,rate,'stranger')).rejects.toThrow('Join');
+    await expect(call(path+'trip-rate',rate)).rejects.toThrow('Only active trip members');
+    await expect(call(tripPath,{...rate,currency:'USD',rateE8:1})).rejects.toThrow('foreign currency');
+    await expect(call(tripPath,{...rate,rateE8:0})).rejects.toThrow('valid rate');
+    await call(tripPath,rate);
+    let snap=await call('/v1/snapshot');
+    expect(snap.groups.find((g:any)=>g.id===tripID).tripRates).toEqual({JPY:700_000});
+    expect((await call('/v1/snapshot',undefined,'stranger')).groups).toEqual([]);
+
+    const expense={...entry,id:'trip-expense',groupID:tripID,paidBy:seat,currency:'JPY',splits:[{memberID:seat,amount:1000}],
+      exchange:{target:'USD',rateE8:700_000,date:'2025-01-31',source:'Trip'}};
+    await call('/v1/entries',expense);
+    await call(tripPath,{...rate,rateE8:800_000});
+    snap=await call('/v1/snapshot');
+    expect(snap.entries.find((e:Entry)=>e.id===expense.id).exchange.rateE8).toBe(700_000);
+    await env.DB.prepare("UPDATE members SET removed_at='2025-02-01' WHERE id=?").bind(seat).run();
+    await expect(call(tripPath,{...rate,rateE8:null})).rejects.toThrow('Only active trip members');
+    await env.DB.prepare('UPDATE members SET removed_at=NULL WHERE id=?').bind(seat).run();
+    await call(tripPath,{...rate,rateE8:null});
+    expect((await call('/v1/snapshot')).groups.find((g:any)=>g.id===tripID).tripRates).toBeUndefined();
+  });
+  it('clears trip rates when the settlement currency changes and rejects stale settings',async()=>{
+    const tripID='change-currency-trip', tripPath='/v1/groups/'+tripID+'/';
+    await call('/v1/groups',{id:tripID,name:'Trip',kind:'trip',currency:'USD',members:[{id:'currency-seat',name:'Alex',userID:'owner'}]});
+    const rate={currency:'JPY',target:'USD',rateE8:700_000};
+    await call(tripPath+'trip-rate',rate);
+    await call(tripPath+'update',{name:'Renamed trip'});
+    let snapshot=await call('/v1/snapshot');
+    expect(snapshot.groups.find((g:any)=>g.id===tripID).tripRates).toEqual({JPY:700_000});
+
+    await call(tripPath+'update',{currency:'EUR'});
+    snapshot=await call('/v1/snapshot');
+    const trip=snapshot.groups.find((g:any)=>g.id===tripID);
+    expect(trip.currency).toBe('EUR');
+    expect(trip.tripRates).toBeUndefined();
+    await expect(call(tripPath+'trip-rate',rate)).rejects.toThrow('trip currency changed');
+    await call(tripPath+'trip-rate',{...rate,target:'EUR'});
+    expect((await call('/v1/snapshot')).groups.find((g:any)=>g.id===tripID).tripRates).toEqual({JPY:700_000});
+  });
+  it('loads trip snapshots before the migration is applied',async()=>{
+    const tripID='before-migration';
+    await call('/v1/groups',{id:tripID,name:'Trip',kind:'trip',currency:'USD',members:[{id:'migration-seat',name:'Alex',userID:'owner'}]});
+    await env.DB.prepare('ALTER TABLE trip_exchange_rates RENAME TO test_trip_rates').run();
+    try {
+      const trip=(await call('/v1/snapshot')).groups.find((g:any)=>g.id===tripID);
+      expect(trip.currency).toBe('USD');
+      expect(trip.tripRates).toBeUndefined();
+    } finally {
+      await env.DB.prepare('ALTER TABLE test_trip_rates RENAME TO trip_exchange_rates').run();
+    }
+  });
+  it('keeps the exact posted total and accepts a published rate newer than the charge',async()=>{
+    const charge={...entry,id:'statement-charge',currency:'USD',amount:1_000_000_001,
+      splits:[{memberID:owner,amount:500_000_000},{memberID:guest,amount:500_000_001}],
+      exchange:{target:'ARS',rateE8:100_000_000,date:'2025-01-31',source:'Statement',statementAmount:1_000_000_004}};
+    await call('/v1/entries',charge);
+    const saved=(await call('/v1/snapshot')).entries.find((e:Entry)=>e.id===charge.id);
+    expect(saved.exchange.statementAmount).toBe(1_000_000_004);
+    expect(settlementEntry(saved).amount).toBe(1_000_000_004);
+    expect(settlementEntry(saved).splits.map(s=>s.amount)).toEqual([500_000_001,500_000_003]);
+    await call('/v1/entries',{...charge,id:'fallback-charge',exchange:{target:'ARS',rateE8:50_000_000,date:'2025-02-01',source:'Frankfurter blended'}});
+    await expect(call('/v1/entries',{...charge,id:'invalid-statement',exchange:{...charge.exchange,statementAmount:-1}})).rejects.toThrow('statement');
+  });
+  it('preserves a statement total when an older client edits the expense',async()=>{
+    const charge={...entry,id:'legacy-statement',currency:'USD',
+      exchange:{target:'ARS',rateE8:140_000_000,date:'2025-01-31',source:'Statement',statementAmount:1400}};
+    await call('/v1/entries',charge);
+    const {statementAmount: _omitted,...oldExchange}=charge.exchange;
+    const original={...charge,exchange:oldExchange};
+    const editPath='/v1/entries/'+charge.id+'/edit';
+    await call(editPath,{original,entry:{...original,title:'Card lunch'}});
+    const saved=(await call('/v1/snapshot')).entries.find((e:Entry)=>e.id===charge.id);
+    expect(saved.title).toBe('Card lunch');
+    expect(saved.exchange).toEqual(charge.exchange);
+    await expect(call(editPath,{original,entry:{...original,title:'Stale edit'}})).rejects.toThrow('entry changed');
+  });
   it('only updates the signed-in member’s payment profile and validates defaults',async()=>{
     await expect(call(path+'payment-profile',{paypal:'someone'},'stranger')).rejects.toThrow('Join');
     await expect(call(path+'payment-profile',{mercado:'https://example.com/pay'})).rejects.toThrow('handles');

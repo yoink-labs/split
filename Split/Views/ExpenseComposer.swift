@@ -144,7 +144,7 @@ struct AddExpenseView: View {
     }
     private var convertedTotal: Int64? {
         guard let exchange = liveExchange, let total = totalAmount, total > 0,
-              let converted = FXMath.convert(total, rateE8: exchange.rateE8), converted > 0, converted <= Money.maxAmount else { return nil }
+              let converted = exchange.statementAmount ?? FXMath.convert(total, rateE8: exchange.rateE8), converted > 0, converted <= Money.maxAmount else { return nil }
         return converted
     }
     private var splitIssue: String? {
@@ -457,7 +457,7 @@ struct AddExpenseView: View {
                 }
                 HStack(spacing: 8) {
                     if manualRate {
-                        Button { manualRate = false; if quote == nil { Task { await loadRate() } } } label: { Label("Use published rate", systemImage: "arrow.uturn.backward") }
+                        Button { manualRate = false; if quote == nil { Task { await loadRate() } } } label: { Label(quote?.source == "Trip" ? "Use trip rate" : "Use saved or published rate", systemImage: "arrow.uturn.backward") }
                             .buttonStyle(GhostButton())
                     } else {
                         Button {
@@ -467,10 +467,14 @@ struct AddExpenseView: View {
                             .buttonStyle(GhostButton())
                             .accessibilityIdentifier("composer-edit-rate")
                     }
+                    if !manualRate, quote?.source == "Trip" {
+                        Button("Use published rate") { Task { await loadRate(publishedOnly: true) } }
+                            .buttonStyle(GhostButton())
+                    }
                     Spacer(minLength: 0)
                 }
                 if [currency, group.currency].contains("ARS") {
-                    Text("Pesos use the BCRA official rate. Paid at the blue or card rate? Edit the rate.")
+                    Text("Paid at the blue or card rate? Edit the rate.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -479,19 +483,23 @@ struct AddExpenseView: View {
             .task(id: currency + quoteDate) { await loadRate() }
         }
         .sheet(isPresented: $showConverter) {
-            ConverterView(initialAmount: totalAmount, from: currency, to: group.currency)
+            ConverterView(initialAmount: totalAmount, from: currency, to: group.currency, initialDate: Exchange.date(fromDay: quoteDate))
         }
     }
 
     private func rateSource(_ exchange: Exchange) -> String {
+        let date = FXQuote.shortDay(exchange.date)
+        let publication = exchange.date > quoteDate ? "latest available, " + date : date
         switch exchange.source {
         case "Manual": return "your rate"
-        case "BCRA": return "BCRA official, " + FXQuote.shortDay(exchange.date)
-        default: return "Frankfurter, " + FXQuote.shortDay(exchange.date)
+        case "Trip": return "trip rate"
+        case "Statement": return "from statement amount"
+        case "BCRA": return "BCRA official, " + publication
+        default: return "Frankfurter, " + publication
         }
     }
 
-    private func loadRate() async {
+    private func loadRate(publishedOnly: Bool = false) async {
         let base = currency
         guard !base.isEmpty, base != group.currency else { return }
         rateText = ""
@@ -499,7 +507,7 @@ struct AddExpenseView: View {
         rateError = nil
         quoteIsCached = false
         manualRate = false
-        if let original, base == original.currency, let exchange = original.exchange, exchange.target == group.currency {
+        if !publishedOnly, let original, base == original.currency, let exchange = original.exchange, exchange.target == group.currency {
             if exchange.source == "Manual" {
                 manualRate = true
                 rateText = NSDecimalNumber(decimal: exchange.rate).stringValue
@@ -507,6 +515,10 @@ struct AddExpenseView: View {
                 quote = exchange
                 return
             }
+        }
+        if !publishedOnly, !manualRate, let tripRate = group.tripRates?[base] {
+            quote = Exchange(target: group.currency, rateE8: tripRate, date: quoteDate, source: "Trip")
+            return
         }
         do {
             let fetched = try await fx.quote(base: base, target: group.currency, date: quoteDate)

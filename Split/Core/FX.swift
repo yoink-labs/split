@@ -57,7 +57,7 @@ struct FXQuote: Codable, Equatable {
     var rateE8: Int64
     /// The day the rate was published for. A weekend request returns the prior business day.
     var date: String
-    /// "Frankfurter", "BCRA" or "Manual".
+    /// Provider or manual rate source.
     var source: String
     /// When this device fetched it. Used for the cache age and the offline label.
     var fetchedAt: Date
@@ -68,7 +68,7 @@ struct FXQuote: Codable, Equatable {
     var exchange: Exchange { Exchange(target: quote, rateE8: rateE8, date: date, source: source) }
 
     /// "Frankfurter, Nov 18" style source label.
-    var sourceLabel: String { "\(source == "Frankfurter" ? "Frankfurter · ECB" : source == "BCRA" ? "BCRA official" : "Your rate"), \(FXQuote.shortDay(date))" }
+    var sourceLabel: String { "\(source == "Frankfurter" ? "Frankfurter · ECB" : source == "BCRA" ? "BCRA official" : source == "Frankfurter blended" ? "Frankfurter" : "Your rate"), \(FXQuote.shortDay(date))" }
 
     static func shortDay(_ day: String) -> String {
         let input = DateFormatter(); input.locale = Locale(identifier: "en_US_POSIX"); input.timeZone = TimeZone(identifier: "UTC"); input.dateFormat = "yyyy-MM-dd"
@@ -88,17 +88,24 @@ struct FXQuote: Codable, Equatable {
         return FXQuote(base: base, quote: quote, rateE8: units, date: wire.date, source: source, fetchedAt: now)
     }
 
-    /// Frankfurter v2. ARS pairs use the BCRA official rate; others use the ECB reference rate.
-    static func url(base: String, quote: String, date: String?) -> URL {
+    private static let ecbCurrencies = Set("AUD BRL CAD CHF CNY CZK DKK EUR GBP HKD HUF IDR ILS INR ISK JPY KRW MXN MYR NOK NZD PHP PLN RON SEK SGD THB TRY USD ZAR".split(separator: " ").map(String.init))
+
+    static func url(base: String, quote: String, date: String?, source: String? = nil) -> URL {
         var url = URLComponents(string: "https://api.frankfurter.dev/v2/rate/\(base)/\(quote)")!
         var items: [URLQueryItem] = []
         if let date { items.append(URLQueryItem(name: "date", value: date)) }
-        items.append(URLQueryItem(name: "providers", value: [base, quote].contains("ARS") ? "bcra" : "ecb"))
-        url.queryItems = items
+        let provider = source ?? Self.source(base: base, quote: quote)
+        if provider == "BCRA" || provider == "Frankfurter" {
+            items.append(URLQueryItem(name: "providers", value: provider == "BCRA" ? "bcra" : "ecb"))
+        }
+        url.queryItems = items.isEmpty ? nil : items
         return url.url!
     }
 
-    static func source(base: String, quote: String) -> String { [base, quote].contains("ARS") ? "BCRA" : "Frankfurter" }
+    static func source(base: String, quote: String) -> String {
+        if [base, quote].contains("ARS") { return "BCRA" }
+        return ecbCurrencies.contains(base) && ecbCurrencies.contains(quote) ? "Frankfurter" : "Frankfurter blended"
+    }
 }
 
 /// Last known rates on this device, so conversions keep working offline.
@@ -307,33 +314,49 @@ final class FXStore: ObservableObject {
         persist()
     }
 
-    /// A rate for an expense date. Falls back to the cached latest rate when offline.
+    /// Prefer the charge date, then the most recent published rate.
     func quote(base: String, target: String, date: String) async throws -> FXQuote {
         let today = Exchange.localDay(clock())
-        if date < today, let cached = cache.published(base, target, day: date) { return cached }
+        if date < today {
+            if let cached = cache.published(base, target, day: date) { return cached }
+            if let historical = try? await fetchQuote(base: base, quote: target, date: date) {
+                cache.quotes[historical.key + "@" + date] = historical
+                offline = false
+                persist()
+                return historical
+            }
+            try Task.checkCancellation()
+        }
+        if !cache.needsRefresh(base, target, now: clock()), let cached = cache.published(base, target) {
+            return cached
+        }
         do {
-            let fetched = try await fetchQuote(base: base, quote: target, date: date >= today ? nil : date)
-            let key = fetched.key + (date < today ? "@" + date : "")
-            cache.quotes[key] = fetched
-            persist()
+            let latest = try await fetchQuote(base: base, quote: target, date: nil)
+            cache.quotes[latest.key] = latest
             offline = false
-            return fetched
+            persist()
+            return latest
         } catch {
-            if let cached = cache.quotes[FXQuote.key(base, target)], cached.date <= date {
+            if let cached = cache.published(base, target) {
                 offline = true
                 return cached
             }
-            throw LedgerError.invalid("No published rate is available offline. Enter your own rate.")
+            throw LedgerError.invalid("No published rate is available. Enter your own rate.")
         }
     }
 
     private func fetchQuote(base: String, quote: String, date: String?) async throws -> FXQuote {
-        let (data, response) = try await fetcher(FXQuote.url(base: base, quote: quote, date: date))
-        guard (response as? HTTPURLResponse)?.statusCode == 200,
-              let parsed = FXQuote.decode(data, base: base, quote: quote, requested: date, source: FXQuote.source(base: base, quote: quote), now: clock()) else {
-            throw LedgerError.invalid("No published rate for this date. Enter your own rate.")
+        let source = FXQuote.source(base: base, quote: quote)
+        let sources = source == "Frankfurter blended" ? [source] : [source, "Frankfurter blended"]
+        for provider in sources {
+            let url = FXQuote.url(base: base, quote: quote, date: date, source: provider)
+            let (data, response) = try await fetcher(url)
+            if (response as? HTTPURLResponse)?.statusCode == 200,
+               let parsed = FXQuote.decode(data, base: base, quote: quote, requested: date, source: provider, now: clock()) {
+                return parsed
+            }
         }
-        return parsed
+        throw LedgerError.invalid("No published rate is available. Enter your own rate.")
     }
 
     private func persist() {

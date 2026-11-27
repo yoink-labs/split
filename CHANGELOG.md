@@ -14,6 +14,10 @@ is noted next to each release. The CLI is versioned separately with
 
 - Split CLI 0.3.0 creates personal invitations and can set, correct, or clear a placeholder member’s email for verified account linking.
 
+### Changed
+
+- Redesigned the web currency converter with 161 currency codes, charge-date rates with a latest-rate fallback, trip and expense overrides, and a comparison with the amount posted on your statement.
+
 ## [0.9.0] - 2026-11-27
 
 TestFlight build 14.

@@ -4,19 +4,17 @@ import { Form, useLedger, value } from "./context";
 import { CATEGORIES } from "./categories";
 import {
   allocate,
-  currencies,
   entryPayers,
   itemSplit,
   minor,
   moneyCompact,
   receiptPhoto,
-  stamp,
   type Expense,
   type Group,
 } from "./data";
 import type { Bill } from "../../worker/src/items";
-import { ConverterDialog, RateField } from "./fxui";
-import { useRates, type Exchange } from "./fx";
+import { ConverterDialog, CurrencySelect, RateField } from "./fxui";
+import { today, useRates, type Exchange } from "./fx";
 import { useHomeMoney } from "./homeMoney";
 import { minorInput } from "./receiptText";
 
@@ -35,7 +33,7 @@ function Composer({ g, existing }: { g: Group; existing?: Expense }) {
   const { save, user } = useLedger(),
     nav = useNavigate(),
     [id] = useState(() => existing?.id ?? crypto.randomUUID()),
-    [date, setDate] = useState(() => (existing?.createdAt ?? stamp()).slice(0, 10));
+    [date, setDate] = useState(() => existing?.createdAt.slice(0, 10) ?? today());
 
   const existingPayers = existing ? entryPayers(existing) : [];
   const activeMembers = g.members.filter((m) =>
@@ -144,9 +142,9 @@ function Composer({ g, existing }: { g: Group; existing?: Expense }) {
   const [amountText, setAmountText] = useState(existing ? (existing.amount / 100).toFixed(2) : "");
   const [category, setCategory] = useState(existing?.category ?? "Dining");
   const [notes, setNotes] = useState(existing?.notes ?? "");
-  const [exchange, setExchange] = useState<Exchange | null>(
-    (existing?.exchange as Exchange | undefined) ?? null,
-  );
+  const savedExchange = currency === existing?.currency && existing.exchange?.target === g.currency
+    ? existing.exchange : undefined;
+  const [exchange, setExchange] = useState<Exchange | null>(savedExchange ?? null);
   const foreign = currency !== g.currency;
   const [converter, setConverter] = useState(false);
 
@@ -155,6 +153,16 @@ function Composer({ g, existing }: { g: Group; existing?: Expense }) {
     typed = amountText ? minor(amountText) : null;
   } catch {
     typed = null;
+  }
+
+  let chargeAmount = typed;
+  if (mode === "items") {
+    try {
+      chargeAmount = existing?.bill?.closed ? existing.amount
+        : rows.reduce((sum, row) => sum + minor(row.price || "0"), minor(tax || "0") + minor(tip || "0"));
+    } catch {
+      chargeAmount = null;
+    }
   }
 
   const perPersonEqual =
@@ -297,6 +305,8 @@ function Composer({ g, existing }: { g: Group; existing?: Expense }) {
               splits = selected.map((memberID, i) => ({ memberID, amount: portions[i] }));
             }
 
+            if (!/^\d{4}-\d\d-\d\d$/.test(date) || (!existing && date > today()))
+              throw new Error("Choose today or an earlier charge date.");
             if (foreign && !exchange)
               throw new Error("Wait for the rate, or enter your own rate.");
 
@@ -355,7 +365,12 @@ function Composer({ g, existing }: { g: Group; existing?: Expense }) {
                 type="date"
                 value={date}
                 disabled={Boolean(existing)}
-                onChange={(e) => setDate(e.target.value)}
+                max={today()}
+                required
+                onChange={(e) => {
+                  setExchange(null);
+                  setDate(e.target.value);
+                }}
               />
             </label>
           </div>
@@ -419,14 +434,10 @@ function Composer({ g, existing }: { g: Group; existing?: Expense }) {
               </select>
             </label>
             <div className="form-row">
-              <label className="field">
-                Currency
-                <select value={currency} onChange={(e) => setCurrency(e.target.value)}>
-                  {currencies.map((c) => (
-                    <option key={c}>{c}</option>
-                  ))}
-                </select>
-              </label>
+              <CurrencySelect label="Currency" value={currency} onChange={(next) => {
+                setExchange(null);
+                setCurrency(next);
+              }} />
               {mode !== "items" && (
                 <label className="field">
                   Amount ({currency})
@@ -455,14 +466,17 @@ function Composer({ g, existing }: { g: Group; existing?: Expense }) {
             </div>
           ) : (
             <RateField
+              key={currency}
               from={currency}
               to={g.currency}
-              amount={mode === "items" ? null : typed}
+              amount={chargeAmount}
               date={date}
+              saved={savedExchange}
+              tripRate={g.tripRates?.[currency]}
               onChange={setExchange}
             />
           )}
-          <ConverterDialog open={converter} onClose={() => setConverter(false)} to={g.currency} amount={typed} />
+          <ConverterDialog open={converter} onClose={() => setConverter(false)} from={currency} to={g.currency} amount={chargeAmount} date={date} />
 
           <section className="expense-form-section">
             <label className="field">

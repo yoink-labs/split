@@ -5,6 +5,7 @@ struct Exchange:Codable,Equatable {
     var rateE8:Int64
     var date:String
     var source:String
+    var statementAmount: Int64? = nil
     var rate:Decimal { Decimal(rateE8)/100_000_000 }
     func description(base:String)->String { "1 \(base) = \(NSDecimalNumber(decimal:rate).stringValue) \(target) · \(source) · \(date)" }
     static func date(fromDay day: String) -> Date? {
@@ -26,7 +27,7 @@ struct Exchange:Codable,Equatable {
         return NSDecimalNumber(decimal:d*100_000_000).int64Value
     }
     func converting(_ e:LedgerEntry, maximumTotal: Int64 = Money.maxAmount)throws->LedgerEntry {
-        guard let amount = FXMath.convert(e.amount, rateE8: rateE8),
+        guard let amount = statementAmount ?? FXMath.convert(e.amount, rateE8: rateE8),
               amount <= maximumTotal, amount >= (maximumTotal == Money.maxAmount ? 1 : 0) else {
             throw LedgerError.invalid("Check the converted amount.")
         }

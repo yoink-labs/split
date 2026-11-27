@@ -860,8 +860,74 @@ fieldset.form-stack { min-inline-size: 0; }
 .bar-row { display: grid; grid-template-columns: 110px minmax(0, 1fr) 92px; align-items: center; gap: 10px; margin-bottom: 10px; font-size: 12.5px; }
 .bar-track { height: 10px; background: var(--surface-2); border-radius: 99px; overflow: hidden; }
 .bar-fill { height: 100%; border-radius: 99px; transition: width 0.25s ease; }
-/* Money Flow Graph */
-.flow-svg { width: 100%; height: auto; display: block; }
+/* Settle Up */
+.flow-card, .suggested-payment { min-width: 0; }
+.flow-card { scroll-margin-top: 62px; }
+.flow-heading, .flow-controls, .suggested-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.flow-heading { justify-content: space-between; margin-bottom: 12px; }
+.flow-heading h3 { font-size: 0.9375rem; font-weight: 700; }
+.flow-heading .seg { flex-wrap: wrap; }
+.flow-controls .btn { min-height: 36px; min-width: 36px; }
+.flow-help { font-size: 0.8125rem; margin: 8px 0; }
+.flow-viewport {
+  position: relative;
+  height: clamp(260px, 38vh, 440px);
+  overflow: clip;
+  isolation: isolate;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background-color: var(--surface-2);
+  background-image: radial-gradient(var(--border-strong) 1px, transparent 1px);
+  background-size: 20px 20px;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+.flow-viewport.is-panning, .flow-viewport.is-panning .flow-item { cursor: grabbing; }
+.flow-world { position: absolute; inset: 0 auto auto 0; transform-origin: 0 0; }
+.flow-lines { position: absolute; inset: 0 auto auto 0; overflow: visible; pointer-events: none; }
+.flow-item {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  width: max-content;
+  padding: 6px 10px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  line-height: 1.3;
+  box-shadow: var(--shadow-sm);
+  cursor: move;
+  overflow-wrap: anywhere;
+}
+.flow-person {
+  display: grid;
+  gap: 2px;
+  min-width: 110px;
+  max-width: min(156px, 52vw);
+  padding: 9px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 0.875rem;
+}
+.flow-person span { font-size: 0.75rem; }
+.flow-amount { max-width: min(180px, 62vw); border-radius: 16px; font-size: 0.8125rem; font-weight: 700; }
+.flow-item[aria-pressed="true"], .flow-item:hover { border-color: var(--primary); }
+.flow-item:focus-visible, .flow-viewport:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.flow-detail { margin-top: 10px; min-height: 1.5em; font-size: 0.875rem; overflow-wrap: anywhere; }
+.flow-empty { padding: 28px 0; text-align: center; color: var(--pos); }
+.suggested-heading { flex-wrap: wrap; }
+.suggested-payment { padding: 14px 16px; overflow-wrap: anywhere; }
+.suggested-payment + .suggested-payment { border-top: 1px solid var(--border); }
+.suggested-route { font-size: 0.875rem; }
+.suggested-amount { font-size: 1.0625rem; font-weight: 750; margin-top: 3px; }
+.suggested-estimate { font-size: 0.8125rem; }
+.suggested-actions { margin-top: 10px; }
+.suggested-actions .btn { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 
 /* Comments & Social */
 .comment-list { display: flex; flex-direction: column; gap: 10px; }

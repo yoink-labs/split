@@ -3,7 +3,7 @@ import { memberBalances, useHomeMoney } from "./homeMoney";
 import { PendingPayments } from "./settlements";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { MoneyFlowGraph, PaidVsShareChart } from "./charts";
+import { PaidVsShareChart } from "./charts";
 import { SpendingDashboard } from "./spending";
 import { Form, useLedger, value } from "./context";
 import {
@@ -27,6 +27,8 @@ import {
 } from "./data";
 import { convert, fx, rateText, sourceLabel, useRates, type Exchange } from "./fx";
 import { CurrencySelect, RateField } from "./fxui";
+import { MoneyFlowGraph } from "./moneyFlowGraph";
+import { transferID } from "./moneyFlowLayout";
 import { ReceiptsHub } from "./receiptsHub";
 import { Avatar, AvatarStack, CategoryIcon } from "./ui";
 
@@ -459,6 +461,7 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
 
   // Settle up open form
   const [settlingKey, setSettlingKey] = useState<string | null>(null);
+  const [flowFocus, setFlowFocus] = useState<{ groupID: string; currency: string; id: string }>();
 
   const entries = useMemo(
     () =>
@@ -680,43 +683,54 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
         <div className="form-stack" style={{ gap: 20 }}>
           <PendingPayments group={g} />
           {codes.map((currency) => {
-            const stats = breakdown(converted, g.members, currency);
+            const transfers = suggestions.filter((transfer) => transfer.currency === currency);
             return (
-              <div key={currency} className="grid-sidebar-r">
-                <MoneyFlowGraph g={g} entries={entries} currency={currency} />
+              <div key={g.id + ":" + currency} className="grid-sidebar-r">
+                <MoneyFlowGraph
+                  g={g} entries={entries} currency={currency} suggested={transfers}
+                  focus={flowFocus?.groupID === g.id && flowFocus.currency === currency ? flowFocus : undefined}
+                />
 
                 <div className="card">
-                  <div className="card-head">
+                  <div className="card-head suggested-heading">
                     <h3>Suggested Payments · {currency}</h3>
                     <span className="muted" style={{ fontSize: 12 }}>
-                      {stats.settlements.length} transfer{stats.settlements.length === 1 ? "" : "s"}
+                      {transfers.length} transfer{transfers.length === 1 ? "" : "s"}
                     </span>
                   </div>
-                  {!stats.settlements.length ? (
+                  {!transfers.length ? (
                     <div className="card-pad">
                       <p className="pos" style={{ fontWeight: 600 }}>Everyone is square in {currency}.</p>
                     </div>
                   ) : (
                     <div>
-                      {stats.settlements.map((t) => {
+                      {transfers.map((t) => {
                         const key = currency + ":" + t.from + ":" + t.to;
                         const recipient = g.members.find((m) => m.id === t.to);
                         const isOpen = settlingKey === key;
                         return (
-                          <div key={key} style={{ padding: "14px 16px", borderBottom: "1px solid var(--border)" }}>
-                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
-                              <div>
-                                <div style={{ fontSize: 13.5 }}>
-                                  <strong>{memberName(g, t.from)}</strong> → <strong>{memberName(g, t.to)}</strong>
-                                </div>
-                                <div className="num" style={{ fontSize: 16, fontWeight: 750, marginTop: 2 }}>
-                                  {homeMoney.totalText({ [currency]: t.amount })}
-                                  {currency !== homeMoney.home && <small className="muted"> · Pay {money(t.amount, currency)}</small>}
-                                </div>
-                              </div>
+                          <div key={key} className="suggested-payment">
+                            <div className="suggested-route">
+                              <strong>{memberName(g, t.from)}</strong> → <strong>{memberName(g, t.to)}</strong>
+                            </div>
+                            <div className="suggested-amount num">{money(t.amount, currency)}</div>
+                            {currency !== homeMoney.home && (
+                              <div className="muted suggested-estimate">{homeMoney.totalText({ [currency]: t.amount })} in {homeMoney.home}</div>
+                            )}
+                            <div className="suggested-actions">
+                              <button
+                                type="button"
+                                className="btn btn-sm"
+                                aria-label={`Show ${memberName(g, t.from)} to ${memberName(g, t.to)} on graph`}
+                                onClick={() => setFlowFocus({ groupID: g.id, currency, id: transferID(t) })}
+                              >
+                                Show on graph
+                              </button>
                               {t.from === me?.id && (
                                 <button
+                                  type="button"
                                   className="btn btn-sm btn-primary"
+                                  aria-expanded={isOpen}
                                   onClick={() => setSettlingKey(isOpen ? null : key)}
                                 >
                                   {isOpen ? "Close" : "Request approval"}

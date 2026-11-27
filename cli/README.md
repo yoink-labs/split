@@ -1,6 +1,6 @@
 # Split CLI and MCP
 
-Install the Node CLI from the Yoink Labs tap. Homebrew installs Node and links the launcher. The macOS file-splitting utility is available by its full path, `/usr/bin/split`.
+Install the Node CLI from the Yoink Labs tap (or, from a checkout, `npm install -g ./cli`). Homebrew installs Node and links the launcher. The macOS file-splitting utility is available by its full path, `/usr/bin/split`.
 
 ```sh
 brew install yoink-labs/tap/split
@@ -10,7 +10,7 @@ split auth status --json
 split groups list --json
 ```
 
-Open **You → Connected computers** in the signed-in Split iPhone app, enter the terminal code, review the computer name and approve. Use an app build containing Connected computers. Codes expire after ten minutes. The browser page at `https://split-api.yoinklabs.dev/device` gives the same instructions. Use `split login --no-open --name "Office Mac"` for a headless terminal.
+Approve the computer on the web at **Connect AI & CLI** (account menu, bottom of the sidebar) or in the iPhone app under **You → Connected computers**: enter the terminal code, review the computer name and approve. Both places list connected computers and revoke them. Codes expire after ten minutes. The browser page at `https://split-api.yoinklabs.dev/device` gives the same instructions. Use `split login --no-open --name "Office Mac"` for a headless terminal.
 
 Split stores the server origin and device token in an owner-only `~/.config/split/credentials.json` (or `$XDG_CONFIG_HOME/split/credentials.json`). The Worker stores a hash and checks revocation on every request. Use the app’s Connected computers screen to see last use or revoke a lost computer. To disconnect the current credential run `split logout` for a preview, then `split logout --yes`.
 
@@ -57,6 +57,36 @@ split expenses delete --group "$GROUP" --expense "$EXPENSE"
 split expenses delete --group "$GROUP" --expense "$EXPENSE" --yes --revision "$REVISION"
 ```
 
+### Everything the web app does
+
+Every action in the web app has a command, so an assistant can run the whole group:
+
+```sh
+split groups create --name Lisbon --self Alex --start 2026-12-01 --end 2026-12-05 --description "Pastéis tour"
+split groups update --group "$GROUP" --name "Lisbon 2026" --end none --simplify off
+split groups archive --group "$GROUP"                       # --action restore
+split groups leave --group "$GROUP"                         # preview, then --yes
+split members remove --group "$GROUP" --member "$JO"        # archive: keeps history, out of new splits
+split members remove --group "$GROUP" --member "$JO" --mode delete   # only with no expenses
+split members remove --group "$GROUP" --member "$JO" --mode restore
+split invites list --group "$GROUP"
+split invites revoke --group "$GROUP" --invite "$INVITE_ID"
+split expenses add --group "$GROUP" --title Hotel --amount 300 --payer "$ALEX" \
+  --payers '[{"member":"'$ALEX'","amount":"200.00"},{"member":"'$MAYA'","amount":"100.00"}]'
+split expenses show --group "$GROUP" --expense "$EXPENSE"   # payers, splits, FX, items, photos, comments
+split expenses like --group "$GROUP" --expense "$EXPENSE"
+split comments add --group "$GROUP" --expense "$EXPENSE" --text "I had the wine"
+split comments list --group "$GROUP" --expense "$EXPENSE"
+split receipts add --group "$GROUP" --expense "$EXPENSE" --photo receipt.heic
+split receipts get --group "$GROUP" --expense "$EXPENSE" --photo "$PHOTO_ID" --out receipt.jpg
+split groups export --group "$GROUP" --out lisbon.csv                     # one row per expense
+split groups export --group "$GROUP" --format summary --out summary.csv   # paid, share, net, transfers
+split groups export --group "$GROUP" --format json --out lisbon.json      # everything
+split import splitwise --file export.csv                    # shows the names in the file
+split import splitwise --file export.csv --me Harris        # new group; --group ID merges into one
+split profile avatar --avatar preset:ocean
+```
+
 ## Shared group settings
 
 ```sh
@@ -76,7 +106,10 @@ The current checkout includes the receipt commands below. Use `./cli/bin/split` 
 split groups breakdown --group GROUP_ID
 split groups breakdown --group GROUP_ID --member MEMBER_ID
 split items open --group GROUP_ID
+split items list --group GROUP_ID --expense EXPENSE_ID
 split items claim --group GROUP_ID --expense EXPENSE_ID --item ITEM_ID
+split items claim --group GROUP_ID --expense EXPENSE_ID --item ITEM_ID --member MEMBER_ID --share 0.5
+split items assign --group GROUP_ID --expense EXPENSE_ID --item ITEM_ID --participants '["A","B"]' --shares '[2,1]'
 split items claim --group GROUP_ID --expense EXPENSE_ID --item ITEM_ID --member MEMBER_ID --action remove
 split items close --group GROUP_ID --expense EXPENSE_ID --participants '["MEMBER_ID"]'
 split receipts list --group GROUP_ID --expense EXPENSE_ID
@@ -84,6 +117,18 @@ split receipts get --group GROUP_ID --expense EXPENSE_ID --photo PHOTO_ID
 ```
 
 Claim defaults to adding yourself. Pass a group member ID to add a second claimant or act for a placeholder. Close defaults to everyone for the remaining purchases. Each group report keeps currencies separate, includes member expense IDs, and returns full expense detail when filtered by member. The CLI returns JPEG content as base64 JSON. MCP returns JPEG image content. Take or select and review receipt photos in the iOS app. `expenses add` accepts a category and equal, exact, percent or shares allocation.
+
+### Upload a receipt from an assistant
+
+An assistant that can read the photo can record the whole receipt in one command. Items with `memberIDs` are assigned on upload; items without them stay open for the group to claim. `shares` are multipliers in `memberIDs` order, so `[2,1]` means the first person had two of three. `--photo` accepts JPEG, HEIC or PNG (up to four) and, on macOS, converts and shrinks each to the 240 KiB receipt limit.
+
+```sh
+split expenses add --group GROUP_ID --payer MEMBER_ID --title "Don Julio" --date 2026-11-14 \
+  --photo receipt.heic \
+  --bill '{"items":[{"title":"Malbec","amount":"48.00","memberIDs":["A","B","C"]},{"title":"Empanadas","amount":"18.00","memberIDs":["A","D"],"shares":[2,1]},{"title":"Flan","amount":"12.00"}],"tax":"14.00","tip":"28.00"}'
+```
+
+`items list` returns every item with its ID, gross amount including tax and tip, claimants and shares. `items assign` replaces an item's claimants in one call; `items claim --share` adds one person with a partial share.
 
 ## MCP clients
 
@@ -110,7 +155,9 @@ command = "/opt/homebrew/bin/split"
 args = ["mcp"]
 ```
 
-Restart the client and request `groups_list`. Both transports expose the same tools and validate the same schemas. For `expenses_edit` and `expenses_delete`, show the user the preview, then send `yes: true` and its `revision` after confirmation.
+**Claude Code**: `claude mcp add split -- "$(command -v split)" mcp`.
+
+Restart the client and request `groups_list`. Through the local `split mcp` server, `photos` may be absolute file paths; the bridge converts HEIC/PNG and shrinks them before upload. Both transports expose the same tools and validate the same schemas. For `expenses_edit` and `expenses_delete`, show the user the preview, then send `yes: true` and its `revision` after confirmation.
 
 **Remote MCP** uses Streamable HTTP at `https://split-api.yoinklabs.dev/mcp`. Configure the client to send `Authorization: Bearer <device token>`. For example, Codex can read the token from its process environment.
 

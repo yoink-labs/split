@@ -1,4 +1,4 @@
-import { HTTPError, body, json } from './http';
+import { HTTPError, body, json, optionalDay } from './http';
 import { currencies, InputError } from './ledger';
 
 interface EntryScope { groupID:string }
@@ -58,11 +58,19 @@ async function toggleLike(env:Env,entryID:string,userID:string) {
   return json({liked,count:Number(count?.n??0)});
 }
 
+export function optionalDescription(value: unknown): string | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null || value === '') return null;
+  if (typeof value !== 'string' || value.trim().length > 400) throw new InputError('Keep the description under 400 characters.');
+  return value.trim() || null;
+}
+
 async function updateGroup(request:Request,env:Env,groupID:string) {
   const b=await body(request);
-  const group=await env.DB.prepare('SELECT name,currency,simplify FROM groups WHERE id=?').bind(groupID).first<{name:string;currency:string;simplify:number}>();
+  const group=await env.DB.prepare('SELECT name,currency,simplify,description,start_date AS startDate,end_date AS endDate FROM groups WHERE id=?').bind(groupID).first<{name:string;currency:string;simplify:number;description:string|null;startDate:string|null;endDate:string|null}>();
   if(!group) throw new HTTPError(404,'Group not found.');
   let name=group.name,currency=group.currency,simplify=Number(group.simplify);
+  let description=group.description, startDate=group.startDate, endDate=group.endDate;
   if(b.name!==undefined) {
     if(typeof b.name!=='string'||!b.name.trim()||b.name.trim().length>80) throw new InputError('Give the group a name of up to 80 characters.');
     name=b.name.trim();
@@ -79,8 +87,91 @@ async function updateGroup(request:Request,env:Env,groupID:string) {
     if(typeof b.simplify!=='boolean') throw new InputError('Choose whether to simplify payments.');
     simplify=b.simplify?1:0;
   }
-  await env.DB.prepare('UPDATE groups SET name=?,currency=?,simplify=? WHERE id=?').bind(name,currency,simplify,groupID).run();
+  const nextDesc=optionalDescription(b.description);
+  if(nextDesc!==undefined) description=nextDesc;
+  const nextStart=optionalDay(b.startDate,'start date');
+  if(nextStart!==undefined) startDate=nextStart;
+  const nextEnd=optionalDay(b.endDate,'end date');
+  if(nextEnd!==undefined) endDate=nextEnd;
+  if(startDate && endDate && endDate < startDate) throw new InputError('End date must be on or after the start date.');
+  await env.DB.prepare('UPDATE groups SET name=?,currency=?,simplify=?,description=?,start_date=?,end_date=? WHERE id=?').bind(name,currency,simplify,description,startDate,endDate,groupID).run();
   return json({ok:true});
+}
+
+async function listInvites(env:Env,groupID:string) {
+  const nowMs=Date.now();
+  const groupRows=(await env.DB.prepare('SELECT token_hash AS id, expires_at AS expiresAt FROM group_invites WHERE group_id=? AND expires_at>? ORDER BY expires_at DESC').bind(groupID,nowMs).all<{id:string;expiresAt:number}>()).results;
+  const memberRows=(await env.DB.prepare(`SELECT i.token_hash AS id, i.member_id AS memberID, m.name AS memberName, i.expires_at AS expiresAt
+    FROM invites i JOIN members m ON m.id=i.member_id LEFT JOIN member_aliases a ON a.member_id=m.id
+    WHERE i.group_id=? AND i.expires_at>? AND m.removed_at IS NULL AND m.user_id IS NULL AND a.member_id IS NULL
+    ORDER BY i.expires_at DESC`).bind(groupID,nowMs).all<{id:string;memberID:string;memberName:string;expiresAt:number}>()).results;
+  return json({
+    invites:[
+      ...groupRows.map(r=>({id:r.id,kind:'group' as const,memberID:null,memberName:null,expiresAt:r.expiresAt})),
+      ...memberRows.map(r=>({id:r.id,kind:'member' as const,memberID:r.memberID,memberName:r.memberName,expiresAt:r.expiresAt}))
+    ]
+  });
+}
+
+async function revokeInvite(env:Env,groupID:string,hash:string) {
+  const [a,b]=await env.DB.batch([
+    env.DB.prepare('DELETE FROM group_invites WHERE group_id=? AND token_hash=?').bind(groupID,hash),
+    env.DB.prepare('DELETE FROM invites WHERE group_id=? AND token_hash=?').bind(groupID,hash)
+  ]);
+  if(!a.meta.changes && !b.meta.changes) throw new HTTPError(404,'Invite not found.');
+  return json({ok:true});
+}
+
+async function removeMember(request:Request,env:Env,groupID:string,targetID:string,callerSeat:string) {
+  if(targetID===callerSeat) throw new InputError('Use Leave group to remove yourself.');
+  const target=await env.DB.prepare('SELECT id FROM members WHERE id=? AND group_id=?').bind(targetID,groupID).first<{id:string}>();
+  if(!target) throw new HTTPError(404,'Member not found.');
+  const b=await body(request);
+  const mode=b.mode===undefined ? 'archive' : b.mode;
+  if(mode!=='archive' && mode!=='delete' && mode!=='restore') throw new InputError('Choose archive, delete, or restore.');
+  if(mode==='restore') {
+    await env.DB.prepare('UPDATE members SET removed_at=NULL WHERE id=? AND group_id=?').bind(targetID,groupID).run();
+    return json({ok:true,mode:'restore'});
+  }
+  if(mode==='archive') {
+    await env.DB.batch([
+      env.DB.prepare('UPDATE members SET removed_at=? WHERE id=? AND group_id=?').bind(now(),targetID,groupID),
+      env.DB.prepare('DELETE FROM invites WHERE member_id=? AND group_id=?').bind(targetID,groupID)
+    ]);
+    return json({ok:true,mode:'archive'});
+  }
+  const aliases=(await env.DB.prepare('SELECT member_id FROM member_aliases WHERE canonical_id=?').bind(targetID).all<{member_id:string}>()).results;
+  const seats=new Set([targetID,...aliases.map(a=>a.member_id)]);
+  const rows=(await env.DB.prepare(`SELECT payload FROM entries WHERE group_id=? AND id NOT IN (SELECT entry_id FROM deleted_entries)`).bind(groupID).all<{payload:string}>()).results;
+  const used=rows.some(r=>{
+    const e=JSON.parse(r.payload) as {paidBy:string;payers?:{memberID:string}[];splits:{memberID:string}[];bill?:{items:{memberIDs:string[]}[]}};
+    return seats.has(e.paidBy) || e.payers?.some(p=>seats.has(p.memberID)) || e.splits.some(s=>seats.has(s.memberID)) || e.bill?.items.some(i=>i.memberIDs.some(id=>seats.has(id)));
+  });
+  if(used) throw new HTTPError(409,'This person has expenses in the group. Retain them as an archived entity to keep balances accurate.');
+  await env.DB.batch([
+    env.DB.prepare('DELETE FROM member_aliases WHERE member_id=? OR canonical_id=?').bind(targetID,targetID),
+    env.DB.prepare('DELETE FROM member_contacts WHERE member_id=?').bind(targetID),
+    env.DB.prepare('DELETE FROM payment_profiles WHERE member_id=?').bind(targetID),
+    env.DB.prepare('DELETE FROM invites WHERE member_id=?').bind(targetID),
+    env.DB.prepare('DELETE FROM members WHERE id=? AND group_id=?').bind(targetID,groupID)
+  ]);
+  return json({ok:true,mode:'delete'});
+}
+
+async function updateAvatar(request:Request,env:Env,userID:string) {
+  const b=await body(request,200_000);
+  const avatar=b.avatarURL===null || b.avatarURL==='' ? null : typeof b.avatarURL==='string' ? b.avatarURL.trim() : undefined;
+  if(avatar===undefined) throw new InputError('Provide an avatar URL or empty value to reset.');
+  if(avatar!==null) {
+    const validPreset=/^preset:[a-z0-9-]{2,32}$/.test(avatar);
+    const validHttps=/^https:\/\/[^\s]{5,500}$/.test(avatar);
+    const validData=/^data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/=]{16,180000}$/.test(avatar);
+    if(!validPreset && !validHttps && !validData) throw new InputError('Choose a valid avatar image or preset.');
+  }
+  await env.DB.prepare(`INSERT INTO user_avatars(user_id,avatar_url,updated_at) VALUES (?,?,?)
+    ON CONFLICT(user_id) DO UPDATE SET avatar_url=excluded.avatar_url, updated_at=excluded.updated_at`)
+    .bind(userID,avatar,now()).run();
+  return json({ok:true,avatarURL:avatar});
 }
 
 async function archiveGroup(request:Request,env:Env,groupID:string) {
@@ -137,6 +228,24 @@ export async function socialRoute(request:Request,env:Env,userID:string):Promise
     if(request.method!=='POST') throw new HTTPError(404,'Not found.');
     await entryScope(env,likeMatch[1],userID);
     return toggleLike(env,likeMatch[1],userID);
+  }
+  if(path==='/v1/profile/avatar' && request.method==='POST') {
+    return updateAvatar(request,env,userID);
+  }
+  const inviteListMatch=path.match(/^\/v1\/groups\/([\w-]+)\/invites$/);
+  if(inviteListMatch && request.method==='GET') {
+    await groupSeat(env,inviteListMatch[1],userID);
+    return listInvites(env,inviteListMatch[1]);
+  }
+  const inviteRevokeMatch=path.match(/^\/v1\/groups\/([\w-]+)\/invites\/([a-f0-9]{64})\/revoke$/);
+  if(inviteRevokeMatch && request.method==='POST') {
+    await groupSeat(env,inviteRevokeMatch[1],userID);
+    return revokeInvite(env,inviteRevokeMatch[1],inviteRevokeMatch[2]);
+  }
+  const memberRemoveMatch=path.match(/^\/v1\/groups\/([\w-]+)\/members\/([\w-]+)\/remove$/);
+  if(memberRemoveMatch && request.method==='POST') {
+    const callerSeat=await groupSeat(env,memberRemoveMatch[1],userID);
+    return removeMember(request,env,memberRemoveMatch[1],memberRemoveMatch[2],callerSeat);
   }
   const groupMatch=path.match(/^\/v1\/groups\/([\w-]+)\/(update|archive|leave)$/);
   if(groupMatch) {

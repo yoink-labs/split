@@ -41,22 +41,43 @@ export async function purchaseRoute(req:Request,env:Env,user:string):Promise<Res
   if(action==='close') {
     const payer=seats.find(s=>s.id===entry.paidBy);
     if(row.viewer!==entry.paidBy && !(payer?.user_id===null && row.author===user)) throw new HTTPError(403,'Only the payer can close this receipt.');
-    if(!ids.length) throw new InputError('Choose who will cover the open items.');
+    if(!ids.length && bill.items.some(i=>!i.memberIDs.length)) throw new InputError('Choose who will cover the open items.');
     for(const i of bill.items) if(!i.memberIDs.length) i.memberIDs=ids;
     bill.closed=true;
   } else {
     const item=bill.items.find(i=>i.id===b.itemID);
     if(!item) throw new HTTPError(404,'Item not found.');
-    if(!Array.isArray(b.original)) throw new InputError('Include the original claimants.');
+    if(!Array.isArray(b.original) || b.original.length>50 || new Set(b.original).size!==b.original.length || b.original.some(id=>!validID(id))) throw new InputError('Include the original claimants.');
+    if(b.mergeEdits!==undefined && typeof b.mergeEdits!=='boolean') throw new InputError('Choose whether to merge edits.');
     let next=ids;
     if(b.mergeEdits===true) {
       const original=b.original;
-      if(original.length>50 || original.some(id=>typeof id!=='string' || !seats.some(s=>s.id===id && !s.canonical_id))) throw new InputError('Refresh the group members.');
+      if(original.some(id=>!seats.some(s=>s.id===id && !s.canonical_id))) throw new InputError('Refresh the group members.');
       const removed=new Set(original.filter(id=>!ids.includes(id)));
       next=[...new Set([...item.memberIDs.filter(id=>!removed.has(id)),...ids.filter(id=>!original.includes(id))])];
     } else if(JSON.stringify(item.memberIDs)!==JSON.stringify(b.original)) throw new HTTPError(409,'The claims changed. Refresh and try again.');
-    if(JSON.stringify(item.memberIDs)!==JSON.stringify(next)) delete item.roundingSeats;
+    if(next.length>50) throw new InputError('Choose up to fifty claimants.');
+    const changed=JSON.stringify(item.memberIDs)!==JSON.stringify(next);
     item.memberIDs=next;
+    if(b.shares!==undefined) {
+      if(!b.shares || typeof b.shares!=='object' || Array.isArray(b.shares)) throw new InputError('Check share weights.');
+      const nextShares:Record<string,number>=Object.assign(Object.create(null),item.shares);
+      for(const [mid,w] of Object.entries(b.shares as Record<string,unknown>)) {
+        if(!ids.includes(mid) || typeof w!=='number' || !Number.isSafeInteger(w) || w<1 || w>100_000) throw new InputError('Use positive share weights for selected claimants.');
+        if(!next.includes(mid)) continue;
+        nextShares[mid]=w;
+      }
+      for(const mid of Object.keys(nextShares)) if(!next.includes(mid)) delete nextShares[mid];
+      if(Object.keys(nextShares).length && Object.values(nextShares).some(w=>w!==100)) item.shares=nextShares;
+      else delete item.shares;
+    } else if(item.shares) {
+      for(const mid of Object.keys(item.shares)) if(!next.includes(mid)) delete item.shares[mid];
+      if(!Object.keys(item.shares).length) delete item.shares;
+    }
+    if(changed || Object.keys(item.shares??{}).length) {
+      delete item.roundingSeats;
+      delete item.roundingWeights;
+    }
   }
   entry.splits=itemSplit(bill,entry.paidBy);
   const saved=await env.DB.prepare('UPDATE entries SET payload=? WHERE id=? AND payload=? AND id NOT IN (SELECT entry_id FROM deleted_entries)').bind(JSON.stringify(entry),id,row.payload).run();

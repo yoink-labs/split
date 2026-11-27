@@ -34,7 +34,14 @@ export function resolveEntry(entry: Entry, aliases: Map<string,string>): Entry {
     const bill={...entry.bill,items:entry.bill.items.map(i=>{
       const seats=(i.roundingSeats??i.memberIDs).map(id=>aliases.get(id)??id);
       const memberIDs=[...new Set(seats)];
-      return {...i,memberIDs,...(seats.length>memberIDs.length?{roundingSeats:seats}:{})};
+      if(!i.memberIDs.some(id=>aliases.has(id))) return i;
+      const {shares,roundingSeats,roundingWeights,...item}=i;
+      if(seats.length>memberIDs.length) {
+        const weights=roundingWeights ?? (shares ? i.memberIDs.map(id=>Object.hasOwn(shares,id)?shares[id]:100) : undefined);
+        return {...item,memberIDs,roundingSeats:seats,...(weights?{roundingWeights:weights}:{})};
+      }
+      const remapped=shares && Object.fromEntries(Object.entries(shares).map(([id,w])=>[aliases.get(id)??id,w]));
+      return {...item,memberIDs,...(remapped?{shares:remapped}:{})};
     })};
     const paidBy=aliases.get(entry.paidBy)??entry.paidBy;
     return {...entry,bill,paidBy,splits:itemSplit(bill,paidBy),...(payers?{payers}:{})};
@@ -45,18 +52,20 @@ export function resolveEntry(entry: Entry, aliases: Map<string,string>): Entry {
 
 // D1 serializes the batch. A simultaneous direct add, group join, or claim
 // sees either the original seat or the completed merge.
-export async function claimSeat(db: D1Database, groupID: string, seatID: string, userID: string) {
-  const eligible = 'id=? AND group_id=? AND user_id IS NULL AND id NOT IN (SELECT member_id FROM member_aliases)';
+export async function claimSeat(db: D1Database, groupID: string, seatID: string, userID: string, tokenHash: string) {
+  const invite = 'EXISTS (SELECT 1 FROM invites WHERE token_hash=? AND member_id=? AND group_id=? AND expires_at>?)';
+  const inviteArgs = [tokenHash,seatID,groupID,Date.now()];
+  const eligible = 'id=? AND group_id=? AND user_id IS NULL AND removed_at IS NULL AND id NOT IN (SELECT member_id FROM member_aliases)';
   await db.batch([
     db.prepare(`INSERT INTO member_aliases(member_id, canonical_id)
       SELECT target.id, existing.id FROM members target JOIN members existing ON existing.group_id=target.group_id
-      WHERE target.id=? AND target.group_id=? AND target.user_id IS NULL AND existing.user_id=?
-      ON CONFLICT(member_id) DO NOTHING`).bind(seatID, groupID, userID),
-    db.prepare(`UPDATE members SET user_id=? WHERE ${eligible}`).bind(userID, seatID, groupID),
+      WHERE target.id=? AND target.group_id=? AND target.user_id IS NULL AND target.removed_at IS NULL AND existing.user_id=? AND ${invite}
+      ON CONFLICT(member_id) DO NOTHING`).bind(seatID, groupID, userID, ...inviteArgs),
+    db.prepare(`UPDATE members SET user_id=? WHERE ${eligible} AND ${invite}`).bind(userID, seatID, groupID, ...inviteArgs),
   ]);
   return Boolean(await db.prepare(`SELECT m.id FROM members m LEFT JOIN member_aliases a ON a.member_id=m.id
     JOIN members owner ON owner.id=COALESCE(a.canonical_id,m.id)
-    WHERE m.id=? AND m.group_id=? AND owner.user_id=?`).bind(seatID,groupID,userID).first());
+    WHERE m.id=? AND m.group_id=? AND owner.user_id=? AND ${invite}`).bind(seatID,groupID,userID,...inviteArgs).first());
 }
 
 export async function saveProfile(db: D1Database, profile: Profile) {
@@ -67,7 +76,7 @@ export async function saveProfile(db: D1Database, profile: Profile) {
   // Claim one seat per new group first. Remaining matching seats in those
   // groups (including groups the user already belongs to) become aliases.
   const pending=`SELECT m.id,m.group_id FROM member_contacts c JOIN members m ON m.id=c.member_id
-    LEFT JOIN member_aliases a ON a.member_id=m.id WHERE c.email=? AND m.user_id IS NULL AND a.member_id IS NULL`;
+    LEFT JOIN member_aliases a ON a.member_id=m.id WHERE c.email=? AND m.user_id IS NULL AND m.removed_at IS NULL AND a.member_id IS NULL`;
   await db.batch([
     db.prepare(`UPDATE members SET user_id=? WHERE id IN (
       SELECT min(id) FROM (${pending}) WHERE group_id NOT IN (SELECT group_id FROM members WHERE user_id=?)
@@ -81,7 +90,7 @@ export async function saveProfile(db: D1Database, profile: Profile) {
 export async function refreshIdentity(env: Env, userID:string) {
   const recent=await env.DB.prepare(`SELECT p.user_id FROM split_profiles p WHERE p.user_id=? AND p.refreshed_at>?
     AND NOT EXISTS (SELECT 1 FROM member_contacts c JOIN members m ON m.id=c.member_id
-      LEFT JOIN member_aliases a ON a.member_id=m.id WHERE c.email=p.email AND m.user_id IS NULL AND a.member_id IS NULL)`)
+      LEFT JOIN member_aliases a ON a.member_id=m.id WHERE c.email=p.email AND m.user_id IS NULL AND m.removed_at IS NULL AND a.member_id IS NULL)`)
     .bind(userID,Date.now()-300000).first();
   if (recent) return;
   // Always verify current ownership before claiming an email-addressed seat.

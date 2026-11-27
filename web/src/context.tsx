@@ -7,16 +7,26 @@ import {
   type ReactNode,
 } from "react";
 import type { Snapshot } from "./data";
-export const LedgerContext = createContext<{
+
+export interface LedgerContextValue {
   data: Snapshot;
   user: string;
+  userName: string;
+  userAvatar?: string | null;
+  demo: boolean;
+  exitDemo?: () => void;
   request: <T>(path: string, body?: unknown, photo?: boolean) => Promise<T>;
   save: (path: string, body: unknown) => Promise<void>;
   refresh: () => Promise<void>;
-} | null>(null);
+  checking: boolean;
+}
+
+export const LedgerContext = createContext<LedgerContextValue | null>(null);
+
 export function useLedger() {
   return useContext(LedgerContext)!;
 }
+
 export function Form({
   children,
   submit,
@@ -46,20 +56,23 @@ export function Form({
     }
   }
   return (
-    <form onSubmit={send}>
-      <fieldset disabled={busy}>
+    <form onSubmit={send} className="form-stack">
+      <fieldset disabled={busy} style={{ border: 0, padding: 0, margin: 0 }} className="form-stack">
         {children}
         {error && (
-          <p role="alert" className="error">
+          <p role="alert" className="error-banner">
             {error}
           </p>
         )}
-        <button className="primary" type="submit">
-          {busy ? "Saving…" : label}
-        </button>
+        <div>
+          <button className="btn btn-primary" type="submit">
+            {busy ? "Saving…" : label}
+          </button>
+        </div>
       </fieldset>
     </form>
   );
 }
+
 export const value = (f: FormData, key: string) =>
   String(f.get(key) ?? "").trim();

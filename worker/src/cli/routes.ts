@@ -8,10 +8,12 @@ import { body, HTTPError, json } from '../http';
 import { InputError } from '../ledger';
 import { operate, type LedgerHandler } from './operations';
 
+const toolRequestLimit = 1_650_000;
+
 export async function cliRoute(request: Request, env: Env, user: string, handle: LedgerHandler) {
   if (new URL(request.url).pathname === '/v1/cli') {
     if (request.method !== 'POST') throw new HTTPError(405,'Use POST.');
-    const { name, arguments: args } = await body(request);
+    const { name, arguments: args } = await body(request, toolRequestLimit);
     if (typeof name !== 'string') throw new InputError('Specify a command.');
     return json(await operate(name, args ?? {}, env, user, handle));
   }
@@ -32,7 +34,7 @@ export async function cliRoute(request: Request, env: Env, user: string, handle:
       return { isError: true, content: [{ type: 'text', text: e.message }] };
     }
   });
-  const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true, maxRequestBodySize: 32768 });
+  const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true, maxRequestBodySize: toolRequestLimit });
   await server.connect(transport);
   try { return await transport.handleRequest(request); }
   finally { await server.close(); }

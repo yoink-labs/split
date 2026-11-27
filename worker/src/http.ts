@@ -1,6 +1,16 @@
 import { InputError } from './ledger';
 export class HTTPError extends Error { constructor(public status: number, message: string) { super(message); } }
 export const json=(body:unknown,status=200)=>Response.json(body,{status,headers:{'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}});
+export function optionalDay(value: unknown, label: string): string | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null || value === '') return null;
+  const day = typeof value === 'string' ? value.trim() : '';
+  const date = new Date(day + 'T00:00:00Z');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || !Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== day) {
+    throw new InputError(`Use a valid YYYY-MM-DD date for the ${label}.`);
+  }
+  return day;
+}
 export async function body(request:Request,limit=32_768):Promise<Record<string,unknown>> {
   if (!request.headers.get('content-type')?.includes('application/json')) throw new HTTPError(415,'Send JSON.');
   const reader=request.body?.getReader(); if(!reader) throw new InputError('Missing body.');

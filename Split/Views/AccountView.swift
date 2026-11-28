@@ -261,7 +261,8 @@ struct AccountView: View {
                     }
                     rowDivider
                     NavigationLink {
-                        PaymentSettings(initial: store.state.snapshot.paymentMethods)
+                        PaymentSettings(initial: store.state.snapshot.paymentMethods,
+                                        shareWithFriends: store.state.snapshot.sharePaymentWithFriends ?? false)
                     } label: {
                         settingsRow(icon: "creditcard", title: "Payment methods", subtitle: "Choose how people can pay you") {
                             Image(systemName: "chevron.right")

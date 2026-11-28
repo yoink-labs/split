@@ -197,6 +197,7 @@ struct Avatar: View {
     var name: String
     var size: CGFloat = 40
     var tint: Color? = nil
+    var avatarURL: String? = nil
     private var color: Color {
         if let tint { return tint }
         let colors: [Color] = [Palette.evergreen, Palette.coral, Palette.sky, Palette.amber, Palette.lavender]
@@ -204,15 +205,31 @@ struct Avatar: View {
         return colors[scalar % colors.count]
     }
     var body: some View {
+        Group {
+            if let avatarURL, let url = URL(string: avatarURL), url.scheme == "https" || url.scheme == "data" {
+                AsyncImage(url: url) { image in
+                    image.resizable().scaledToFill()
+                } placeholder: {
+                    fallback
+                }
+            } else {
+                fallback
+            }
+        }
+        .frame(width: size, height: size)
+        .clipShape(Circle())
+        .overlay(Circle().stroke(color.opacity(0.20), lineWidth: 1))
+        .accessibilityHidden(true)
+    }
+
+    private var fallback: some View {
         Text(initials)
-            .font(.system(size: max(11, size * 0.36), weight: .bold, design: .default))
+            .font(.system(size: max(11, size * 0.36), weight: .bold))
             .frame(width: size, height: size)
             .background(color.opacity(0.16))
             .foregroundStyle(color)
-            .clipShape(Circle())
-            .overlay(Circle().stroke(color.opacity(0.20), lineWidth: 1))
-            .accessibilityHidden(true)
     }
+
     private var initials: String {
         let parts = name.split(separator: " ").prefix(2)
         let value = parts.compactMap { $0.first.map(String.init) }.joined()

@@ -18,6 +18,7 @@ import {
   type ActiveInvite,
   type Expense,
   type Invitation,
+  type SentFriendRequest,
   type ExpenseComment,
   type Group,
   type InboxReceipt,
@@ -95,7 +96,14 @@ function DemoLedger({ onExit }: { onExit: () => void }) {
   const claimEmails = useRef<Record<string, Record<string, string>>>({});
   const invitesRef = useRef<Record<string, ActiveInvite[]>>(initial.invites);
   const memberLinksRef = useRef<Record<string, { id: string; memberName: string; actorName: string; userName: string }[]>>({});
-  const friendsRef = useRef(initial.directory.slice(0, 1));
+  const friendsRef = useRef(initial.directory.slice(0, 3).map((person, index) => index === 0
+    ? { ...person, paymentMethods: [
+      { platform: "venmo", handle: "@maya-lin", preferred: true },
+      { platform: "zelle", handle: "maya@example.test" },
+    ] } : person));
+  const sentRequestsRef = useRef<SentFriendRequest[]>([
+    { id: "demo-sent", label: "sam@example.test", expiresAt: Date.now() + 10 * 86_400_000 },
+  ]);
   const invitationsRef = useRef<Invitation[]>(initial.invitations);
   const photosRef = useRef<Record<string, Blob>>(initial.photos);
   const inboxRef = useRef<InboxReceipt[]>(initial.inbox);
@@ -448,12 +456,13 @@ function DemoLedger({ onExit }: { onExit: () => void }) {
 
       const payMatch = path.match(/^\/v1\/groups\/([\w-]+)\/payment-profile$/);
       if ((payMatch || path === "/v1/profile/payment-methods") && body) {
-        const { methods } = body as { methods: PaymentMethod[] | null };
+        const { methods, shareWithFriends } = body as { methods: PaymentMethod[] | null; shareWithFriends?: boolean };
         setData((prev) => {
           const paymentMethods = payMatch ? prev.paymentMethods : methods ?? [];
           return {
             ...prev,
             paymentMethods,
+            sharePaymentWithFriends: shareWithFriends ?? prev.sharePaymentWithFriends,
             groups: prev.groups.map((group) => payMatch && group.id !== payMatch[1] ? group : {
               ...group,
               members: group.members.map((person) => {
@@ -467,10 +476,24 @@ function DemoLedger({ onExit }: { onExit: () => void }) {
         return { ok: true } as T;
       }
 
-      if (path === "/v1/people/known") return [...new Map([...initial.directory, ...friendsRef.current].map((person) => [person.userID, person])).values()] as T;
+      if (path === "/v1/people/known") return [...new Map([...initial.directory, ...friendsRef.current].map(({ userID, name, avatarURL }) => [userID, { userID, name, avatarURL }])).values()] as T;
       if (path === "/v1/people/shared") return initial.directory as T;
       if (path === "/v1/friends") return friendsRef.current as T;
-      if (path === "/v1/friends/requests" && body) return { ok: true } as T;
+      if (path === "/v1/friends/requests") {
+        if (!body) return sentRequestsRef.current as T;
+        const { email, userID } = body as { email?: string; userID?: string };
+        const label = email?.trim().toLowerCase() ?? initial.directory.find((person) => person.userID === userID)?.name;
+        if (label && !sentRequestsRef.current.some((item) => item.label === label)) sentRequestsRef.current = [
+          { id: crypto.randomUUID(), label, expiresAt: Date.now() + 14 * 86_400_000 },
+          ...sentRequestsRef.current,
+        ];
+        return { ok: true } as T;
+      }
+      const cancelFriend = path.match(/^\/v1\/friends\/requests\/([\w-]+)\/cancel$/);
+      if (cancelFriend && body) {
+        sentRequestsRef.current = sentRequestsRef.current.filter(({ id }) => id !== cancelFriend[1]);
+        return { ok: true } as T;
+      }
       const unfriend = path.match(/^\/v1\/friends\/([\w-]+)\/remove$/);
       if (unfriend && body) {
         friendsRef.current = friendsRef.current.filter((person) => person.userID !== unfriend[1]);

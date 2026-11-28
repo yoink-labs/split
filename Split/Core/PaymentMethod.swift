@@ -1,6 +1,6 @@
 import Foundation
 
-struct PaymentMethod: Codable, Equatable {
+struct PaymentMethod: Codable, Hashable {
     var platform: String
     var handle: String
     var preferred: Bool? = nil

@@ -1,3 +1,4 @@
+import { FormPicker, Picker } from "./picker";
 import { balanceLine } from "../../worker/src/ledger";
 import { GroupTypePicker } from "./tripFields";
 import { DiscoverySetting } from "./people";
@@ -25,7 +26,6 @@ import {
   type Group,
 } from "./data";
 import { fx, useHomeCurrency } from "./fx";
-import { CurrencySelect } from "./fxui";
 import { memberBalances, useHomeMoney } from "./homeMoney";
 import { Avatar, AvatarStack, BalanceBadge, CategoryIcon, EmptyState, TIP_URL } from "./ui";
 
@@ -250,14 +250,10 @@ export function NewGroup() {
             <textarea name="description" maxLength={400} placeholder="What is this group for?" />
           </label>
           <div className="form-row">
-            <label className="field">
+            <div className="field">
               Group settlement currency
-              <select name="currency" defaultValue="USD">
-                {currencies.map((c) => (
-                  <option key={c}>{c}</option>
-                ))}
-              </select>
-            </label>
+              <FormPicker label="Currency" name="currency" defaultValue="USD" search options={currencies.map((code) => ({ value: code, label: code }))} />
+            </div>
             <label className="field">
               Add people now (comma-separated, optional)
               <input
@@ -730,8 +726,8 @@ export function Account() {
 
       <div className="card card-pad form-stack">
         <h3>Payment methods</h3>
-        <PaymentEditor initial={data.paymentMethods ?? []}
-          save={(methods) => save("/v1/profile/payment-methods", { methods })} />
+        <PaymentEditor initial={data.paymentMethods ?? []} shareWithFriends={data.sharePaymentWithFriends}
+          save={(methods, shareWithFriends) => save("/v1/profile/payment-methods", { methods, shareWithFriends })} />
       </div>
 
       <DiscoverySetting />
@@ -741,14 +737,10 @@ export function Account() {
       {/* Currency */}
       <div className="card card-pad form-stack">
         <div className="form-row">
-          <label className="field">
+          <div className="field">
             Home currency
-            <select value={home} onChange={(e) => setHome(e.target.value)}>
-              {currencies.map((c) => (
-                <option key={c}>{c}</option>
-              ))}
-            </select>
-          </label>
+            <Picker label="Home currency" value={home} onChange={setHome} search options={currencies.map((code) => ({ value: code, label: code }))} />
+          </div>
         </div>
         <p className="muted" style={{ fontSize: 12.5 }}>
           Free currency conversion uses ECB (Frankfurter) and BCRA official rates for ARS, plus custom manual rates on any expense.

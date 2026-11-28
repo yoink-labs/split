@@ -165,6 +165,7 @@ struct Snapshot: Codable, Equatable {
     var entries: [LedgerEntry] = []
     var settlementRequests: [LedgerEntry]?
     var paymentMethods: [PaymentMethod]?
+    var sharePaymentWithFriends: Bool?
     /// Pending invitations to groups this account has not joined yet.
     var invitationCount: Int?
     /// Whether people search can find this account. The server default is true.

@@ -13,11 +13,12 @@ export { photoData };
 import version from './release/version.json' with { type: 'json' };
 export { version };
 const spelling = tool => tool.name.replaceAll('_',' ');
+const flagName = key => key === 'chargedAmount' ? 'charged-amount' : key;
 function usage(tool) {
   const { properties, required } = tool.inputSchema;
   const args = Object.entries(properties).filter(([key]) => key !== 'file' || !properties.csv).map(([key, spec]) => {
     if (key === 'csv') return '(--file PATH [--file PATH ...] | --csv VALUE [--file NAME])';
-    const flag = '--' + key + (spec.type === 'boolean' ? '' : (spec.type === 'array' || spec.type === 'object') ? ' JSON' : ' VALUE');
+    const flag = '--' + flagName(key) + (spec.type === 'boolean' ? '' : (spec.type === 'array' || spec.type === 'object') ? ' JSON' : ' VALUE');
     return required.includes(key) ? flag : '[' + flag + ']';
   });
   if (properties.photos) args.push('[--photo PATH ...]');
@@ -74,9 +75,9 @@ export function describeGroupDelete(raw) {
     'To delete without a prompt: split groups delete --group ' + p.group + ' --yes --revision ' + p.revision].join('\n');
 }
 function describeExpense(entry) {
-  const money = cents => {
+  const money = (cents, currency = entry.currency) => {
     const digits = String(cents).padStart(3, '0');
-    return `${entry.currency} ${digits.slice(0, -2)}.${digits.slice(-2)}`;
+    return `${currency} ${digits.slice(0, -2)}.${digits.slice(-2)}`;
   };
   const portions = people => people.map(p => `${p.memberID} (${money(p.amount)})`).join(', ');
   const lines = [
@@ -91,7 +92,8 @@ function describeExpense(entry) {
   if (entry.notes) lines.push(`  Notes: ${entry.notes}`);
   if (entry.handled) lines.push('  Handled outside Split');
   if (entry.exchange) {
-    const { target, rateE8, source, date } = entry.exchange;
+    const { target, rateE8, source, date, statementAmount } = entry.exchange;
+    if (statementAmount !== undefined) lines.push(`  Actually charged (override): ${money(statementAmount, target)}`);
     lines.push(`  Exchange: 1 ${entry.currency} = ${rateE8 / 100_000_000} ${target} (${source}, ${date})`);
   }
   if (entry.bill) {
@@ -155,7 +157,7 @@ export async function main(argv = process.argv.slice(2), io = terminal()) {
         const description = key === 'file' && tool.inputSchema.properties.csv
           ? 'Path to a CSV export. Repeat for multiple files. With --csv, supply a file name.'
           : spec.description;
-        return '  --' + key + '  ' + description;
+        return '  --' + flagName(key) + '  ' + description;
       })].join('\n') : help;
       return compact ? print({ help: message }, true) : console.log(message);
     }
@@ -179,7 +181,7 @@ export async function main(argv = process.argv.slice(2), io = terminal()) {
       return print({ signedIn:false, revoked:true },compact);
     }
     if (!tool) throw new Error('Unknown command. Run split --help.');
-    const options = Object.fromEntries(Object.entries(tool.inputSchema.properties).map(([key,spec]) => [key, {type:spec.type === 'boolean' ? 'boolean' : 'string'}]));
+    const options = Object.fromEntries(Object.entries(tool.inputSchema.properties).map(([key,spec]) => [flagName(key), {type:spec.type === 'boolean' ? 'boolean' : 'string'}]));
     if (tool.inputSchema.properties.photos) options.photo = { type:'string', multiple:true };
     if (tool.inputSchema.properties.csv) options.file = { type:'string', multiple:true };
     if (outputs.has(tool.name)) options.out = { type:'string' };
@@ -187,7 +189,8 @@ export async function main(argv = process.argv.slice(2), io = terminal()) {
     const parsed = parseArgs({ args: words.slice(spelling(tool).split(' ').length), options });
     const paths = tool.inputSchema.properties.photos ? parsed.values.photo : undefined;
     if (paths) delete parsed.values.photo;
-    const { file: files, out, ...values } = parsed.values;
+    const { file: files, out, "charged-amount": chargedAmount, ...values } = parsed.values;
+    if (chargedAmount !== undefined) values.chargedAmount = chargedAmount;
     const confirmed = tool.name === 'import_splitwise' && values.yes;
     if (tool.name === 'import_splitwise') delete values.yes;
     const guided = io.interactive && !compact;

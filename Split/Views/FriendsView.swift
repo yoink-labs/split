@@ -119,15 +119,13 @@ private struct FriendHistoryRow: View {
     var entry: LedgerEntry
     var group: ExpenseGroup
     var currentUserID: String?
-    private var net: Int64 {
-        guard let me = Analytics.me(in: group, userID: currentUserID) else { return 0 }
-        return Ledger.net(entry, for: me.id)
-    }
+    private var me: Person? { Analytics.me(in: group, userID: currentUserID) }
     private var date: String {
         guard let date = ISO8601DateFormatter().date(from: entry.createdAt) else { return String(entry.createdAt.prefix(10)) }
         return date.formatted(.dateTime.month(.abbreviated).day())
     }
     var body: some View {
+        let (net, netText) = me.map { fx.entryNet(entry, for: $0.id) } ?? (0, "")
         HStack(alignment: .center, spacing: 10) {
             CategoryBadge(category: entry.category, size: 36)
             VStack(alignment: .leading, spacing: 3) {
@@ -144,8 +142,8 @@ private struct FriendHistoryRow: View {
             VStack(alignment: .trailing, spacing: 2) {
                 EntryAmount(entry: entry, size: 14)
                 if entry.isSpending && net != 0 {
-                    Text(entry.isRefund ? (net > 0 ? "you get back \(fx.entryText(entry, amount: net))" : "you owe \(fx.entryText(entry, amount: abs(net))) · \(entry.refundOf == nil ? "credit you’re giving" : "refund you received for others")")
-                         : net > 0 ? "you lent \(fx.entryText(entry, amount: net))" : "you owe \(fx.entryText(entry, amount: abs(net)))")
+                    Text(entry.isRefund ? (net > 0 ? "you get back \(netText)" : "you owe \(netText) · \(entry.refundOf == nil ? "credit you’re giving" : "refund you received for others")")
+                         : net > 0 ? "you lent \(netText)" : "you owe \(netText)")
                         .font(.caption2.weight(.semibold))
                         .foregroundStyle(net > 0 ? Palette.positive : Palette.negative)
                         .lineLimit(2)

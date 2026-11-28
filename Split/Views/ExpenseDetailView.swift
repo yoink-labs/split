@@ -23,6 +23,7 @@ struct EntryDetails: View {
     @State private var assignment: Assignment?
     @State private var gallery: ReceiptPresentation?
     @State private var editing = false
+    @State private var chargeHistory: [ChargedAmountChange] = []
     @State private var deleting = false
     @State private var working = false
     @State private var repeatWorking = false
@@ -122,6 +123,12 @@ struct EntryDetails: View {
                 }
             }
         }
+        .task(id: [entry.id, entry.exchange?.target ?? "", String(entry.exchange?.statementAmount ?? 0)]) {
+            guard entry.kind == "expense" else { return }
+            if let history = try? await store.chargedAmountHistory(for: entry.id), !Task.isCancelled {
+                chargeHistory = history
+            }
+        }
     }
 
     private var content: some View {
@@ -161,6 +168,7 @@ struct EntryDetails: View {
                     }
                     if !showsBreakdownFirst { breakdown }
                     if let notes = entry.notes, !notes.isEmpty { notesCard(notes) }
+                    if !chargeHistory.isEmpty { chargeHistoryCard }
                     reactionsCard
                     Card {
                         CommentsView(entryID: entry.id) {
@@ -264,7 +272,7 @@ struct EntryDetails: View {
                 }
                 EntryAmount(entry: entry, size: 34)
                 if entry.currency != fx.home {
-                    Text("Charged \(Money.text(entry.amount, entry.currency))")
+                    Text("\(entry.exchange?.statementAmount == nil ? "Charged" : "Original amount") \(Money.text(entry.amount, entry.currency))")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 HStack(alignment: .center, spacing: 8) {
@@ -318,19 +326,19 @@ struct EntryDetails: View {
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(Palette.evergreen)
         } else if entry.isRefund, let me {
-            let net = Ledger.net(entry, for: me.id)
-            Text(net > 0 ? "You get back \(fx.entryText(entry, amount: net))"
-                 : net < 0 ? "You owe \(fx.entryText(entry, amount: abs(net))) · \(entry.refundOf == nil ? "credit you’re giving" : "refund you received for others")" : "Not involved")
+            let (net, netText) = fx.entryNet(entry, for: me.id)
+            Text(net > 0 ? "You get back \(netText)"
+                 : net < 0 ? "You owe \(netText) · \(entry.refundOf == nil ? "credit you’re giving" : "refund you received for others")" : "Not involved")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(net > 0 ? Palette.positive : net < 0 ? Palette.negative : Palette.muted)
                 .multilineTextAlignment(.trailing)
                 .fixedSize(horizontal: false, vertical: true)
         } else if let me {
-            let net = Ledger.net(entry, for: me.id)
+            let (net, netText) = fx.entryNet(entry, for: me.id)
             Text(net > 0
-                 ? "You lent \(fx.entryText(entry, amount: net))"
+                 ? "You lent \(netText)"
                  : net < 0
-                 ? "You owe \(fx.entryText(entry, amount: abs(net)))"
+                 ? "You owe \(netText)"
                  : "Not involved")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(net > 0 ? Palette.positive : net < 0 ? Palette.negative : Palette.muted)
@@ -454,17 +462,40 @@ struct EntryDetails: View {
 
     // MARK: - Money and receipt
 
+    private var chargeHistoryCard: some View {
+        Card {
+            VStack(alignment: .leading, spacing: 8) {
+                SectionHeader(title: "Charged amount history")
+                ForEach(chargeHistory) { change in
+                    let before = change.previousAmount.flatMap { amount in
+                        change.previousCurrency.map { Money.text(amount, $0) }
+                    } ?? "Exchange rate"
+                    let after = change.chargedAmount.flatMap { amount in
+                        change.chargedCurrency.map { Money.text(amount, $0) }
+                    } ?? "Exchange rate"
+                    Text("\(FXQuote.shortDay(String(change.changedAt.prefix(10)))) · \(before) → \(after)")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
     private var settlementCard: some View {
         let settled = entry.settling
         return Card {
             VStack(alignment: .leading, spacing: 10) {
                 SectionHeader(title: "Settlement value", subtitle: entry.exchange?.target)
                 HStack {
-                    Text(settled.currency)
+                    Text(entry.exchange?.statementAmount == nil ? settled.currency : "Actually charged (override)")
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(.secondary)
                     Spacer()
                     AmountText(minor: settled.amount, currency: settled.currency, size: 22)
+                }
+                if entry.exchange?.statementAmount != nil {
+                    LabeledContent("Original amount", value: Money.text(entry.amount, entry.currency))
+                        .font(.subheadline)
                 }
                 if let exchange = entry.exchange {
                     Text(exchange.description(base: entry.currency))

@@ -818,7 +818,7 @@ export function ReceiptsHub({
                   {selected.splits.map((s) => (
                     <div className="row" key={s.memberID}>
                       <span>{memberName(g, s.memberID)}</span>
-                      <b className="num">{homeMoney.entry(selected, s.amount)}</b>
+                      <b className="num">{homeMoney.portion(selected, s.memberID)}</b>
                     </div>
                   ))}
                 </div>

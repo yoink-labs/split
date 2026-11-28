@@ -123,7 +123,7 @@ test('CLI downloads write files and confirmed edits print one result', async t =
   const exported = await run(['groups', 'export', '--group', group, '--format', 'json', '--out', exportPath, '--json']);
   const ledger = await run(['groups', 'export', '--group', group, '--out', ledgerPath, '--json']);
   const edit = await run(['expenses', 'edit', '--group', group, '--expense', expense, '--category', 'Shopping', '--yes', '--json']);
-  const plainEdit = await run(['expenses', 'edit', '--group', group, '--expense', expense, '--category', 'Shopping', '--yes', '--revision', 'revision']);
+  const plainEdit = await run(['expenses', 'edit', '--group', group, '--expense', expense, '--category', 'Shopping', '--charged-amount', '24.37', '--yes', '--revision', 'revision']);
   assert.equal(edit.stderr, '');
   assert.deepEqual(JSON.parse(edit.stdout), { applied: true, id: expense, category: 'Shopping' });
   assert.equal(plainEdit.stderr, '');
@@ -140,7 +140,7 @@ test('CLI downloads write files and confirmed edits print one result', async t =
     { name: 'groups_export', arguments: { group } },
     { name: 'expenses_edit', arguments: { group, expense, category: 'Shopping', yes: false } },
     { name: 'expenses_edit', arguments: { group, expense, category: 'Shopping', yes: true, revision: 'revision' } },
-    { name: 'expenses_edit', arguments: { group, expense, category: 'Shopping', yes: true, revision: 'revision' } }
+    { name: 'expenses_edit', arguments: { group, expense, category: 'Shopping', chargedAmount: '24.37', yes: true, revision: 'revision' } }
   ]);
 });
 

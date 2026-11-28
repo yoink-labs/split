@@ -103,6 +103,35 @@ describe('Group tools',()=>{
     await call('/v1/entries',{...charge,id:'fallback-charge',exchange:{target:'ARS',rateE8:50_000_000,date:'2025-02-01',source:'Frankfurter blended'}});
     await expect(call('/v1/entries',{...charge,id:'invalid-statement',exchange:{...charge.exchange,statementAmount:-1}})).rejects.toThrow('statement');
   });
+  it('uses a charged override with a saved rate, audits edits and clears back to that rate',async()=>{
+    const charge:Entry={...entry,id:'charged-override',currency:'BRL',amount:1001,
+      splits:[{memberID:owner,amount:501},{memberID:guest,amount:500}],
+      payers:[{memberID:owner,amount:800},{memberID:guest,amount:201}],
+      exchange:{target:'ARS',rateE8:200_000_000,date:'2025-01-31',source:'Trip'}};
+    await call('/v1/entries',charge);
+    const editPath='/v1/entries/'+charge.id+'/edit';
+    const historyPath='/v1/entries/'+charge.id+'/charged-amount-history';
+    const snapshot=async()=> (await call('/v1/snapshot')).entries.find((e:Entry)=>e.id===charge.id) as Entry;
+    const original=await snapshot();
+    const updated={...original,exchange:{...original.exchange!,statementAmount:1901}};
+    await expect(call(editPath,{original,entry:updated},'stranger')).rejects.toThrow('recorded');
+    await expect(call(editPath,{original,entry:{...updated,exchange:{...updated.exchange,statementAmount:19.01}}})).rejects.toThrow('statement');
+    await call(editPath,{original,entry:updated});
+    const saved=await snapshot();
+    expect(saved.exchange).toEqual(updated.exchange);
+    const settled=settlementEntry(saved);
+    expect(settled.amount).toBe(1901);
+    expect(settled.splits.map(s=>s.amount)).toEqual([951,950]);
+    expect(settled.payers?.map(p=>p.amount)).toEqual([1519,382]);
+    expect(balances([saved],'ARS')).toEqual({[owner]:568,[guest]:-568});
+    await expect(call(historyPath,undefined,'stranger')).rejects.toThrow('member');
+    await call(editPath,{original:saved,entry:{...saved,exchange:charge.exchange}});
+    expect(settlementEntry(await snapshot()).amount).toBe(2002);
+    expect((await call(historyPath)).history).toMatchObject([
+      {previousCurrency:'ARS',previousAmount:1901,chargedCurrency:null,chargedAmount:null},
+      {previousCurrency:null,previousAmount:null,chargedCurrency:'ARS',chargedAmount:1901},
+    ]);
+  });
   it('preserves a statement total when an older client edits the expense',async()=>{
     const charge={...entry,id:'legacy-statement',currency:'USD',
       exchange:{target:'ARS',rateE8:140_000_000,date:'2025-01-31',source:'Statement',statementAmount:1400}};

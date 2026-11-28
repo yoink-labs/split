@@ -200,6 +200,23 @@ describe('CLI and MCP', () => {
     expect((await send('expenses_edit', {...edit, yes:true, revision:review.revision})).status).toBe(200);
     expect(await (await send('expenses_show', {group, expense})).json()).toMatchObject(review.after);
   });
+  it('records and clears a foreign card override through the CLI and MCP expense arguments', async () => {
+    const token = await authorize('alex');
+    async function run(name:string, args:object) {
+      const r = await fetch('/v1/cli',{name,arguments:args},token);
+      expect(r.status).toBe(200);
+      return r.json();
+    }
+    const {id:group,members} = await run('groups_create',{name:'Trip',self:'Alex',currency:'USD'});
+    const added = await run('expenses_add',{group,title:'Dinner',amount:'125.00',currency:'BRL',
+      payer:members[0].id,rate:'0.20',chargedAmount:'24.37'});
+    expect(added).toMatchObject({amount:12500,settlementAmount:2437,exchange:{rateE8:20_000_000,statementAmount:2437}});
+    const edit={group,expense:added.id,chargedAmount:'none'};
+    const preview=await run('expenses_edit',edit);
+    expect(preview.after.exchange.statementAmount).toBeUndefined();
+    await run('expenses_edit',{...edit,yes:true,revision:preview.revision});
+    expect(await run('expenses_show',{group,expense:added.id})).toMatchObject({settlementAmount:2500});
+  });
   it('validates operations, resolves placeholders and preserves the reviewed expense on conflict', async () => {
     const token = await authorize('alex'), outsider = await authorize('maya');
     async function run(name:string, args:object, device=token) {

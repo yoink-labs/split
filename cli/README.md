@@ -105,6 +105,11 @@ Use `--format` to select what an export file contains. With `--json --out`, the 
 
 To delete a group in a terminal, `--yes` prompts you to type its name. For scripts and MCP, pass the revision from the preview as well. A payment recipient can approve or decline it. The payer can cancel it while approval is pending.
 
+For a foreign expense, pass `--charged-amount 24.37` to `split expenses add` or
+`split expenses edit` to use the actual card total in the settlement currency.
+Pass `--charged-amount none` on edit to return to rate conversion. MCP uses
+`chargedAmount` for the same option.
+
 ### Importing Splitwise exports
 
 The CLI uses the same CSV parser as the web importer. It accepts localized exports, friend exports, and files with multiple supported currencies.

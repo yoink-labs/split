@@ -135,10 +135,11 @@ function DownloadIcon() {
 
 /** One entry's money in the preferred currency (`converted`) and as recorded (`recorded`). */
 function entryMoney(e: Expense, projected: Expense | null, home: string, format: Format) {
-  const foreign = e.currency !== home;
+  const foreign = e.currency !== home || e.exchange?.statementAmount !== undefined;
+  const estimated = (e.exchange?.statementAmount !== undefined ? e.exchange.target : e.currency) !== home;
   return {
     foreign,
-    converted: (amount: number) => (projected ? format(amount, foreign) : null),
+    converted: (amount: number) => (projected ? format(amount, estimated) : null),
     recorded: (amount: number) => (foreign ? money(amount, e.currency) : undefined),
   };
 }
@@ -606,6 +607,7 @@ export function GroupSummary() {
                           <td>{e.kind === "refund" && "Received by "}{peopleList(entryPayers(e), person)}</td>
                           <td className="r">
                             {e.kind === "refund" && "−"}<Amount converted={m.converted(projected.get(e.id)?.amount ?? 0)} recorded={m.recorded(e.amount)} label="Recorded" />
+                            {e.exchange?.statementAmount !== undefined && <div className="sum-dim">Charged amount override {money(e.exchange.statementAmount, e.exchange.target)}</div>}
                           </td>
                         </tr>
                         {e.bill && entryItems(e).map((item) => (
@@ -757,7 +759,8 @@ function Figure({ label, children }: { label: string; children: ReactNode }) {
 
 /** "1 ARS = 0.000854 USD · published rate for the expense date (…)" and any stored settlement conversion. */
 function RateLines({ e, home }: { e: Expense; home: string }) {
-  const foreign = e.currency !== home;
+  const base = e.exchange?.statementAmount !== undefined ? e.exchange.target : e.currency;
+  const foreign = base !== home;
   const rate = homeRate(e, home, fx);
   const settled = e.exchange ? settlementEntry(e) : null;
   if (!foreign && !settled) return null;
@@ -765,7 +768,7 @@ function RateLines({ e, home }: { e: Expense; home: string }) {
     <div className="sum-entry-fx">
       {foreign && rate && (
         <span>
-          1 {e.currency} = {rateText(rate.rateE8)} {home} ·{" "}
+          1 {base} = {rateText(rate.rateE8)} {home} ·{" "}
           {rate.kind === "stored"
             ? `rate saved with the expense (${rateSource(rate)})`
             : rate.kind === "dated"
@@ -777,10 +780,10 @@ function RateLines({ e, home }: { e: Expense; home: string }) {
       )}
       {foreign && !rate && (
         <span>
-          No {e.currency} → {home} rate; recorded amounts shown.
+          No {base} → {home} rate; recorded amounts shown.
         </span>
       )}
-      {settled && e.exchange && e.exchange.target !== home && (
+      {settled && e.exchange && e.exchange.statementAmount === undefined && e.exchange.target !== home && (
         <span>
           Settles as {money(settled.amount, settled.currency)} at 1 {e.currency} = {rateText(e.exchange.rateE8)} {e.exchange.target}{" "}
           (saved with the expense, {rateSource(e.exchange)})
@@ -804,6 +807,7 @@ function EntryHead({ person, e, home, projected, format }: EntryProps) {
           {payment ? "Settle-up payment" : e.category ?? "Uncategorized"}
           {refund ? <> · {e.refundOf ? "Refund" : "Credit"} received by {peopleList(payers, person)}</>
             : !payment && <> · Paid by {peopleList(payers, person)}</>}
+          {e.exchange?.statementAmount !== undefined && ` · Charged amount override ${money(e.exchange.statementAmount, e.exchange.target)}`}
           {e.handled && " · Already handled (not in balances)"}
           {e.pending && ` · Pending${e.pendingNote ? ": " + e.pendingNote : ""} (in balances)`}
           {e.bill && !e.bill.closed && e.bill.items.some((i) => !i.memberIDs.length) && " · Receipt still open"}

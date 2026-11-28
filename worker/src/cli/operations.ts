@@ -1,5 +1,5 @@
 import {settlementEntry} from '../exchange';
-import {rateE8 as parseRate} from '../fx';
+import {impliedRate, rateE8 as parseRate, type Exchange} from '../fx';
 import { breakdown, consumptionReport, entryItems, grossItems, itemRefund, itemSplit, type Bill } from '../items';
 import { exportGroup } from './export';
 import { refundRoom, refundsOf } from '../refundMath';
@@ -13,7 +13,7 @@ import { allocate, balances, Entry, entryPayers, InputError, simplify, validateE
 
 
 interface Args {
-  cadence:string; weights:number[];rate?:string; group: string; expense: string; member: string; name: string; self: string; placeholders?: string[];
+  cadence:string; weights:number[];rate?:string; chargedAmount?:string; group: string; expense: string; member: string; name: string; self: string; placeholders?: string[];
   query: string; user?: string; email?: string; phone?: string; invitation?: string; discoverable?: 'on'|'off';
   invite: string; kind?: string; title?: string; amount?: string; payer?: string; currency?: string;
   notes?: string; date?: string;
@@ -109,10 +109,30 @@ function makeExpense(a: Args, group: Group, old?: Entry): Entry {
   const date = optionalDay(a.date, 'expense date');
   const createdAt = old?.createdAt ?? (date ? date + 'T12:00:00Z' : timestamp());
   const currency = a.currency ?? old?.currency ?? group.currency;
-  if(old?.exchange && a.currency && a.currency!==old.currency && !a.rate) throw new InputError('Supply a new rate when changing a converted currency.');
-  const rate = a.rate ? parseRate(a.rate) : !old && currency !== group.currency ? group.tripRates?.[currency] : undefined;
+  const previous = currency === old?.currency ? old.exchange : undefined;
+  const clearing = a.chargedAmount === 'none';
+  if (clearing && !old) throw new InputError('Use "none" only when editing an expense.');
+  const charged = clearing ? undefined : a.chargedAmount === undefined ? previous?.statementAmount : minor(a.chargedAmount);
+  const target = previous?.target ?? group.currency;
+  if (charged !== undefined && currency === target) throw new InputError('A charged amount override requires a foreign expense.');
+  const tripRate = currency !== group.currency && target === group.currency ? group.tripRates?.[currency] : undefined;
+  const useTripRate = (!previous && (!old || charged !== undefined || currency !== old.currency))
+    || (clearing && previous?.source === 'Statement');
+  const rate = a.rate ? parseRate(a.rate) : useTripRate ? tripRate : undefined;
   if (a.rate && !rate) throw new InputError('Enter a positive exchange rate.');
-  const exchange = rate ? {target:group.currency,rateE8:rate,source:a.rate ? 'Manual' as const : 'Trip' as const,date:createdAt.slice(0,10)} : old?.exchange;
+  const day = createdAt.slice(0,10);
+  let exchange: Exchange | undefined = rate ? {target,rateE8:rate,source:a.rate ? 'Manual' : 'Trip',date:day} : previous && {...previous};
+  if (!exchange && charged !== undefined) {
+    const implied = impliedRate(amount, charged);
+    if (!implied) throw new InputError('Check the amount charged on your statement.');
+    exchange = {target,rateE8:implied,date:day,source:'Statement'};
+  }
+  if (old?.exchange && currency !== old.currency && currency !== group.currency && !exchange)
+    throw new InputError('Supply a new rate when changing a converted currency.');
+  if (exchange) {
+    if (clearing && exchange.source === 'Statement') exchange.source = 'Manual';
+    exchange.statementAmount = charged;
+  }
   let payers=old?.payers?.length ? (amount===old.amount ? old.payers
     : allocate(amount,old.payers.map(p=>p.amount)).map((value,i)=>({memberID:old.payers![i].memberID,amount:value}))) : undefined;
   if (a.payers) {
@@ -517,7 +537,7 @@ export async function operate(name: string, input: unknown, env: Env, user: stri
   }
   if(name==='items_report') {
     if(a.member && !members.some(m=>m.id===a.member)) throw new InputError('Choose a group member.');
-    return [...new Set([group.currency,...entries.map(e=>e.currency)])].map(currency=>consumptionReport(entries,currency)).filter(r=>r.people.length)
+    return [...new Set([group.currency,...entries.map(e=>e.exchange?.statementAmount===undefined ? e.currency : e.exchange.target)])].map(currency=>consumptionReport(entries,currency)).filter(r=>r.people.length)
       .map(r=>({...r,people:r.people.filter(p=>!a.member || p.memberID===a.member).map(p=>({...p,name:nameOf(p.memberID),
         lines:p.lines.map(l=>({...l,expenseTitle:entries.find(e=>e.id===l.entryID)?.title}))}))}));
   }

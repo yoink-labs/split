@@ -3,7 +3,7 @@ import { allocate, balances, entryPayers, isSpend, moneyCompact, settlementEntry
 import { convert, fx, type FxCache, today, useFxVersion, useHomeCurrency, useRates } from "./fx";
 
 function historicPair(entry: Expense) {
-  return [entry.currency, entry.createdAt.slice(0, 10)] as const;
+  return [entry.exchange?.statementAmount !== undefined ? entry.exchange.target : entry.currency, entry.createdAt.slice(0, 10)] as const;
 }
 
 export function useLedgerRates(entries: Expense[], groupCurrencies: string[]) {
@@ -45,7 +45,7 @@ export function memberBalances(entries: Expense[], memberID: string, includePend
 export function homeRate(entry: Expense, home: string, cache: FxCache):
   | { rateE8: number; date: string; source: string; kind: "stored" | "dated" | "latest" | "manual" }
   | null {
-  if (entry.currency === home) return null;
+  if (historicPair(entry)[0] === home && entry.exchange?.target !== home) return null;
   if (entry.exchange?.target === home) return { ...entry.exchange, kind: "stored" };
   const [base, day] = historicPair(entry);
   const dated = cache.published(base, home, day);
@@ -57,6 +57,9 @@ export function homeRate(entry: Expense, home: string, cache: FxCache):
 }
 
 export function projectHomeEntry(entry: Expense, home: string, cache: FxCache): Expense | null {
+  if (entry.exchange?.statementAmount !== undefined) {
+    return projectHomeEntry({ ...entry, ...settlementEntry(entry) }, home, cache);
+  }
   if (entry.currency === home) return entry.exchange ? { ...entry, exchange: undefined } : entry;
   if (entry.exchange?.target === home) return { ...entry, ...settlementEntry(entry) };
   const quote = homeRate(entry, home, cache);
@@ -76,6 +79,10 @@ export function projectHomeEntry(entry: Expense, home: string, cache: FxCache): 
   }
 }
 
+export function entryIsEstimated(entry: Expense, home: string) {
+  return historicPair(entry)[0] !== home;
+}
+
 export function useHomeMoney() {
   const [home] = useHomeCurrency();
   useFxVersion();
@@ -84,12 +91,18 @@ export function useHomeMoney() {
     (approximate ? "≈ " : "") + (amount < 0 ? "−" : signed && amount > 0 ? "+" : "") + moneyCompact(Math.abs(amount), home);
   const project = (entry: Expense) => projectHomeEntry(entry, home, fx);
   const entry = (expense: Expense, amount = expense.amount) => {
-    if (expense.currency === home || amount === 0) return format(amount);
+    if (amount === 0 || (expense.currency === home && expense.exchange?.statementAmount === undefined)) return format(amount);
     if (amount === expense.amount) {
       const projected = project(expense);
-      return projected ? format(projected.amount, true) : "Rate unavailable";
+      return projected ? format(projected.amount, entryIsEstimated(expense, home)) : "Rate unavailable";
     }
     try {
+      if (expense.exchange?.statementAmount !== undefined && Math.abs(amount) <= expense.amount) {
+        const projected = project(expense);
+        if (!projected) return "Rate unavailable";
+        const portion = projected.amount === 0 ? 0 : allocate(projected.amount, [Math.abs(amount), expense.amount - Math.abs(amount)], Number.MAX_SAFE_INTEGER)[0];
+        return format(Math.sign(amount) * portion, entryIsEstimated(expense, home));
+      }
       const quote = homeRate(expense, home, fx);
       return quote ? format(convert(amount, quote.rateE8), true) : "Rate unavailable";
     } catch {
@@ -100,7 +113,7 @@ export function useHomeMoney() {
     const projected = project(expense);
     if (!projected) return "Rate unavailable";
     const portions = paid ? entryPayers(projected) : projected.splits;
-    return format(portions.find((part) => part.memberID === memberID)?.amount ?? 0, expense.currency !== home);
+    return format(portions.find((part) => part.memberID === memberID)?.amount ?? 0, entryIsEstimated(expense, home));
   };
   const total = (amounts: Record<string, number>) => fx.total(amounts, home);
   const totalText = (amounts: Record<string, number>, signed = false) => {
@@ -112,7 +125,7 @@ export function useHomeMoney() {
     const projected = expenses.map(project);
     return projected.some((entry) => !entry)
       ? "Rate unavailable"
-      : format(projected.reduce((sum, entry) => sum + (entry ? sign(entry) * entry.amount : 0), 0), expenses.some((entry) => entry.currency !== home));
+      : format(projected.reduce((sum, entry) => sum + (entry ? sign(entry) * entry.amount : 0), 0), expenses.some((entry) => entryIsEstimated(entry, home)));
   };
   return { home, format, project, entry, portion, total, totalText, spend };
 }

@@ -235,6 +235,15 @@ export async function deleteGroup(env:Env,groupID:string,userID:string,expected?
 
 export async function socialRoute(request:Request,env:Env,userID:string):Promise<Response|undefined> {
   const path=new URL(request.url).pathname;
+  const chargeHistory=path.match(/^\/v1\/entries\/([\w-]+)\/charged-amount-history$/);
+  if(chargeHistory && request.method==='GET') {
+    const entryID=chargeHistory[1];
+    await entryScope(env,entryID,userID);
+    const {results}=await env.DB.prepare(`SELECT id,previous_currency AS previousCurrency,previous_amount AS previousAmount,
+      charged_currency AS chargedCurrency,charged_amount AS chargedAmount,changed_at AS changedAt
+      FROM charged_amount_history WHERE entry_id=? ORDER BY id DESC LIMIT 100`).bind(entryID).all();
+    return json({history:results});
+  }
   const commentMatch=path.match(/^\/v1\/entries\/([\w-]+)\/comments(?:\/([\w-]+))?$/);
   if(commentMatch) {
     const [,entryID,commentID]=commentMatch;

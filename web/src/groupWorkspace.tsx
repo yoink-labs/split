@@ -65,6 +65,10 @@ function ExpenseDrawer({
   const { request, save, user } = useLedger();
   const homeMoney = useHomeMoney();
   const nav = useNavigate();
+  const [chargeHistory, setChargeHistory] = useState<{
+    id: number; previousAmount: number | null; previousCurrency: string | null;
+    chargedAmount: number | null; chargedCurrency: string | null; changedAt: string;
+  }[]>([]);
   const [comments, setComments] = useState<ExpenseComment[]>([]);
   const [commentText, setCommentText] = useState("");
   const [busy, setBusy] = useState(false);
@@ -94,6 +98,16 @@ function ExpenseDrawer({
       alive = false;
     };
   }, [request, entry.id]);
+
+  useEffect(() => {
+    if (entry.kind !== "expense") return;
+    let alive = true;
+    setChargeHistory([]);
+    request<{ history: typeof chargeHistory }>(`/v1/entries/${entry.id}/charged-amount-history`)
+      .then(({ history }) => { if (alive) setChargeHistory(history); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [request, entry.id, entry.kind, entry.exchange?.statementAmount, entry.exchange?.target]);
 
   const payers = entryPayers(entry);
   const canSetHandled = entry.kind === "expense" && !entry.combinedCount && !entry.pending && payers.some((payer) =>
@@ -227,11 +241,14 @@ function ExpenseDrawer({
                 Refund…
               </button>
             )}
+            {entry.exchange?.statementAmount !== undefined && (
+              <p className="muted">Original amount <b className="num">{money(entry.amount, entry.currency)}</b></p>
+            )}
             {entry.exchange && (
               <p style={{ marginTop: 8, fontSize: 12.5, color: "var(--ink-2)" }}>
-                {entry.exchange.source === "Statement" ? "Statement charge" : "Settles as"} <b className="num">{money(settlementEntry(entry).amount, entry.exchange.target)}</b>{" "}
+                {entry.exchange.statementAmount !== undefined ? "Actually charged (override)" : "Settles as"} <b className="num">{money(settlementEntry(entry).amount, entry.exchange.target)}</b>{" "}
                 <span className="muted">
-                  at 1 {entry.currency} ≈ {rateText(entry.exchange.rateE8)} {entry.exchange.target} (
+                  {entry.exchange.statementAmount === undefined ? "at" : "· Saved rate"} 1 {entry.currency} ≈ {rateText(entry.exchange.rateE8)} {entry.exchange.target} (
                   {sourceLabel(entry.exchange)}
                   {entry.exchange.date > entry.createdAt.slice(0, 10) ? " · latest available" : ""}
                   )
@@ -381,6 +398,20 @@ function ExpenseDrawer({
                 <option value="monthly">Monthly</option>
                 <option value="yearly">Yearly</option>
               </select>
+            </div>
+          )}
+
+          {chargeHistory.length > 0 && (
+            <div className="card card-pad">
+              <h4>Charged amount history</h4>
+              {chargeHistory.map((change) => (
+                <p className="muted" key={change.id}>
+                  {dateText(change.changedAt)} · {change.previousAmount !== null && change.previousCurrency
+                    ? money(change.previousAmount, change.previousCurrency) : "Exchange rate"} →{" "}
+                  {change.chargedAmount !== null && change.chargedCurrency
+                    ? money(change.chargedAmount, change.chargedCurrency) : "Exchange rate"}
+                </p>
+              ))}
             </div>
           )}
 

@@ -1,5 +1,6 @@
 import { activeDisputeResolver, disputeAccess, disputeComment, disputeEvent, disputeRoute, noOpenDispute, openDisputes } from './disputes';
 import { normalizeName } from './names';
+import { historyDatabase, historyEnv, readHistory } from './history';
 import { knownPerson, knownAccount } from './relationships';
 import { legacyPayment, paymentMethods, saveAccountPayments } from './paymentProfiles';
 import { preserveStatementAmount } from './exchange';
@@ -72,6 +73,12 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
   const url=new URL(request.url), path=url.pathname;
   const dispute=await disputeRoute(request,env,userID);
   if(dispute) return dispute;
+  const history = path.match(/^\/v1\/groups\/([\w-]+)\/history$/);
+  if (history) {
+    if (request.method !== 'GET') throw new HTTPError(405, 'History is read-only.');
+    return readHistory(env.DB, history[1], userID, url.searchParams);
+  }
+  env = historyEnv(request, env, userID);
   const combination=await combinationRoute(request,env,userID);
   if(combination) return combination;
   const extra=await groupTools(request,env,userID);
@@ -293,6 +300,34 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
     if(!saved.meta.changes) throw new HTTPError(409,'This expense changed. Refresh and try again.');
     return json({ok:true});
   }
+  const restore = path.match(/^\/v1\/entries\/([\w-]+)\/restore$/);
+  if (restore && request.method === 'POST') {
+    await body(request);
+    const id = restore[1];
+    const saved = await env.DB.prepare(`SELECT e.payload,e.group_id FROM entries e
+      JOIN members m ON m.group_id=e.group_id AND m.user_id=? AND m.removed_at IS NULL
+      WHERE e.id=? AND e.author=?`).bind(userID,id,userID).first<{payload:string;group_id:string}>();
+    if (!saved) throw new HTTPError(404,'Expense unavailable.');
+    const aliases = await groupAliases(env.DB,saved.group_id);
+    const entry = resolveEntry(JSON.parse(saved.payload),aliases);
+    if (entry.kind !== 'expense' || entry.combinedCount) throw new InputError('Choose an original expense to restore.');
+    const roster = (await members(env,saved.group_id)).map(m => m.id);
+    validateEntry(entry,roster,entry.bill);
+    const result = await env.DB.prepare(`DELETE FROM deleted_entries WHERE entry_id=?
+      AND NOT EXISTS (SELECT 1 FROM active_expense_combination_sources WHERE source_id=?)
+      AND EXISTS (SELECT 1 FROM entries e JOIN members m ON m.group_id=e.group_id
+        WHERE e.id=? AND e.payload=? AND m.user_id=? AND m.removed_at IS NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM json_each(?) AS seats WHERE NOT EXISTS
+            (SELECT 1 FROM members s WHERE s.id=seats.value AND s.group_id=e.group_id)
+        ))`).bind(id,id,id,saved.payload,userID,JSON.stringify([
+          entry.paidBy,...entryPayers(entry).map(p => p.memberID),...entry.splits.map(p => p.memberID),
+          ...(entry.bill?.items.flatMap(i => i.memberIDs) ?? []),
+        ])).run();
+    if (!result.meta.changes && await env.DB.prepare('SELECT 1 FROM deleted_entries WHERE entry_id=?').bind(id).first())
+      throw new HTTPError(409,'This expense cannot be restored. Refresh and review the group.');
+    return json({ok:true});
+  }
   const revise=path.match(/^\/v1\/entries\/([\w-]+)\/(edit|delete)$/);
   if (revise && request.method==='POST') {
     const b=await body(request,1_350_000);
@@ -341,7 +376,7 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
           throw new InputError('Change the amount, split or participants to resolve by editing.');
       }
       replacement=updated;
-      if(updated.id!==revise[1] || updated.groupID!==saved.group_id || updated.createdAt!==old.createdAt || updated.kind!==old.kind || updated.refundOf!==old.refundOf)
+      if(updated.id!==revise[1] || updated.groupID!==saved.group_id || updated.kind!==old.kind || updated.refundOf!==old.refundOf)
         throw new InputError('Invalid edit.');
       guard=updated.kind==='refund' ? await refundGuard(env.DB,updated,aliases) : await refundedExpenseGuard(env.DB,updated,aliases);
       if(Boolean(updated.handled)!==Boolean(canonical.handled)) {
@@ -528,7 +563,7 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
 }
 export default {
  async scheduled(event,env) {
-   await generateRecurring(env.DB,new Date(event.scheduledTime).toISOString().slice(0,10));
+   await generateRecurring(historyDatabase(env.DB,{actor:null,action:'recurring',reason:null}),new Date(event.scheduledTime).toISOString().slice(0,10));
    try { await deliverDigests(env,event.scheduledTime); }
    catch (error) { console.error(JSON.stringify({event:'digest_run_failed',type:error instanceof Error?error.name:'unknown'})); }
  },
@@ -557,9 +592,9 @@ export default {
    }
    if (device) throw new HTTPError(403, 'Use the CLI or MCP endpoint with a device token.');
    if (url.pathname==='/v1/snapshot' || url.pathname==='/v1/join' || url.pathname==='/v1/invitations') {
-     await refreshIdentity(env,userID);
+     await refreshIdentity(historyEnv(request,env,userID),userID);
    }
    return await handle(request,env,userID);
-  }catch(error){if(error instanceof Error && /Receipt inbox is full/.test(error.message)) return json({error:'This group’s receipt inbox is full. Pair or delete a receipt first.'},409);if(error instanceof Error && /Receipt limit reached|bytes BETWEEN/.test(error.message)) return json({error:'Receipt storage limit reached.'},409);if(error instanceof Error && /Group is full|Account group limit reached/.test(error.message)) return json({error:'Member or account group limit reached.'},409);if(error instanceof HTTPError)return json({error:error.message},error.status);if(error instanceof InputError)return json({error:error.message},422);console.error(JSON.stringify({event:'request_failed',type:error instanceof Error?error.name:'unknown'}));return json({error:'Could not save this change. Please retry.'},500);}
+  }catch(error){if(error instanceof Error && /Group ID already used/.test(error.message)) return json({error:'Group ID already used.'},409);if(error instanceof Error && /Receipt inbox is full/.test(error.message)) return json({error:'This group’s receipt inbox is full. Pair or delete a receipt first.'},409);if(error instanceof Error && /Receipt limit reached|bytes BETWEEN/.test(error.message)) return json({error:'Receipt storage limit reached.'},409);if(error instanceof Error && /Group is full|Account group limit reached/.test(error.message)) return json({error:'Member or account group limit reached.'},409);if(error instanceof HTTPError)return json({error:error.message},error.status);if(error instanceof InputError)return json({error:error.message},422);console.error(JSON.stringify({event:'request_failed',type:error instanceof Error?error.name:'unknown'}));return json({error:'Could not save this change. Please retry.'},500);}
  }
 } satisfies ExportedHandler<Env>;

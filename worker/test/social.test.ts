@@ -3,9 +3,10 @@ import {beforeEach,describe,expect,it} from 'vitest';
 import {handle} from '../src/index';
 import {balances,simplify,validateEntry,type Entry} from '../src/ledger';
 
-const group='group-social',userA='user-alex',userB='user-maya',outsider='user-outsider';
+let group: string;
+const userA='user-alex',userB='user-maya',outsider='user-outsider';
 const seatA='seat-alex',seatB='seat-maya';
-const baseEntry:Entry={id:'entry-social',groupID:group,title:'Dinner',amount:1000,currency:'USD',paidBy:seatA,
+const baseEntry:Entry={id:'entry-social',groupID:'',title:'Dinner',amount:1000,currency:'USD',paidBy:seatA,
   splits:[{memberID:seatA,amount:500},{memberID:seatB,amount:500}],kind:'expense',splitMode:'equal',
   createdAt:'2026-11-17T00:00:00Z'};
 const path=(suffix:string)=>'/v1/entries/'+baseEntry.id+suffix;
@@ -26,6 +27,8 @@ async function snapshot(user:string) {
 }
 
 beforeEach(async()=>{
+  group = crypto.randomUUID();
+  baseEntry.groupID = group;
   await env.DB.prepare('INSERT INTO split_profiles VALUES (?,?,?,?,?)').bind(userB,'Maya','maya',null,Date.now()).run();
   await env.DB.prepare('INSERT INTO friendships VALUES (?,?,?,?,?)').bind('social-friends',userA,userB,1,Date.now()).run();
   await call(userA,'/v1/groups',{id:group,name:'Trip',kind:'trip',currency:'USD',
@@ -264,6 +267,11 @@ describe('expense disputes', () => {
     expect((await snapshot(userB)).entries[0].amount).toBe(entry.amount);
     expect((await call(userB,path('/dispute'))).data.history.map((e:any) => e.action)).toEqual(['opened','dismissed']);
     expect((await call(userB,'/v1/disputes/activity')).data.events.map((e:any) => e.action)).toEqual(['dismissed','opened']);
+    const { events } = (await call(userB,'/v1/groups/'+group+'/history?expense='+baseEntry.id)).data;
+    expect(events.filter((event:any) => event.action.startsWith('dispute'))).toEqual([
+      expect.objectContaining({action:'dispute-dismiss',actor:userA,reason:'The posted amount matches the receipt.'}),
+      expect.objectContaining({action:'dispute',actor:userB,reason:'Wrong amount'}),
+    ]);
   });
 
   it('lets only the disputer withdraw', async () => {
@@ -275,6 +283,8 @@ describe('expense disputes', () => {
     expect((await call(userA,'/v1/disputes')).data.disputes).toEqual([]);
     expect((await snapshot(userA)).entries[0].pending).toBeUndefined();
     expect((await call(userA,path('/comments'))).data.comments.at(-1).body).toBe('Withdrew dispute');
+    const { events } = (await call(userA,'/v1/groups/'+group+'/history?expense='+baseEntry.id)).data;
+    expect(events[0]).toMatchObject({action:'dispute-withdraw',actor:userB});
   });
 
   it('lets a payer who did not record the expense edit with a reply and clears pending atomically', async () => {
@@ -293,6 +303,9 @@ describe('expense disputes', () => {
     expect((await snapshot(userB)).entries.find(e => e.id==='payer-edit').pending).toBeUndefined();
     expect((await call(userA,'/v1/disputes')).data.disputes).toEqual([]);
     expect((await call(userA,'/v1/entries/payer-edit/comments')).data.comments.at(-1).body).toBe('Resolved by editing: Updated');
+    const { events } = (await call(userA,'/v1/groups/'+group+'/history?expense=payer-edit')).data;
+    expect(events[0]).toMatchObject({action:'dispute-edit',actor:userB,reason:'Updated'});
+    expect(events[1]).toMatchObject({action:'edit',actor:userB,changes:{amount:{before:1000,after:800}}});
     await expect(call(userB,editPath,{original,entry,disputeReply:'Updated'})).rejects.toMatchObject({status:403});
   });
 });

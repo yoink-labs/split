@@ -70,7 +70,7 @@ export function RefundForm({ g, original, entries, resolve = false, onDone, onCa
       <Form
         label={resolve ? "Confirm and record refund" : original ? "Record refund" : "Record credit"}
         cancel={onCancel}
-        submit={async () => {
+        submit={async (form) => {
           const total = mode === "items" ? itemCredit?.amount ?? 0 : minor(amountText);
           if (!total) throw new Error(mode === "items" ? "Choose the items that were refunded." : "Enter a refund greater than zero.");
           const splits = credits(total).filter((s) => s.amount > 0);
@@ -85,11 +85,13 @@ export function RefundForm({ g, original, entries, resolve = false, onDone, onCa
           };
           const problem = refundProblem(refund, original, others, g.members);
           if (problem) throw new Error(problem);
-          if (resolve && original) await save(`/v1/entries/${original.id}/resolve`, { action: "refund", refund });
-          else await save("/v1/entries", refund);
+          const reason = String(form.get("reason") ?? "").trim();
+          if (resolve && original) await save(`/v1/entries/${original.id}/resolve`, { action: "refund", refund, reason });
+          else await save("/v1/entries", { ...refund, reason });
           onDone();
         }}
       >
+        <label className="field">Reason for change (optional)<input name="reason" maxLength={500} /></label>
         {original && room && (
           <p className="muted refund-room">
             {room.total > 0 ? <>Up to <b className="num">{money(room.total, currency)}</b> of {money(original.amount, currency)} is left to refund.</>

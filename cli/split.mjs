@@ -78,11 +78,13 @@ export function describeGroupDelete(raw) {
     'Export a copy first with: split groups export --group ' + p.group + ' --format json --out backup.json',
     'To delete without a prompt: split groups delete --group ' + p.group + ' --yes --revision ' + p.revision].join('\n');
 }
+function amountText(cents, currency) {
+  const digits = String(Math.abs(cents)).padStart(3, '0');
+  return `${currency} ${cents < 0 ? "-" : ""}${digits.slice(0, -2)}.${digits.slice(-2)}`;
+}
+
 function describeExpense(entry, names = {}, receipts = entry.receiptIDs?.join(', ') || 'none') {
-  const money = (cents, currency = entry.currency) => {
-    const digits = String(Math.abs(cents)).padStart(3, '0');
-    return `${currency} ${cents < 0 ? "-" : ""}${digits.slice(0, -2)}.${digits.slice(-2)}`;
-  };
+  const money = (cents, currency = entry.currency) => amountText(cents, currency);
   const portions = people => people.map(p => `${names[p.memberID] ?? p.memberID} (${money(p.amount)})`).join(', ');
   const lines = [
     `  ${entry.title} — ${money(entry.amount)}`,
@@ -398,6 +400,31 @@ export async function main(argv = process.argv.slice(2), io = terminal()) {
     if (tool.name === 'balances' && !compact && result.some(row => row.disputesToResolve?.length)) {
       const count = result.reduce((sum, row) => sum + (row.disputesToResolve?.length ?? 0), 0);
       console.error(count + (count === 1 ? ' dispute' : ' disputes') + ' to resolve. Run split disputes list --group ' + clean(values.group) + '.');
+    }
+    if (tool.name === 'history' && !compact) {
+      if (!result.events.length) return console.log('No changes recorded.');
+      for (const event of clean(result.events)) {
+        console.log(event.timestamp + '  ' + (event.actorName ?? event.actor ?? 'Unknown actor') + '  ' +
+          event.action + ' ' + event.type + ' · ' + (event.title ?? event.entity));
+        for (const [field, { before, after }] of Object.entries(event.changes)) {
+          const format = (value, side) => {
+            const currencyField = field === 'chargedAmount' ? 'chargedCurrency' : 'currency';
+            const currency = event.changes[currencyField]?.[side] ?? event[currencyField];
+            if (currency && typeof value === 'number' && ['amount', 'chargedAmount'].includes(field))
+              return amountText(value, currency);
+            if (currency && ['splits', 'payers'].includes(field) && Array.isArray(value))
+              return value.map(p => p.memberID + ' ' + amountText(p.amount, currency) +
+                (p.nights === undefined ? '' : ' (' + p.nights + ' nights' +
+                  (p.stay ? ', ' + p.stay.start + ' to ' + p.stay.end : '') + ')')).join(', ');
+            return value == null ? 'None' : typeof value === 'string' ? value : JSON.stringify(value);
+          };
+          const change = before == null ? format(after, 'after') : format(before, 'before') + ' → ' + format(after, 'after');
+          console.log('  ' + field + ': ' + change);
+        }
+        if (event.reason) console.log('  Reason: ' + event.reason);
+      }
+      if (result.next) console.log('Earlier changes: --before ' + result.next);
+      return;
     }
     if (tool.name === 'balances' && values.member && !compact) return console.log(describeBalance(result));
     print(result,compact);

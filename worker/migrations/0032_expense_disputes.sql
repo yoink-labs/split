@@ -34,6 +34,16 @@ BEGIN
         WHEN 'dismissed' THEN 'Dismissed dispute' ELSE 'Withdrew dispute' END ||
         CASE WHEN NEW.comment='' THEN '' ELSE ': ' || NEW.comment END,NEW.created_at
     FROM expense_disputes d JOIN entries e ON e.id=d.entry_id WHERE d.id=NEW.dispute_id;
+  INSERT INTO change_history(group_id,actor,member,actor_name,timestamp,type,entity,expense,action,title,reason,previous,current)
+    SELECT e.group_id,NEW.actor,m.id,NEW.actor_name,NEW.created_at,'expense',e.id,e.id,
+      CASE NEW.action WHEN 'opened' THEN 'dispute' WHEN 'edited' THEN 'dispute-edit'
+        WHEN 'dismissed' THEN 'dispute-dismiss' ELSE 'dispute-withdraw' END,
+      json_extract(e.payload,'$.title'),NULLIF(NEW.comment,''),
+      json_object('disputed',json(CASE WHEN NEW.action='opened' THEN 'false' ELSE 'true' END)),
+      json_object('disputed',json(CASE WHEN NEW.action='opened' THEN 'true' ELSE 'false' END))
+    FROM expense_disputes d JOIN entries e ON e.id=d.entry_id
+    LEFT JOIN members m ON m.group_id=e.group_id AND m.user_id=NEW.actor
+    WHERE d.id=NEW.dispute_id;
   UPDATE entries SET payload=json_set(payload,'$.pending',json('true'))
     WHERE id=(SELECT entry_id FROM expense_disputes WHERE id=NEW.dispute_id) AND NEW.action='opened';
   UPDATE entries SET payload=json_remove(payload,'$.pending','$.pendingNote')

@@ -24,7 +24,7 @@ struct EntryDetails: View {
     @State private var gallery: ReceiptPresentation?
     @State private var editing = false
     @State private var disputeAction: DisputeAction?
-    @State private var chargeHistory: [ChargedAmountChange] = []
+    @State private var deleteReason = ""
     @State private var deleting = false
     @State private var working = false
     @State private var repeatWorking = false
@@ -131,12 +131,7 @@ struct EntryDetails: View {
                 }
             }
         }
-        .task(id: [entry.id, entry.exchange?.target ?? "", String(entry.exchange?.statementAmount ?? 0)]) {
-            guard entry.kind == "expense" else { return }
-            if let history = try? await store.chargedAmountHistory(for: entry.id), !Task.isCancelled {
-                chargeHistory = history
-            }
-        }
+
     }
 
     private var content: some View {
@@ -178,7 +173,7 @@ struct EntryDetails: View {
                     if entry.kind == "expense" || entry.receiptIDs?.isEmpty == false { receiptCard(entry.receiptIDs ?? []) }
                     if entry.exchange != nil { settlementCard }
                     if entry.kind == "expense" && (!refunds.isEmpty || canRefund) { refundsCard }
-                    if !chargeHistory.isEmpty { chargeHistoryCard }
+                    ChangeHistoryView(group: liveGroup, expense: entry)
                     reactionsCard
                     Card {
                         CommentsView(entryID: entry.id) {
@@ -241,15 +236,12 @@ struct EntryDetails: View {
         .sheet(isPresented: $resolvingRefund) { RefundComposer(group: liveGroup, original: entry, resolving: true) }
         .sheet(isPresented: $markingPending) { PendingSheet(entry: entry) }
         .sheet(isPresented: $adjusting) { AdjustAmountSheet(entry: entry) }
-        .confirmationDialog(
-            "Delete this entry and update balances?",
-            isPresented: $deleting,
-            titleVisibility: .visible
-        ) {
+        .alert("Delete this entry and update balances?", isPresented: $deleting) {
+            TextField("Reason for change (optional)", text: $deleteReason)
             Button("Delete entry", role: .destructive) {
                 Task { await deleteEntry() }
             }
-            Button("Keep entry", role: .cancel) {}
+            Button("Keep entry", role: .cancel) { deleteReason = "" }
         } message: {
             Text("This removes \(entry.title) for everyone in \(liveGroup.name).")
         }
@@ -472,25 +464,6 @@ struct EntryDetails: View {
     }
 
     // MARK: - Money and receipt
-
-    private var chargeHistoryCard: some View {
-        Card {
-            VStack(alignment: .leading, spacing: 8) {
-                SectionHeader(title: "Charged amount history")
-                ForEach(chargeHistory) { change in
-                    let before = change.previousAmount.flatMap { amount in
-                        change.previousCurrency.map { Money.text(amount, $0) }
-                    } ?? "Exchange rate"
-                    let after = change.chargedAmount.flatMap { amount in
-                        change.chargedCurrency.map { Money.text(amount, $0) }
-                    } ?? "Exchange rate"
-                    Text("\(FXQuote.shortDay(String(change.changedAt.prefix(10)))) · \(before) → \(after)")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-            }
-        }
-    }
 
     private var settlementCard: some View {
         let settled = entry.settling
@@ -902,7 +875,7 @@ struct EntryDetails: View {
         defer { working = false }
         do {
             guard refunds.isEmpty else { throw LedgerError.invalid("Delete this expense’s refunds first.") }
-            try await store.change(entry, to: nil)
+            try await store.change(entry, to: nil, reason: String(deleteReason.prefix(500)))
             dismiss()
         } catch {
             self.error = error.localizedDescription

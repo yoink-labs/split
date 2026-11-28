@@ -1,5 +1,5 @@
 import { body, HTTPError, json } from './http';
-import { Entry, InputError, validID } from './ledger';
+import { Entry, entryPayers, InputError, validID } from './ledger';
 import { itemSplit } from './items';
 import { resolveEntry } from './people';
 
@@ -17,7 +17,13 @@ export function attachments(db:D1Database,entry:Entry,user:string,payload:string
       ON CONFLICT(entry_id,id) DO NOTHING`).bind(photo.id,bytes.buffer,entry.id,user,payload);
   });
 }
-export async function purchaseRoute(req:Request,env:Env,user:string):Promise<Response|undefined> {
+export function viewerAmounts(entry:Entry, viewer:string) {
+  const paid = entryPayers(entry).reduce((sum,payer)=>sum+(payer.memberID===viewer ? payer.amount : 0),0);
+  const share = entry.splits.reduce((sum,split)=>sum+(split.memberID===viewer ? split.amount : 0),0);
+  return { paid, share };
+}
+
+export async function purchaseRoute(req:Request,env:Env,user:string,ownExpensesOnly=false):Promise<Response|undefined> {
   const match=new URL(req.url).pathname.match(/^\/v1\/entries\/([\w-]+)\/(claim|close|receipts)(?:\/([\w-]+))?$/);
   if(!match) return;
   const [,id,action,photo]=match;
@@ -25,6 +31,14 @@ export async function purchaseRoute(req:Request,env:Env,user:string):Promise<Res
     WHERE e.id=? AND m.user_id=? AND e.id NOT IN (SELECT entry_id FROM deleted_entries)`).bind(id,user).first<{payload:string;viewer:string;author:string}>();
   if(!row) throw new HTTPError(404,'Expense not found.');
   if(action==='receipts' && req.method==='GET' && photo) {
+    if (ownExpensesOnly) {
+      const entry:Entry=JSON.parse(row.payload);
+      const aliases = (await env.DB.prepare(`SELECT a.member_id,a.canonical_id FROM member_aliases a
+        JOIN members m ON m.id=a.canonical_id WHERE m.group_id=?`).bind(entry.groupID)
+        .all<{member_id:string;canonical_id:string}>()).results;
+      const {paid,share}=viewerAmounts(resolveEntry(entry,new Map(aliases.map(a=>[a.member_id,a.canonical_id]))),row.viewer);
+      if (entry.kind!=='expense' || (!paid && !share)) throw new HTTPError(404,'Expense not found.');
+    }
     const result=await env.DB.prepare('SELECT image FROM receipts WHERE entry_id=? AND id=?').bind(id,photo).first<number[] | ArrayBuffer>('image');
     if(!result) throw new HTTPError(404,'Receipt not found.');
     return new Response(new Uint8Array(result),{headers:{'Content-Type':'image/jpeg','Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'}});

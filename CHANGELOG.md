@@ -17,6 +17,7 @@ is noted next to each release. The CLI is versioned separately with
 
 - Split CLI 0.3.0 creates personal invitations and can set, correct, or clear a placeholder member’s email for verified account linking.
 - Review or import several Splitwise CSV exports in one CLI command by repeating `--file`.
+- Connect Finance with read-only access to your Split expense shares and receipts.
 
 ### Changed
 

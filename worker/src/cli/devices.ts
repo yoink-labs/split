@@ -18,32 +18,33 @@ export async function deviceRoute(request: Request, env: Env) {
   if (request.method !== 'POST') return null;
   const now = Date.now();
   if (path === '/v1/device/start') {
-    const { name } = await body(request);
+    const { name, scope = 'cli' } = await body(request);
+    if (scope !== 'cli' && scope !== 'finance') throw new HTTPError(422, 'Unknown device access scope.');
     if (typeof name !== 'string' || !name.trim() || name.length > 80) throw new HTTPError(422, 'Enter a device name (1–80 characters).');
     const device = secret();
     const code = Array.from(crypto.getRandomValues(new Uint8Array(8)), n => alphabet[n % 32]).join('');
     const source = await digest(request.headers.get('CF-Connecting-IP') ?? 'local');
     const [, insert] = await env.DB.batch([
       env.DB.prepare('DELETE FROM cli_requests WHERE expires_at <= ?').bind(now),
-      env.DB.prepare(`INSERT INTO cli_requests(device_hash, code_hash, source_hash, name, expires_at)
-        SELECT ?,?,?,?,? WHERE (SELECT count(*) FROM cli_requests WHERE source_hash=?) < 15
+      env.DB.prepare(`INSERT INTO cli_requests(device_hash, code_hash, source_hash, name, expires_at, scope)
+        SELECT ?,?,?,?,?,? WHERE (SELECT count(*) FROM cli_requests WHERE source_hash=?) < 15
         AND (SELECT count(*) FROM cli_requests) < 10000`)
-        .bind(await digest(device), await digest(code), source, name.trim(), now + 1000 * lifetime, source)
+        .bind(await digest(device), await digest(code), source, scope === 'finance' ? 'Finance (read-only)' : name.trim(), now + 1000 * lifetime, scope, source)
     ]);
     if (!insert.meta.changes) throw new HTTPError(429, 'Too many login requests. Try again in ten minutes.');
-    return json({ device, code: code.slice(0,4) + '-' + code.slice(4), verification_uri: env.APP_URL + '/device', expires_in: lifetime, interval: 5 }, 201);
+    return json({ device, code: code.slice(0,4) + '-' + code.slice(4), verification_uri: env.APP_URL + '/device', expires_in: lifetime, interval: 5, ...(scope === 'finance' ? { scope } : {}) }, 201);
   }
   if (path !== '/v1/device/poll') return null;
   const { device } = await body(request);
   if (typeof device !== 'string' || device.length !== 72) throw new HTTPError(400, 'Invalid device request.');
   const key = await digest(device);
-  const row = await env.DB.prepare('SELECT approved_by FROM cli_requests WHERE device_hash=? AND expires_at>?').bind(key,now).first();
+  const row = await env.DB.prepare('SELECT approved_by,scope FROM cli_requests WHERE device_hash=? AND expires_at>?').bind(key,now).first();
   if (!row) throw new HTTPError(410, 'Code expired or already used. Run split login again.');
   if (!row.approved_by) return json({ status: 'pending' }, 202);
-  const token = 'spl_' + secret();
+  const token = (row.scope === 'finance' ? 'sfi_' : 'spl_') + secret();
   const [insert] = await env.DB.batch([
-    env.DB.prepare(`INSERT INTO cli_tokens(id,token_hash,user_id,name,created_at)
-      SELECT ?,?,approved_by,name,? FROM cli_requests WHERE device_hash=? AND approved_by IS NOT NULL AND expires_at>?`)
+    env.DB.prepare(`INSERT INTO cli_tokens(id,token_hash,user_id,name,created_at,scope)
+      SELECT ?,?,approved_by,name,?,scope FROM cli_requests WHERE device_hash=? AND approved_by IS NOT NULL AND expires_at>?`)
       .bind(crypto.randomUUID(), await digest(token), now, key, now),
     env.DB.prepare('DELETE FROM cli_requests WHERE device_hash=?').bind(key)
   ]);
@@ -53,8 +54,8 @@ export async function deviceRoute(request: Request, env: Env) {
 
 export async function deviceIdentity(env: Env, token: string) {
   const key = await digest(token);
-  const row = await env.DB.prepare('SELECT id,user_id,last_used FROM cli_tokens WHERE token_hash=? AND revoked_at IS NULL')
-    .bind(key).first<{ id: string; user_id: string; last_used: number | null }>();
+  const row = await env.DB.prepare('SELECT id,user_id,last_used,scope FROM cli_tokens WHERE token_hash=? AND revoked_at IS NULL')
+    .bind(key).first<{ id: string; user_id: string; last_used: number | null; scope: 'cli' | 'finance' }>();
   if (!row) throw new HTTPError(401, 'Device access expired or was revoked. Run split login.');
   if (Date.now() - (row.last_used ?? 0) > 60_000) {
     await env.DB.prepare('UPDATE cli_tokens SET last_used=? WHERE id=? AND revoked_at IS NULL').bind(Date.now(), row.id).run();
@@ -87,10 +88,10 @@ export async function manageDevices(request: Request, env: Env, user: string, de
     const key = await digest(normalized);
     const sql = 'WHERE code_hash=? AND expires_at>? AND approved_by IS NULL';
     const row = path.endsWith('/review')
-      ? await env.DB.prepare('SELECT name FROM cli_requests ' + sql).bind(key, Date.now()).first()
-      : await env.DB.prepare('UPDATE cli_requests SET approved_by=? ' + sql + ' RETURNING name').bind(user, key, Date.now()).first();
+      ? await env.DB.prepare("SELECT name, scope FROM cli_requests " + sql).bind(key, Date.now()).first<{name: string; scope: string}>()
+      : await env.DB.prepare('UPDATE cli_requests SET approved_by=? ' + sql + ' RETURNING name, scope').bind(user, key, Date.now()).first<{name: string; scope: string}>();
     if (!row) throw new HTTPError(404, 'Code expired or already used.');
-    return json(row);
+    return json(row.scope === 'finance' ? row : { name: row.name });
   }
   throw new HTTPError(404, 'Not found.');
 }

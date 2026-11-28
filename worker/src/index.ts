@@ -7,6 +7,7 @@ import { claimSeat, lookup, refreshIdentity, resolveEntry } from './people';
 import { HTTPError, json, body, optionalDay } from './http';
 import { deviceRoute, deviceIdentity, manageDevices } from './cli/devices';
 import { cliRoute } from './cli/routes';
+import { financeRoute } from './finance';
 import { createRemoteJWKSet, jwtVerify } from 'jose';
 import { currencies, entryPayers, InputError, validID, validateEntry } from './ledger';
 import { importSplitwise } from './splitwiseImport';
@@ -375,10 +376,11 @@ export default {
    if (publicDevice) return publicDevice;
    const token=request.headers.get('Authorization')?.match(/^Bearer (.+)$/)?.[1];if(!token)throw new HTTPError(401,'Sign in to sync your expenses.');
    let userID:string;
-   const device = token.startsWith('spl_') ? await deviceIdentity(env, token) : null;
+   const device = (token.startsWith('spl_') || token.startsWith('sfi_')) ? await deviceIdentity(env, token) : null;
    if (device) userID = device.user_id;
    else try{const {payload}=await jwtVerify(token,jwks,{issuer:env.CLERK_ISSUER,algorithms:['RS256'],requiredClaims:['exp','sub','iat']});if(!payload.sub || !validParty(payload.azp, env.WEB_URL))throw 0;userID=payload.sub;}catch{throw new HTTPError(401,'Your session expired. Sign in again.');}
    if (url.pathname.startsWith('/v1/device/')) return await manageDevices(request, env, userID, device?.id);
+   if (device?.scope === 'finance') return await financeRoute(request, env, userID, handle);
    if (url.pathname === '/mcp' || url.pathname === '/v1/cli') {
      if (!device) throw new HTTPError(403, 'Sign in with a Split device token.');
      return await cliRoute(request, env, userID, handle);

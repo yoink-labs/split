@@ -57,7 +57,7 @@ export function HomeOverview() {
         <div className="head-actions">
           {ledger.summaries.length > 0 && <a className="btn btn-sm btn-ghost" href="#personal-transactions">Your transactions</a>}
           <Link className="btn btn-sm" to="/import/splitwise">Import Splitwise</Link>
-          <Link className="btn btn-sm btn-primary" to="/new">+ New trip or group</Link>
+          <Link className="btn btn-sm btn-primary personal-create" to="/new">+ New trip or group</Link>
         </div>
       </header>
       {!ledger.summaries.length ? <EmptyState title="No groups yet"

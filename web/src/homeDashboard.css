@@ -51,6 +51,9 @@
 .personal-home a:focus-visible, .personal-home summary:focus-visible, .personal-home button:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 @media (max-width: 850px) { .personal-columns { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 480px) {
+  .personal-home .personal-create { display: none; }
+  .personal-spend-totals { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .personal-spend-totals > :last-child { grid-column: 1 / -1; }
   .personal-balance-row { display: grid; gap: 4px; }
   .personal-balance-row dl { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .personal-balance-row dl > :first-child { grid-column: 1 / -1; }

@@ -6,6 +6,7 @@ import SwiftUI
 struct EntryDetails: View {
     @EnvironmentObject private var fx: FXStore
     private let initial: LedgerEntry
+    private let showsBreakdownFirst: Bool
     var group: ExpenseGroup
     var embedded = false
 
@@ -30,10 +31,11 @@ struct EntryDetails: View {
     @State private var liking = false
     @State private var likeError: String?
 
-    init(entry: LedgerEntry, group: ExpenseGroup, embedded: Bool = false) {
+    init(entry: LedgerEntry, group: ExpenseGroup, embedded: Bool = false, showsBreakdownFirst: Bool = false) {
         self.initial = entry
         self.group = group
         self.embedded = embedded
+        self.showsBreakdownFirst = showsBreakdownFirst
     }
 
     private var entry: LedgerEntry {
@@ -103,10 +105,10 @@ struct EntryDetails: View {
                 VStack(spacing: 16) {
                     hero
                     if entry.exchange != nil { settlementCard }
+                    if showsBreakdownFirst { breakdown }
                     if let ids = entry.receiptIDs, !ids.isEmpty { receiptCard(ids) }
                     if let bill = entry.bill { purchasesCard(bill) }
-                    payerCard
-                    splitCard
+                    if !showsBreakdownFirst { breakdown }
                     if let notes = entry.notes, !notes.isEmpty { notesCard(notes) }
                     reactionsCard
                     Card {
@@ -162,6 +164,11 @@ struct EntryDetails: View {
     }
 
     // MARK: - Hero
+
+    @ViewBuilder private var breakdown: some View {
+        payerCard
+        splitCard
+    }
 
     private var hero: some View {
         Card(padding: 20) {

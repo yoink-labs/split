@@ -287,10 +287,11 @@ struct DashboardView: View {
 
 struct EntrySheet: View {
     var entry: LedgerEntry
+    var showsBreakdownFirst = false
     @EnvironmentObject private var store: ExpenseStore
     var body: some View {
         if let group = store.group(entry.groupID) {
-            EntryDetails(entry: entry, group: group)
+            EntryDetails(entry: entry, group: group, showsBreakdownFirst: showsBreakdownFirst)
         } else {
             ContentUnavailableView("Expense unavailable", systemImage: "receipt")
         }

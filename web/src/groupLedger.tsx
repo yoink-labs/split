@@ -6,7 +6,7 @@ import { useHomeMoney } from "./homeMoney";
 import { Picker } from "./picker";
 import { Avatar, CategoryIcon } from "./ui";
 
-export type LedgerView = "summary" | "transactions";
+type LedgerView = "summary" | "transactions";
 type Status = "all" | "receipt" | "open" | "recurring";
 
 const percent = new Intl.NumberFormat(undefined, { style: "percent", maximumFractionDigits: 1 });
@@ -25,14 +25,14 @@ function position(entry: Expense, id?: string) {
 }
 
 export function GroupLedger({
-  g, entries, memberID, view, category, onView, inspectedID, onInspect,
+  g, entries, memberID, view, category, onSelectCategory, inspectedID, onInspect,
 }: {
   g: Group;
   entries: Expense[];
   memberID?: string;
   view: LedgerView;
   category: string;
-  onView: (view: LedgerView, category?: string) => void;
+  onSelectCategory: (category?: string) => void;
   inspectedID?: string;
   onInspect: (id: string) => void;
 }) {
@@ -67,23 +67,19 @@ export function GroupLedger({
     setStatus("all");
     setInvolved(false);
     setOwes(false);
-    if (category) onView("transactions");
+    if (category) onSelectCategory();
   }
 
   return (
     <section className="group-ledger" aria-labelledby="group-ledger-title">
-      <header className="workspace-section-head ledger-head">
-        <h2 id="group-ledger-title" ref={heading} tabIndex={-1}>Ledger</h2>
-        <div className="ledger-switch" role="group" aria-label="Ledger view">
-          <button type="button" aria-pressed={view === "summary"} onClick={() => onView("summary", category)}>Summary</button>
-          <button type="button" aria-pressed={view === "transactions"} onClick={() => onView("transactions", category)}>Transactions</button>
-        </div>
+      <header className="workspace-section-head">
+        <h2 id="group-ledger-title" ref={heading} tabIndex={-1}>{view === "summary" ? "Ledger" : "Transactions"}</h2>
       </header>
 
       {view === "summary" ? (
         <LedgerSummary g={g} entries={entries} memberID={memberID} onCategory={(cat) => {
           heading.current?.focus();
-          onView("transactions", cat);
+          onSelectCategory(cat);
         }} />
       ) : (
         <>
@@ -100,7 +96,7 @@ export function GroupLedger({
             </div>
             <div className="ledger-filter-fields">
               <Picker label="Filter by category" value={category} search
-                onChange={(cat) => onView("transactions", cat)}
+                onChange={onSelectCategory}
                 options={[{ value: "", label: "All categories" },
                   ...[...new Set([...CATEGORIES.map((c) => c.id), ...entries.map(categoryOf)])].map((cat) => ({
                     value: cat, label: categoryMeta(cat).label, icon: <CategoryIcon category={cat} />,

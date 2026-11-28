@@ -61,6 +61,7 @@ struct EntryComment: Codable, Identifiable, Equatable {
     var body: String
     var createdAt: String
     var mine: Bool
+    var disputeAction: String?
 }
 enum SplitMode: String, Codable, CaseIterable {
     case equal, exact, percent, shares, adjustment, nights
@@ -138,6 +139,7 @@ struct Transfer: Identifiable {
     var id: String { from + to + currency }
 }
 struct Snapshot: Codable, Equatable {
+    var disputes: [OpenDispute]?
     var groups: [ExpenseGroup] = []
     var entries: [LedgerEntry] = []
     var settlementRequests: [LedgerEntry]?

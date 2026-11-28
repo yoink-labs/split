@@ -16,6 +16,12 @@ Split stores the server origin and device token in an owner-only `~/.config/spli
 
 For automation, supply a device credential through your secret manager as `SPLIT_TOKEN`. `SPLIT_API_URL` defaults to `https://split-api.yoinklabs.dev`. Saved credentials are scoped to the issuing origin. Authenticate each machine separately to keep revocation independent.
 
+## Disputed expenses
+
+Use `split expenses dispute EXPENSE_ID --group GROUP_ID --comment 'The total should be $40'` to flag an expense you share. Open disputes are listed by `split disputes list`, and `split balances --group GROUP_ID` highlights the ones you can resolve.
+
+If you paid or recorded the expense, use `split disputes dismiss --group GROUP_ID --expense EXPENSE_ID --comment "The receipt confirms the total"`, or preview and confirm an `expenses edit` with `--dispute-reply`. If you opened the dispute, use `split disputes withdraw`. `split disputes history` shows the actions across your groups, and `split history --group GROUP_ID --expense EXPENSE_ID` includes them in the expense’s audit trail. These commands also have matching MCP tools.
+
 ## Commands
 
 `split --help` lists commands. Each has `--json` and command-specific help, such as `split expenses edit --help`. JSON results go to stdout. Login instructions, confirmation previews during a write and errors go to stderr. Quote JSON arrays in your shell. Group, member and expense IDs come from list or create results.

@@ -50,6 +50,10 @@ struct ChangeHistoryEvent: Decodable, Identifiable {
         case "link": "linked"
         case "unlink": "unlinked"
         case "resolve": "resolved"
+        case "dispute": "disputed"
+        case "dispute-edit": "resolved the dispute by editing"
+        case "dispute-dismiss": "dismissed the dispute on"
+        case "dispute-withdraw": "withdrew the dispute on"
         case "schedule": "updated the schedule for"
         default: "changed"
         }

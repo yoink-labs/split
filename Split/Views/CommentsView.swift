@@ -126,7 +126,7 @@ struct CommentsView: View {
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
                     Spacer(minLength: 4)
-                    if comment.mine {
+                    if comment.mine && comment.disputeAction == nil {
                         Button(role: .destructive) {
                             Task { await remove(comment) }
                         } label: {

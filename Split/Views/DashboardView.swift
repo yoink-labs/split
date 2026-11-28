@@ -23,6 +23,7 @@ struct DashboardView: View {
                 VStack(alignment: .leading, spacing: Spacing.section) {
                     DashboardPosition(model: dashboard)
                     quickActions(canSettle: !dashboard.owe.isEmpty)
+                    DisputesToResolve()
                     PendingSettlementsView()
                     if balanceReminders, !reminderPeople.isEmpty { reminderCard(people: reminderPeople) }
                     if store.isDemo {

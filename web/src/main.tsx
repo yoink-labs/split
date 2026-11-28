@@ -1,3 +1,4 @@
+import { DisputesScreen } from "./disputes";
 import { SplitLogo } from "./ui";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { startAppearance } from "./appearance";
@@ -61,6 +62,7 @@ function RoutesBody() {
         <Route path="/invite/:code" element={<Join />} />
         <Route path="/you" element={<Account />} />
         <Route path="/friends" element={<FriendsScreen />} />
+        <Route path="/disputes" element={<DisputesScreen />} />
         <Route path="/invitations" element={<InvitationsScreen />} />
         <Route path="/ai" element={<LocalAIScreen />} />
         <Route path="/import/splitwise" element={<SplitwiseImport />} />

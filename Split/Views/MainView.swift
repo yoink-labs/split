@@ -15,6 +15,7 @@ struct MainView: View {
             Tab("Home", systemImage: "house", value: AppTab.home) {
                 DashboardView()
             }
+            .badge((store.state.snapshot.disputes ?? []).filter(\.canResolve).count)
             Tab("Groups", systemImage: "person.3", value: AppTab.groups) {
                 GroupsView()
             }

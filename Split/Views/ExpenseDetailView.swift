@@ -23,6 +23,7 @@ struct EntryDetails: View {
     @State private var assignment: Assignment?
     @State private var gallery: ReceiptPresentation?
     @State private var editing = false
+    @State private var disputeAction: DisputeAction?
     @State private var deleteReason = ""
     @State private var deleting = false
     @State private var working = false
@@ -71,7 +72,13 @@ struct EntryDetails: View {
             liveGroup.members.contains { $0.id == payer.memberID && $0.userID == session.userID && $0.removed != true }
         }
     }
-    private var canEdit: Bool { editable && entry.kind == "expense" }
+    private var dispute: OpenDispute? { store.state.snapshot.disputes?.first { $0.entryID == entry.id } }
+    private var canDispute: Bool {
+        guard !store.isDemo, dispute == nil, entry.kind == "expense", entry.combinedCount == nil,
+              let me, me.removed != true else { return false }
+        return entry.splits.contains { $0.memberID == me.id }
+    }
+    private var canEdit: Bool { entry.kind == "expense" && (dispute?.canResolve ?? editable) }
     private var repeatAllowed: Bool {
         guard editable, !store.isDemo else { return false }
         return entry.kind == "expense" && entry.bill == nil && entry.exchange == nil && entry.spread == nil
@@ -174,7 +181,7 @@ struct EntryDetails: View {
                         }
                     }
                     .id("comments")
-                    if editable || canSetHandled || canResolve { actionsCard }
+                    if editable || canSetHandled || canResolve || canDispute || dispute != nil { actionsCard }
                     if let error { InlineError(text: error) }
                 }
                 .padding(16)
@@ -222,8 +229,9 @@ struct EntryDetails: View {
             }
         }
         .sheet(isPresented: $editing) {
-            AddExpenseView(group: liveGroup, original: entry)
+            AddExpenseView(group: liveGroup, original: entry, resolvingDispute: dispute?.canResolve == true)
         }
+        .sheet(item: $disputeAction) { action in DisputeReplySheet(entryID: entry.id, action: action) }
         .sheet(isPresented: $refunding) { RefundComposer(group: liveGroup, original: entry) }
         .sheet(isPresented: $resolvingRefund) { RefundComposer(group: liveGroup, original: entry, resolving: true) }
         .sheet(isPresented: $markingPending) { PendingSheet(entry: entry) }
@@ -352,7 +360,7 @@ struct EntryDetails: View {
                     Spacer()
                     Text("Counts toward balances").font(.caption).foregroundStyle(.secondary)
                 }
-                Text(entry.pendingNote ?? "This cost may still change.")
+                Text(dispute.map { "Disputed by \($0.actorName)" } ?? entry.pendingNote ?? "This cost may still change.")
                     .font(.subheadline)
                     .foregroundStyle(Palette.ink)
                     .fixedSize(horizontal: false, vertical: true)
@@ -364,7 +372,7 @@ struct EntryDetails: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                if canResolve {
+                if canResolve && dispute == nil {
                     FlowLayout(spacing: 8) {
                         Button { Task { await confirmPending() } } label: { Label("Confirm", systemImage: "checkmark") }
                             .buttonStyle(GhostButton())
@@ -722,9 +730,18 @@ struct EntryDetails: View {
             VStack(alignment: .leading, spacing: 10) {
                 SectionHeader(title: "This entry")
                 FlowLayout(spacing: 8) {
+                if canDispute {
+                    Button("Dispute", systemImage: "flag") { disputeAction = .open }.buttonStyle(GhostButton())
+                }
+                if dispute?.canResolve == true {
+                    Button("Dismiss dispute", systemImage: "checkmark") { disputeAction = .dismiss }.buttonStyle(GhostButton())
+                }
+                if dispute?.canWithdraw == true {
+                    Button("Withdraw dispute", systemImage: "arrow.uturn.backward") { disputeAction = .withdraw }.buttonStyle(GhostButton())
+                }
                 if canEdit {
                     Button { editing = true } label: {
-                        Label("Edit expense", systemImage: "pencil")
+                        Label(dispute == nil ? "Edit expense" : "Edit and resolve", systemImage: "pencil")
                     }
                     .buttonStyle(GhostButton())
                     .accessibilityIdentifier("entry-edit")
@@ -788,7 +805,7 @@ struct EntryDetails: View {
                         .accessibilityLabel("Repeat schedule, \(entry.recurrence ?? "off")")
                     }
                 }
-                if editable {
+                if editable && dispute == nil {
                     Button { deleting = true } label: {
                         Label("Delete entry", systemImage: "trash")
                             .font(.subheadline.weight(.semibold))

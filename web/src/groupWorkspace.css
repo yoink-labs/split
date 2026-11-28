@@ -375,3 +375,40 @@
 .expense-combinations .combination-entries { max-block-size: 16rem; overflow: auto; }
 .expense-combinations .row { flex-wrap: wrap; gap: 8px; }
 .expense-combinations .row input[type="text"] { max-width: 10rem; }
+
+.history-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: end;
+  margin-block: 12px;
+}
+.history-timeline {
+  list-style: none;
+  margin: 12px 0;
+  padding: 0;
+}
+.history-timeline > li {
+  border-inline-start: 2px solid var(--border);
+  padding: 6px 0 16px 14px;
+  overflow-wrap: anywhere;
+}
+.history-timeline time,
+.history-timeline dt {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+.history-timeline dl {
+  margin-block: 8px 0;
+}
+.history-timeline dl > div {
+  display: grid;
+  grid-template-columns: minmax(6.5rem, 25%) minmax(0, 1fr);
+  gap: 8px;
+}
+.history-timeline dd {
+  margin: 0;
+}
+.history-reason {
+  margin-block-start: 6px;
+}

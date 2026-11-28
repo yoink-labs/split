@@ -40,9 +40,9 @@ export async function importRows(db:D1Database,group:string,user:string,b:Record
       exchange:row.exchange,category:row.category,handled:row.handled,splitMode:'exact',createdAt:row.day+'T12:00:00Z',splits},[...names.values()]);
     const fingerprint=await digest(e), ordinal=copies.get(fingerprint)??0;copies.set(fingerprint,ordinal+1);
     e.id=await digest([group,fingerprint,ordinal]);
-    entries.push(db.prepare('INSERT INTO entries VALUES (?,?,?,?,?) ON CONFLICT(id) DO NOTHING').bind(e.id,group,user,JSON.stringify(e),e.createdAt));
+    entries.push(db.prepare('INSERT INTO entries VALUES (?,?,?,?,?) ON CONFLICT(id) DO NOTHING RETURNING id').bind(e.id,group,user,JSON.stringify(e),e.createdAt));
   }
   if(!entries.length) return json({inserted:0});
   const result=await db.batch([...members,...entries]);
-  return json({inserted:result.slice(members.length).reduce((n,r)=>n+r.meta.changes,0)});
+  return json({inserted:result.slice(members.length).reduce((n,r)=>n+r.results.length,0)});
 }

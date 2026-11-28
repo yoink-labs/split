@@ -204,7 +204,12 @@ it('lets an active non-payer explicitly reopen without changing cents or closing
   const reopened = await snapshot();
   expect(reopened.bill).toEqual({...closed.bill,closed:false});
   expect(reopened.splits).toEqual(closed.splits);
+  const history = '/v1/groups/'+group+'/history?expense='+e.id+'&type=receipt';
+  const events = (await (await call('maya',history)).json<{events:unknown[]}>()).events;
+  expect(events[0]).toMatchObject({actor:'maya',actorName:'Maya',action:'reopen',
+    changes:{bill:{before:{closed:true},after:{closed:false}}}});
   await call('maya',base+'/reopen',{});
+  expect((await (await call('maya',history)).json<{events:unknown[]}>()).events).toEqual(events);
   await call('maya',base+'/claim',{itemID:'line-toast',original:[other],memberIDs:[other],shares:{[other]:100}});
   await call('alex',base+'/edit',{original:reopened,entry:{...reopened,title:'Late brunch'}});
   expect((await snapshot()).bill?.closed).toBe(false);
@@ -230,6 +235,11 @@ it('applies receipt-wide changes atomically and conserves cents at each status t
   const closed = await snapshot();
   expect(closed.bill?.items.map(i=>i.memberIDs)).toEqual([[other],[other]]);
   expect(closed.splits).toEqual([{memberID:other,amount:1801}]);
+  const history = '/v1/groups/'+group+'/history?expense='+e.id+'&type=receipt';
+  const events = (await (await call('maya',history)).json<{events:unknown[]}>()).events;
+  expect(events[0]).toMatchObject({actor:'maya',action:'receipt-people',
+    receiptChanges:[{item:'Coffee',removed:[payer]},{item:'Toast',added:[other]}],
+    changes:{splits:{after:[{memberID:other,amount:1801}]}}});
 
   await call('maya',path,{add:[],remove:[other]});
   const reopened = await snapshot();

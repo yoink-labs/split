@@ -46,6 +46,9 @@ Exact email and username searches find existing Split users. Partial names match
 
 An email on a placeholder lets the owner of that verified primary email claim the member’s history when they open Split on the web or iOS. If they already joined separately, Split merges the placeholder history into their membership. CLI users can claim a placeholder with `split join --invite`. Changing or clearing the address revokes the placeholder’s existing invite links. Account holders manage their own sign-in email through Clerk.
 
+Review a group’s change history with `split history --group "$GROUP"`. Use `--expense` or `--member` to narrow it down, `--before` to request the next page, or `--json` for structured before/after values in integer minor units. Add `--reason` when editing or deleting an expense or recording a refund. The same commands and arguments are available as MCP tools.
+
+
 ```sh
 split expenses add --group "$GROUP" --title Dinner --payer "$ALEX" --amount 24.50
 split expenses add --group "$GROUP" --title Tickets --payer "$ALEX" --amount 30 \

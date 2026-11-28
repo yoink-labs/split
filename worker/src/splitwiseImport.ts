@@ -172,9 +172,9 @@ export async function importSplitwise(db: D1Database, user: string, b: Record<st
   // One statement inserts every entry, so the import is all-or-nothing and stays within D1's per-request query budget.
   statements.push(db.prepare(`INSERT INTO entries(id,group_id,author,payload,created_at)
     SELECT json_extract(value,'$[0]'),?,?,json_extract(value,'$[1]'),json_extract(value,'$[2]') FROM json_each(?) WHERE true
-    ON CONFLICT(id) DO NOTHING`).bind(group, user, JSON.stringify(records)));
+    ON CONFLICT(id) DO NOTHING RETURNING id`).bind(group, user, JSON.stringify(records)));
   const result = await db.batch(statements);
-  const inserted = result[result.length - 1].meta.changes;
+  const inserted = result[result.length - 1].results.length;
   const importedPeople = people.map(p => ({ name: p.name, memberID: ids.get(key(p.name))! }));
   return json({ groupID: group, created: creating, inserted, duplicates: rows.length - inserted, people: importedPeople }, creating ? 201 : 200);
 }

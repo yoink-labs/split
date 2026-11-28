@@ -101,6 +101,16 @@ export function billConsumption(b:Bill,payer:string) {
   }
   return {items,people:[...people.values()]};
 }
+/** Read-only item projection. Preserve recorded splits for entries without a receipt bill. */
+export function entryItems(entry: Entry): ItemConsumption[] {
+  if (entry.bill) return billConsumption(entry.bill, entry.paidBy).items;
+  return [{
+    id: entry.id, title: entry.title, amount: entry.amount, gross: entry.amount,
+    tax: 0, tip: 0, open: false,
+    portions: entry.splits.map(p => ({ ...p, items: p.amount, tax: 0, tip: 0 })),
+  }];
+}
+
 /**
  * One consumption line per person: receipt items for itemized expenses, otherwise the expense itself.
  * Refunds give consumption back as negative lines: an item refund returns exactly those items'
@@ -119,8 +129,7 @@ export function entryConsumption(e:Entry,all:Entry[]=[]) {
     }
     return e.splits.filter(s=>s.amount).map(s=>({memberID:s.memberID,amount:-s.amount,items:-s.amount,tax:0,tip:0,entryID:e.id,itemID:null as string|null,title:e.title}));
   }
-  if(e.bill) return billConsumption(e.bill,e.paidBy).items.flatMap(i=>i.portions.map(p=>({...p,entryID:e.id,itemID:i.id as string|null,title:i.title})));
-  return e.splits.filter(s=>s.amount).map(s=>({memberID:s.memberID,amount:s.amount,items:s.amount,tax:0,tip:0,entryID:e.id,itemID:null as string|null,title:e.title}));
+  return entryItems(e).flatMap(i=>i.portions.filter(p=>e.bill || p.amount).map(p=>({...p,entryID:e.id,itemID:e.bill ? i.id : null,title:i.title})));
 }
 /** Consumption by person across expenses and refunds in one currency: their lines and item, tax and tip totals. */
 export function consumptionReport(entries:Entry[],currency:string) {

@@ -355,3 +355,16 @@
 .refund-person label { display: inline-flex; align-items: center; gap: 8px; }
 .refund-person input[type="text"] { inline-size: 96px; text-align: right; }
 .refund-links .row { inline-size: 100%; border-left: 0; border-right: 0; border-top: 0; background: none; font: inherit; text-align: left; cursor: pointer; color: inherit; }
+
+.expense-item-line {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  padding-top: 8px;
+}
+
+.expense-item-line > .num {
+  flex-shrink: 0;
+  white-space: nowrap;
+}

@@ -10,6 +10,7 @@ import {
   allocate,
   balances,
   billConsumption,
+  entryItems,
   breakdown,
   consumptionReport,
   entryPayers,
@@ -263,7 +264,7 @@ export function GroupSummary() {
   const format = homeMoney.format;
   const expenses = entries.filter((e) => e.kind === "expense" || e.kind === "refund");
   const payments = entries.filter((e) => e.kind === "settlement");
-  const receipts = expenses.filter((e) => e.bill);
+  const receipts = personal ? entries : expenses;
   const projected = new Map(entries.map((e) => [e.id, homeMoney.project(e)] as const));
   const visibleEntries = !included("history") ? [] : mode === "receipts" ? receipts : entries;
   const unrated = visibleEntries.filter((e) => !projected.get(e.id));
@@ -427,7 +428,7 @@ export function GroupSummary() {
         )}
       </section>}
 
-      {included("history") && mode === "summary" && payments.length > 0 && (
+      {included("history") && mode === "summary" && !personal && payments.length > 0 && (
         <section className="sum-section">
           <h2 className="sum-h2">Payments recorded</h2>
           <table className="sum-table">
@@ -566,7 +567,7 @@ export function GroupSummary() {
           <ConsumptionSection g={g} expenses={expenses} projected={projected} home={home} format={format} person={person} only={personal?.id} />
         )}
 
-        {included("history") && mode === "summary" && (
+        {included("history") && mode === "summary" && !personal && (
           <section className="sum-section">
             <h2 className="sum-h2">Expenses</h2>
             {expenses.length ? (
@@ -589,23 +590,33 @@ export function GroupSummary() {
                   {expenses.map((e) => {
                     const m = entryMoney(e, projected.get(e.id) ?? null, home, format);
                     return (
-                      <tr key={e.id} className={e.handled ? "handled" : undefined}>
-                        <td className="sum-date">{recordedDay(e.createdAt)}</td>
-                        <td>
-                          {e.title}
-                          <span className="sum-orig">
-                            {e.category ?? "Uncategorized"}
-                            {e.bill && " · Itemized"}
-                            {e.handled && " · Already handled"}
-                            {e.kind === "refund" && (e.refundOf ? " · Refund" : " · Credit")}
-                            {e.pending && ` · Pending${e.pendingNote ? ": " + e.pendingNote : ""}`}
-                          </span>
-                        </td>
-                        <td>{e.kind === "refund" && "Received by "}{peopleList(entryPayers(e), person)}</td>
-                        <td className="r">
-                          {e.kind === "refund" && "−"}<Amount converted={m.converted(projected.get(e.id)?.amount ?? 0)} recorded={m.recorded(e.amount)} label="Recorded" />
-                        </td>
-                      </tr>
+                      <Fragment key={e.id}>
+                        <tr className={e.handled ? "handled" : undefined}>
+                          <td className="sum-date">{recordedDay(e.createdAt)}</td>
+                          <td>
+                            {e.title}
+                            <span className="sum-orig">
+                              {e.category ?? "Uncategorized"}
+                              {e.bill && " · Itemized"}
+                              {e.handled && " · Already handled"}
+                              {e.kind === "refund" && (e.refundOf ? " · Refund" : " · Credit")}
+                              {e.pending && ` · Pending${e.pendingNote ? ": " + e.pendingNote : ""}`}
+                            </span>
+                          </td>
+                          <td>{e.kind === "refund" && "Received by "}{peopleList(entryPayers(e), person)}</td>
+                          <td className="r">
+                            {e.kind === "refund" && "−"}<Amount converted={m.converted(projected.get(e.id)?.amount ?? 0)} recorded={m.recorded(e.amount)} label="Recorded" />
+                          </td>
+                        </tr>
+                        {e.bill && entryItems(e).map((item) => (
+                          <tr key={item.id} className="sum-portion">
+                            <td />
+                            <td><span className="sum-indent">{item.title}</span></td>
+                            <td>Item</td>
+                            <td className="r">{money(item.gross, e.currency)}</td>
+                          </tr>
+                        ))}
+                      </Fragment>
                     );
                   })}
                 </tbody>
@@ -616,12 +627,12 @@ export function GroupSummary() {
           </section>
         )}
 
-        {included("history") && mode === "detailed" && (
+        {included("history") && (mode === "detailed" || (mode === "summary" && personal)) && (
           <section className="sum-section">
             <h2 className="sum-h2">Ledger</h2>
             {entries.length === 0 && <p className="sum-small">No entries yet.</p>}
             {entries.map((e) => (
-              <LedgerEntry key={e.id} person={person} e={e} home={home} projected={projected.get(e.id) ?? null} format={format} />
+              <LedgerEntry key={e.id} person={person} e={e} home={home} projected={projected.get(e.id) ?? null} format={format} self={personal?.id} />
             ))}
           </section>
         )}
@@ -629,9 +640,9 @@ export function GroupSummary() {
         {included("history") && mode === "receipts" && (
           <section className="sum-section">
             <h2 className="sum-h2">Itemized receipts</h2>
-            {receipts.length === 0 && <p className="sum-small">No expenses in this group have itemized receipts.</p>}
+            {receipts.length === 0 && <p className="sum-small">No transactions yet.</p>}
             {receipts.map((e) => (
-              <ReceiptEntry key={e.id} person={person} e={e} home={home} projected={projected.get(e.id) ?? null} format={format} />
+              <LedgerEntry key={e.id} person={person} e={e} home={home} projected={projected.get(e.id) ?? null} format={format} self={personal?.id} />
             ))}
           </section>
         )}
@@ -806,18 +817,21 @@ function EntryHead({ person, e, home, projected, format }: EntryProps) {
   );
 }
 
-type EntryProps = { person: PersonLabel; e: Expense; home: string; projected: Expense | null; format: Format };
+type EntryProps = { self?: string; person: PersonLabel; e: Expense; home: string; projected: Expense | null; format: Format };
 
 function LedgerEntry(props: EntryProps) {
-  const { person, e, home, projected, format } = props;
+  const { person, e, home, projected, format, self } = props;
   const m = entryMoney(e, projected, home, format);
   const payers = entryPayers(e);
   const ids = [...new Set([...payers, ...e.splits].map((p) => p.memberID))];
+  const involved = self !== undefined && ids.includes(self);
+  const label = e.bill ? "By item" : e.splitMode.charAt(0).toUpperCase() + e.splitMode.slice(1);
   return (
-    <div className={"sum-entry" + (e.handled ? " handled" : "") + (e.bill ? " long" : "")}>
+    <div className={"sum-entry" + (involved ? " sum-involved" : "") + (e.handled ? " handled" : "") + (e.bill ? " long" : "")}>
       <EntryHead {...props} />
       <RateLines e={e} home={home} />
-      {e.kind !== "settlement" && (
+      {involved && e.kind !== "settlement" && <p className="sum-small">Split method · {label}</p>}
+      {(e.kind !== "settlement" || involved) && (
         <table className="sum-parts">
           <colgroup>
             <col />
@@ -828,7 +842,7 @@ function LedgerEntry(props: EntryProps) {
             <tr>
               <th>Person</th>
               <th className="r">{e.kind === "refund" ? "Received" : "Paid"}</th>
-              <th className="r">{e.kind === "refund" ? "Credit" : "Share"}</th>
+              <th className="r">{e.kind === "refund" ? "Credit" : e.kind === "settlement" ? "Received" : "Share"}</th>
             </tr>
           </thead>
           <tbody>
@@ -837,16 +851,16 @@ function LedgerEntry(props: EntryProps) {
               const share = sumBy(e.splits, id);
               return (
                 <tr key={id}>
-                  <td>{person(id)}</td>
+                  <td>{person(id)}{id === self && " (you)"}</td>
                   <td className="r">
-                    {paid ? (
+                    {paid || id === self ? (
                       <Amount converted={m.converted(projected ? sumBy(entryPayers(projected), id) : 0)} recorded={m.recorded(paid)} label="Recorded" />
                     ) : (
                       <span className="sum-dim">—</span>
                     )}
                   </td>
                   <td className="r">
-                    {share ? (
+                    {share || id === self ? (
                       <Amount converted={m.converted(projected ? sumBy(projected.splits, id) : 0)} recorded={m.recorded(share)} label="Recorded" />
                     ) : (
                       <span className="sum-dim">—</span>
@@ -858,24 +872,22 @@ function LedgerEntry(props: EntryProps) {
           </tbody>
         </table>
       )}
-      {e.bill && <ReceiptItems {...props} />}
+      {e.bill
+        ? <ReceiptItems {...props} />
+        : <p className="sum-small">Whole-amount item · {e.title}</p>}
     </div>
   );
 }
 
-function ReceiptEntry(props: EntryProps) {
-  return (
-    <div className={"sum-entry long" + (props.e.handled ? " handled" : "")}>
-      <EntryHead {...props} />
-      <RateLines e={props.e} home={props.home} />
-      <ReceiptItems {...props} />
-    </div>
-  );
-}
-
-function ReceiptItems({ person, e, home, projected, format }: EntryProps) {
+function ReceiptItems({ person, e, home, projected, format, self }: EntryProps) {
   if (!e.bill) return null;
   const { items, people } = billConsumption(e.bill, e.paidBy);
+  const involved = self !== undefined && [...entryPayers(e), ...e.splits].some((p) => p.memberID === self);
+  const paid = self ? sumBy(entryPayers(e), self) : 0;
+  const myPayments = involved && e.bill
+    ? paid ? allocate(paid, items.map((item) => item.gross)) : items.map(() => 0)
+    : null;
+  const { tax, tip } = e.bill;
   const m = entryMoney(e, projected, home, format);
   const converted = new Map<string, Breakdown | null>();
   if (projected) {
@@ -886,7 +898,9 @@ function ReceiptItems({ person, e, home, projected, format }: EntryProps) {
       );
     }
   }
-  const columns = PART_COLUMNS.filter(({ key }) => (key !== "tax" || e.bill!.tax > 0) && (key !== "tip" || e.bill!.tip > 0));
+  const columns = PART_COLUMNS.filter(({ key }) =>
+    (key !== "items" || tax + tip > 0) && (key !== "tax" || tax > 0) && (key !== "tip" || tip > 0),
+  );
   const cells = (recorded: Breakdown, value: Breakdown | null) =>
     columns.map(({ key }) => (
       <td className="r" key={key}>
@@ -907,18 +921,22 @@ function ReceiptItems({ person, e, home, projected, format }: EntryProps) {
       </tr>
     </thead>
   );
-  const totalConverted = sumConverted(people.map((p) => sumConverted(items.flatMap((i) => i.portions.filter((x) => x.memberID === p.memberID).map((x) => converted.get(i.id + ":" + x.memberID))))));
+  const totalConverted = sumConverted([...converted.values()]);
   return (
     <div className="sum-receipt">
       <table className="sum-parts sum-items">
         {cols}
         {head("Item · who had it")}
         <tbody>
-          {items.map((item) => (
+          {items.map((item, index) => (
             <Fragment key={item.id}>
               <tr className="sum-subhead">
                 <td>
                   {item.title}
+                  {myPayments && <span className="sum-orig">
+                    Your payment (allocated) {money(myPayments[index], e.currency)}<br />
+                    Your share {money(sumBy(item.portions, self ?? ""), e.currency)}
+                  </span>}
                   {item.open && <span className="sum-orig">Unclaimed · charged to the payer</span>}
                 </td>
                 {cells({ amount: item.gross, items: item.amount, tax: item.tax, tip: item.tip },
@@ -934,9 +952,9 @@ function ReceiptItems({ person, e, home, projected, format }: EntryProps) {
           ))}
         </tbody>
       </table>
-      {e.bill.tax + e.bill.tip > 0 && (
+      {tax + tip > 0 && (
         <p className="sum-small">
-          Tax {money(e.bill.tax, e.currency)} and tip {money(e.bill.tip, e.currency)} are spread by item price, then by each person’s share of the item.
+          Tax {money(tax, e.currency)} and tip {money(tip, e.currency)} are spread by item price, then by each person’s share of the item.
         </p>
       )}
       <table className="sum-parts sum-receipt-totals">
@@ -951,7 +969,7 @@ function ReceiptItems({ person, e, home, projected, format }: EntryProps) {
           ))}
           <tr className="sum-subhead">
             <td>Receipt total</td>
-            {cells({ amount: e.amount, items: e.bill.items.reduce((sum, i) => sum + i.amount, 0), tax: e.bill.tax, tip: e.bill.tip }, totalConverted)}
+            {cells({ amount: e.amount, items: e.amount - tax - tip, tax, tip }, totalConverted)}
           </tr>
         </tbody>
       </table>

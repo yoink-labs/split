@@ -1,6 +1,6 @@
 import {settlementEntry} from '../exchange';
 import {rateE8 as parseRate} from '../fx';
-import { breakdown, consumptionReport, grossItems, itemRefund, itemSplit, type Bill } from '../items';
+import { breakdown, consumptionReport, entryItems, grossItems, itemRefund, itemSplit, type Bill } from '../items';
 import { exportGroup } from './export';
 import { refundRoom, refundsOf } from '../refundMath';
 import { deleteGroup } from '../social';
@@ -64,19 +64,20 @@ function makeExpense(a: Args, group: Group, old?: Entry): Entry {
   const activeIDs = group.members.filter(m => !m.removed).map(m => m.id);
   const payer = a.payer ?? old?.paidBy;
   let bill: Bill | undefined = old?.bill;
-  if (!old && a.bill) {
+  if (a.bill) {
+    if (old?.bill) throw new InputError('Use the item commands to edit an itemized receipt.');
     bill = {
       closed: false,
       tax: a.bill.tax ? minor(a.bill.tax) : 0,
       tip: a.bill.tip ? minor(a.bill.tip) : 0,
-      items: a.bill.items.map(i => {
+      items: a.bill.items.map((i, index) => {
         const memberIDs = i.memberIDs ?? [];
         const shares = shareMap(memberIDs, i.shares);
-        return { id: crypto.randomUUID(), title: i.title, amount: minor(i.amount), memberIDs, ...(shares ? { shares } : {}) };
+        return { id: old ? `item-${old.id.slice(0, 65)}-${index + 1}` : crypto.randomUUID(), title: i.title, amount: minor(i.amount), memberIDs, ...(shares ? { shares } : {}) };
       })
     };
   }
-  const amount = bill && !old
+  const amount = bill && a.bill
     ? bill.items.reduce((s, i) => s + i.amount, bill.tax + bill.tip)
     : (a.amount === undefined ? old?.amount : minor(a.amount));
   if (!amount) throw new InputError('Enter a positive expense amount.');
@@ -84,9 +85,9 @@ function makeExpense(a: Args, group: Group, old?: Entry): Entry {
   const defaults=!old && !bill && !a.mode && !a.values && !a.participants ? group.defaultWeights : undefined;
   const weighted=defaults && Object.keys(defaults).length>0;
   const mode = bill ? 'exact' : ((a.mode as 'equal'|'exact'|'percent'|'shares'|undefined) ?? old?.splitMode ?? (weighted ? 'shares' : 'equal'));
-  if (bill && !old) {
+  if (bill && a.bill) {
     if (!payer) throw new InputError('Choose a payer.');
-    if (a.amount !== undefined && minor(a.amount) !== amount) throw new InputError('The amount must match the items, tax and tip.');
+    if ((a.amount !== undefined && minor(a.amount) !== amount) || (old && a.amount === undefined && old.amount !== amount)) throw new InputError('The amount must match the items, tax and tip.');
     if (a.mode || a.participants || a.values) throw new InputError('Use the bill’s item claimants to split an itemized expense.');
     splits = itemSplit(bill, payer);
   } else if (!old || a.mode || a.participants || a.values || amount !== old.amount) {
@@ -450,7 +451,7 @@ export async function operate(name: string, input: unknown, env: Env, user: stri
     if (name === 'expenses_show') {
       return { ...e, ...expenseDetails(e),
         splitNames: e.splits.map(p => ({ ...p, name: nameOf(p.memberID) })),
-        items: e.bill ? grossItems(e.bill).map(i => ({ id: i.id, title: i.title, gross: i.gross, members: i.memberIDs.map(nameOf), shares: multipliers(i.shares), open: !i.memberIDs.length })) : undefined,
+        items: entryItems(e).map(i => ({ id: i.id, title: i.title, gross: i.gross, members: i.portions.filter(p => !i.open).map(p => nameOf(p.memberID)), shares: multipliers(e.bill?.items.find(item => item.id === i.id)?.shares), open: i.open, portions: i.portions })),
         comments: (await ledger<{comments:unknown[]}>(path + '/comments')).comments };
     }
     if (name === 'expenses_like') return ledger(path + '/like', {});
@@ -501,9 +502,8 @@ export async function operate(name: string, input: unknown, env: Env, user: stri
     const path='/v1/entries/'+e.id;
     if(name==='receipts_list') return e.receiptIDs??[];
     if(name==='items_list') {
-      if(!e.bill) throw new InputError('This expense has no itemized receipt.');
-      return {expense:e.id,title:e.title,currency:e.currency,payer:e.paidBy,closed:e.bill.closed,tax:e.bill.tax,tip:e.bill.tip,receiptIDs:e.receiptIDs??[],
-        items:grossItems(e.bill).map(i=>({id:i.id,title:i.title,amount:i.amount,gross:i.gross,memberIDs:i.memberIDs,shares:multipliers(i.shares),open:!i.memberIDs.length}))};
+      return {expense:e.id,title:e.title,currency:e.currency,payer:e.paidBy,closed:e.bill?.closed ?? true,tax:e.bill?.tax ?? 0,tip:e.bill?.tip ?? 0,receiptIDs:e.receiptIDs??[],
+        items:entryItems(e).map(i=>({id:i.id,title:i.title,amount:i.amount,gross:i.gross,memberIDs:i.open ? [] : i.portions.map(p=>p.memberID),shares:multipliers(e.bill?.items.find(item=>item.id===i.id)?.shares),open:i.open,portions:i.portions}))};
     }
     if(name==='receipts_get') {
       const res=await handle(new Request(env.APP_URL+path+'/receipts/'+a.photo),env,user);

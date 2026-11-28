@@ -1948,3 +1948,14 @@ tr.sum-subhead .sum-main { font-weight: 700; }
 .check-row input { margin-top: 3px; width: 18px; height: 18px; accent-color: var(--primary-solid); }
 .check-row span { display: grid; gap: 3px; }
 .check-row small { font-size: 12.5px; line-height: 1.45; }
+
+.sum-entry.sum-involved {
+  background: #e9f1df;
+  print-color-adjust: exact;
+  -webkit-print-color-adjust: exact;
+}
+
+.sum-involved .sum-entry-head {
+  border-inline-start: 3px solid #698354;
+  padding-inline-start: 8px;
+}

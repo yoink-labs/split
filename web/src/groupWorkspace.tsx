@@ -14,6 +14,7 @@ import {
   breakdown,
   buildGroupCSV,
   dateText,
+  entryItems,
   entryPayers,
   memberName,
   memberPath,
@@ -266,6 +267,21 @@ function ExpenseDrawer({
               ))}
             </div>
           )}
+
+          <div className="card card-pad">
+            <strong>Items</strong>
+            {entryItems(entry).map((item) => (
+              <div key={item.id} className="expense-item-line">
+                <div>
+                  {item.title}
+                  <div className="muted">
+                    {item.portions.map((p) => `${memberName(g, p.memberID)} ${money(p.amount, entry.currency)}`).join(" · ")}
+                  </div>
+                </div>
+                <b className="num">{money(item.gross, entry.currency)}</b>
+              </div>
+            ))}
+          </div>
 
           {/* Receipt callout */}
           {(entry.bill || (entry.receiptIDs && entry.receiptIDs.length > 0)) && (

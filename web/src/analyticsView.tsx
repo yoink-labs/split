@@ -1,3 +1,4 @@
+import { expenseTripPhase, tripPhaseLabels, tripPhases } from "../../worker/src/tripPhases";
 import { dailyCosts } from "../../worker/src/ledger";
 import { useId, useRef, useState, type CSSProperties } from "react";
 import { analyze, drillRows, type Analytics, type Drill, type Granularity } from "./analytics";
@@ -96,7 +97,7 @@ export function GroupAnalytics({ g, entries, onInspect, inspectedID }: {
   inspectedID?: string;
 }) {
   const homeMoney = useHomeMoney();
-  const tripRange = !!(g.startDate || g.endDate);
+  const tripRange = g.kind === "trip" && !!(g.startDate || g.endDate);
   const [range, setRange] = useState<Range>("all");
   const [custom, setCustom] = useState({ from: "", to: "" });
   const [memberID, setMemberID] = useState("");
@@ -204,6 +205,26 @@ export function GroupAnalytics({ g, entries, onInspect, inspectedID }: {
               </div>
             )}
           </dl>
+
+          {g.kind === "trip" && (
+            <section className="card card-pad" aria-labelledby="trip-phase-breakdown">
+              <h3 id="trip-phase-breakdown">Expenses by trip phase</h3>
+              <dl className="metric-strip">
+                {tripPhases.map((phase) => {
+                  const rows = data.rows.filter((row) => expenseTripPhase(g, row.entry) === phase);
+                  const priced = rows.filter((row) => row.amount != null);
+                  return <div className="metric-cell" key={phase}>
+                    <dt className="metric-label">{tripPhaseLabels[phase]}</dt>
+                    <dd className="metric-val num">{rows.length && !priced.length ? "Unavailable"
+                      : format(priced.reduce((total, row) => total + (row.amount ?? 0), 0))}</dd>
+                    <div className="metric-sub">{rows.length} {rows.length === 1 ? "expense" : "expenses"}
+                      {rows.length > priced.length && ` · ${rows.length - priced.length} unpriced`}
+                    </div>
+                  </div>;
+                })}
+              </dl>
+            </section>
+          )}
 
           <TimeChart data={data} grain={grain} onGrain={resetDrill(setGrain)} format={format}
             active={drill?.kind === "bucket" ? drill.key : ""} onSelect={(key) => select({ kind: "bucket", key })} />

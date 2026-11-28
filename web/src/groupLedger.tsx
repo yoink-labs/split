@@ -1,3 +1,5 @@
+import { expenseTripPhase } from "../../worker/src/tripPhases";
+import { phaseOptions } from "./tripFields";
 import { useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { CATEGORIES, categoryMeta } from "./categories";
@@ -41,6 +43,10 @@ export function GroupLedger({
   const canCombine = g.members.some((member) => member.userID === user && !member.removed);
   const heading = useRef<HTMLHeadingElement>(null);
   const [search, setSearch] = useState("");
+  const [phaseFilter, setPhaseFilter] = useState("");
+  const [groupByPhase, setGroupByPhase] = useState(false);
+  const isTrip = g.kind === "trip";
+  const phase = isTrip ? phaseFilter : "";
   const [payer, setPayer] = useState("");
   const [person, setPerson] = useState("");
   const [status, setStatus] = useState<Status>("all");
@@ -49,6 +55,7 @@ export function GroupLedger({
 
   const term = search.trim().toLowerCase();
   const filtered = view === "transactions" ? entries.flatMap((entry) => {
+    if (phase && expenseTripPhase(g, entry) !== phase) return [];
     if (term && ![entry.title, entry.notes, entry.category, categoryMeta(entry.category).label].some((s) => s?.toLowerCase().includes(term))) return [];
     if (category && categoryOf(entry) !== category) return [];
     if (payer && !entryPayers(entry).some((p) => p.memberID === payer)) return [];
@@ -62,10 +69,11 @@ export function GroupLedger({
     if ((involved && !mine.involved) || (owes && mine.net >= 0)) return [];
     return [{ entry, mine }];
   }) : [];
-  const hasFilters = !!(search || category || payer || person || status !== "all" || involved || owes);
+  const hasFilters = !!(search || category || payer || person || status !== "all" || involved || owes || phase);
 
   function clearFilters() {
     setSearch("");
+    setPhaseFilter("");
     setPayer("");
     setPerson("");
     setStatus("all");
@@ -73,6 +81,13 @@ export function GroupLedger({
     setOwes(false);
     if (category) onSelectCategory();
   }
+
+  const rows = filtered.map(({ entry }) => entry);
+  const sections = isTrip && groupByPhase && rows.length
+    ? [...phaseOptions, { value: "", label: "Other transactions" }].map(({ value, label }) => ({
+        label, rows: rows.filter((entry) => (expenseTripPhase(g, entry) ?? "") === value),
+      })).filter((section) => section.rows.length > 0)
+    : [{ label: "", rows }];
 
   return (
     <section className="group-ledger" aria-labelledby="group-ledger-title">
@@ -117,8 +132,12 @@ export function GroupLedger({
                   { value: "receipt", label: "Has receipt" }, { value: "recurring", label: "Recurring" },
                   { value: "pending", label: "Pending" }, { value: "refund", label: "Refunds & credits" },
                 ]} />
+              {isTrip && <Picker label="Filter by trip phase" value={phase} onChange={setPhaseFilter}
+                options={[{ value: "", label: "All phases" }, ...phaseOptions]} />}
             </div>
             <div className="ledger-filter-foot">
+              {isTrip && <label><input type="checkbox" checked={groupByPhase}
+                onChange={(event) => setGroupByPhase(event.target.checked)} /> Group by trip phase</label>}
               <p className="muted" role="status">{filtered.length} of {entries.length} transactions</p>
               {hasFilters && <button type="button" className="btn btn-xs btn-ghost" onClick={clearFilters}>Clear filters</button>}
             </div>
@@ -126,9 +145,10 @@ export function GroupLedger({
             {entries.some((e) => e.pending) && <p className="muted ledger-note">Pending entries count toward balances. Their cost may still change until someone confirms, adjusts or refunds them.</p>}
           </section>
 
-          <TransactionTable
-            key={[search, category, payer, person, status, involved, owes].join("|")}
-            g={g} entries={filtered.map(({ entry }) => entry)} all={entries} label="Transactions table"
+          {sections.map(({ label, rows }) => <TransactionTable
+            key={[label, search, category, payer, person, status, involved, owes, phase].join("|")}
+            g={g} entries={rows} all={entries} label={label || "Transactions table"}
+            header={label && <h3>{label}</h3>} pageSize={label ? 5 : undefined}
             inspectedID={inspectedID} onInspect={onInspect}
             empty={entries.length ? "No transactions match these filters." : "No transactions yet."}
             extra={memberID ? { header: "Your position", cell: (entry) => {
@@ -141,7 +161,7 @@ export function GroupLedger({
                 </strong>
               ) : <span className="muted">{entry.handled ? "Handled" : !mine.involved ? "—" : entry.kind === "settlement" ? "Payment" : "Even"}</span>;
             } } : undefined}
-          />
+          />)}
         </>
       )}
     </section>

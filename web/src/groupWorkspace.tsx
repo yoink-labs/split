@@ -1,3 +1,4 @@
+import { expenseTripPhase, tripPhaseLabels } from "../../worker/src/tripPhases";
 import { Picker } from "./picker";
 import { nightRate } from "../../worker/src/ledger";
 import { DisputeControls } from "./disputes";
@@ -154,6 +155,8 @@ function ExpenseDrawer({
     onClose();
   }
 
+  const phase = expenseTripPhase(g, entry);
+
   async function setRecurrence(cadence: string) {
     await save(`/v1/groups/${g.id}/repeat`, { entryID: entry.id, cadence });
   }
@@ -174,6 +177,7 @@ function ExpenseDrawer({
                 {entry.handled && " · Already handled"}
               </p>
               <div className="drawer-tags">
+                {phase && <span className="tag">{tripPhaseLabels[phase]}</span>}
                 {refund && <span className="tag tag-refund">{entry.refundOf ? "Refund" : "Credit"}</span>}
                 {entry.pending && <span className="tag tag-pending">Pending</span>}
                 {original && (
@@ -663,7 +667,7 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
     URL.revokeObjectURL(url);
   }
 
-  const range = tripRangeText(g.startDate, g.endDate);
+  const range = g.kind === "trip" ? tripRangeText(g.startDate, g.endDate) : "";
   const activeMembers = g.members.filter((m) => !m.removed);
 
   return (
@@ -1054,7 +1058,7 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
 
       {tab === "members" && <GroupMembers key={g.id} group={g} entries={entries} />}
       {tab === "activity" && <ChangeHistory group={g} liveIDs={new Set(entries.map(entry => entry.id))} revision={entries} />}
-      {tab === "settings" && <GroupSettings g={g} showRates={selectedTab === "rates"} />}
+      {tab === "settings" && <GroupSettings key={g.id} g={g} showRates={selectedTab === "rates"} />}
 
       {crediting && (
         <div className="drawer-backdrop" onClick={() => setCrediting(false)}>

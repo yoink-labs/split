@@ -595,6 +595,9 @@ struct EntryRow: View {
     }
 
     @ViewBuilder private var statusLine: some View {
+        if let phase = group.phase(for: entry) {
+            Text(phase.title).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+        }
         if entry.isRefund {
             Label(originalTitle.map { "Refund of \($0)" } ?? (entry.refundOf == nil ? "Credit" : "Refund"), systemImage: "arrow.uturn.backward")
                 .font(.caption2.weight(.semibold))

@@ -417,7 +417,7 @@ function DemoLedger({ onExit }: { onExit: () => void }) {
       const updGroup = path.match(/^\/v1\/groups\/([\w-]+)\/update$/);
       if (updGroup && body) {
         const gid = updGroup[1];
-        const b = body as Partial<Group>;
+        const { reason: _reason, ...b } = body as Partial<Group> & { reason?: string };
         setData((prev) => ({
           ...prev,
           groups: prev.groups.map((g) => g.id === gid
@@ -724,6 +724,7 @@ function DemoLedger({ onExit }: { onExit: () => void }) {
             ...prev,
             entries: prev.entries.map((e) => e.id === eid ? {
               ...entry,
+              phase: entry.phase === null ? undefined : entry.phase ?? e.phase,
               ...(entry.bill ? { bill: { ...entry.bill, closed: entry.bill.items.every((item) => item.memberIDs.length > 0) } } : {}),
               editable: e.editable,
               recurrence: e.recurrence,

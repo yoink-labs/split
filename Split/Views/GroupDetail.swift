@@ -49,6 +49,8 @@ struct GroupDetail: View {
     @State private var exportingPDF = false
     @State private var section: Section = .overview
     @State private var statsWidth: CGFloat = 600
+    @State private var phase: TripPhase?
+    @State private var groupByPhase = false
     @State private var filter: LedgerFilter = .all
     @State private var query = ""
     @State private var category = ""
@@ -98,6 +100,7 @@ struct GroupDetail: View {
         let search = query.trimmingCharacters(in: .whitespacesAndNewlines)
         let filtered = entries.filter { entry in
             filter.includes(entry)
+                && (group.kind != "trip" || phase == nil || group.phase(for: entry) == phase)
                 && (category.isEmpty || (entry.category ?? "Other") == category)
                 && (payer.isEmpty || entry.allPayers.contains { $0.memberID == payer })
                 && (participant.isEmpty || entry.splits.contains { $0.memberID == participant }
@@ -105,6 +108,9 @@ struct GroupDetail: View {
                 && (search.isEmpty || [entry.title, entry.notes, entry.category]
                     .compactMap { $0 }.contains { $0.localizedStandardContains(search) })
                 && matches(mine, entry, me: me?.id)
+        }
+        if group.kind == "trip" && groupByPhase {
+            return group.phaseSections(filtered)
         }
         let grouped = Dictionary(grouping: filtered) { String($0.createdAt.prefix(group.kind == "trip" ? 10 : 7)) }
         return grouped.keys.sorted(by: >).map { ($0, grouped[$0] ?? []) }
@@ -130,7 +136,7 @@ struct GroupDetail: View {
                             }
                         case .transactions:
                             let canCombine = group.members.contains(where: { $0.userID == store.currentUserID && $0.userID != nil && $0.removed != true })
-                            GroupTransactionsView(group: group, entries: entries,
+                            GroupTransactionsView(group: group, entries: entries, phase: $phase, groupByPhase: $groupByPhase,
                                                   open: { present(.transaction($0)) },
                                                   exportPDF: { exportingPDF = true },
                                                   combine: canCombine ? { combining = true } : nil)
@@ -188,6 +194,7 @@ struct GroupDetail: View {
         }
         .onChange(of: groupID) {
             section = .overview
+            groupByPhase = false
             clearLedgerFilters()
         }
         .ledgerDestinations()
@@ -281,6 +288,7 @@ struct GroupDetail: View {
     }
 
     private func tripDates(_ group: ExpenseGroup) -> String? {
+        guard group.kind == "trip" else { return nil }
         let start = group.startDate.flatMap(Exchange.date(fromDay:))
         let end = group.endDate.flatMap(Exchange.date(fromDay:))
         switch (start, end) {
@@ -515,13 +523,20 @@ struct GroupDetail: View {
                         Text("Any person").tag("")
                         ForEach(group.members) { Text($0.name).tag($0.id) }
                     }
+                    if group.kind == "trip" {
+                        Picker("Trip phase", selection: $phase) {
+                            Text("All phases").tag(nil as TripPhase?)
+                            ForEach(TripPhase.allCases) { phase in Text(phase.title).tag(Optional(phase)) }
+                        }
+                        Toggle("Group by trip phase", isOn: $groupByPhase)
+                    }
                     if hasLedgerFilters { Button("Clear filters", action: clearLedgerFilters) }
                 } label: {
                     Label("Filter", systemImage: hasLedgerFilters ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease")
                         .frame(minWidth: HitTarget.minimum, minHeight: HitTarget.minimum)
                         .labelStyle(.iconOnly)
                 }
-                .accessibilityValue(filter.rawValue)
+                .accessibilityValue(group.kind == "trip" && phase != nil ? phase?.title ?? filter.rawValue : filter.rawValue)
                 Button { present(.expense(group)) } label: {
                     Image(systemName: "plus")
                         .font(.body.weight(.semibold))
@@ -550,14 +565,16 @@ struct GroupDetail: View {
             } else {
                 ForEach(sections, id: \.0) { key, items in
                     VStack(alignment: .leading, spacing: 8) {
-                        if group.kind == "trip" {
+                        if group.kind == "trip" && groupByPhase {
+                            SectionHeader(title: key, subtitle: monthTotal(items))
+                        } else if group.kind == "trip" {
                             let day = Exchange.date(fromDay: key)
                             SectionHeader(title: day?.formatted(date: .abbreviated, time: .omitted) ?? key,
                                           subtitle: monthTotal(items))
                         } else {
                             MonthHeader(date: monthDate(key), total: monthTotal(items))
                         }
-                        entryList(items, group: group)
+                        entryList(items, group: group, showDate: group.kind == "trip" && groupByPhase)
                     }
                 }
             }
@@ -565,11 +582,12 @@ struct GroupDetail: View {
     }
 
     private var hasLedgerFilters: Bool {
-        filter != .all || !category.isEmpty || !payer.isEmpty || !participant.isEmpty || mine != .everyone
+        filter != .all || (group?.kind == "trip" && phase != nil) || !category.isEmpty || !payer.isEmpty || !participant.isEmpty || mine != .everyone
     }
 
     private func clearLedgerFilters() {
         filter = .all
+        phase = nil
         category = ""
         payer = ""
         participant = ""

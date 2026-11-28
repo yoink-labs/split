@@ -39,7 +39,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   const activeGroups = data.groups.filter((g) => !g.archived);
   const trips = activeGroups.filter((g) => g.kind === "trip");
-  const longTerm = activeGroups.filter((g) => g.kind !== "trip");
+  const longTerm = activeGroups.filter((g) => g.kind !== "trip" && g.kind !== "friend");
   const archived = data.groups.filter((g) => g.archived);
 
   const renderGroupLink = (g: Group) => {
@@ -135,37 +135,18 @@ export function AppShell({ children }: { children: ReactNode }) {
           <span>Friends</span>
         </Link>
 
-        <div className="nav-section">
-          <div className="nav-section-title">
-            <span>Trips</span>
-            <Link to="/new?kind=trip" onClick={() => setNavOpen(false)} style={{ fontSize: 12 }}>
-              + New
-            </Link>
+        {[
+          { kind: "trip", title: "Trips", groups: trips },
+          { kind: "home", title: "Long-term & Home", groups: longTerm },
+        ].filter(({ groups }) => groups.length > 0).map(({ kind, title, groups }) => (
+          <div className="nav-section" key={kind}>
+            <div className="nav-section-title">
+              <span>{title}</span>
+              <Link to={`/new?kind=${kind}`} onClick={() => setNavOpen(false)} style={{ fontSize: 12 }}>+ New</Link>
+            </div>
+            {groups.map(renderGroupLink)}
           </div>
-          {trips.length ? (
-            trips.map(renderGroupLink)
-          ) : (
-            <p className="muted" style={{ fontSize: 12, padding: "4px 10px" }}>
-              No trips yet
-            </p>
-          )}
-        </div>
-
-        <div className="nav-section">
-          <div className="nav-section-title">
-            <span>Long-term & Home</span>
-            <Link to="/new?kind=home" onClick={() => setNavOpen(false)} style={{ fontSize: 12 }}>
-              + New
-            </Link>
-          </div>
-          {longTerm.length ? (
-            longTerm.map(renderGroupLink)
-          ) : (
-            <p className="muted" style={{ fontSize: 12, padding: "4px 10px" }}>
-              No ongoing groups
-            </p>
-          )}
-        </div>
+        ))}
 
         {archived.length > 0 && (
           <div className="nav-section">

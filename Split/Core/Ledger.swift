@@ -47,6 +47,28 @@ struct ExpenseGroup: Codable, Identifiable, Equatable {
         endDate = endDay
     }
 }
+extension ExpenseGroup {
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(String.self, forKey: .id)
+        name = try values.decode(String.self, forKey: .name)
+        currency = try values.decode(String.self, forKey: .currency)
+        createdAt = try values.decode(String.self, forKey: .createdAt)
+        members = try values.decode([Person].self, forKey: .members)
+        defaultWeights = try values.decodeIfPresent([String: Int].self, forKey: .defaultWeights)
+        simplify = try values.decodeIfPresent(Bool.self, forKey: .simplify)
+        archived = try values.decodeIfPresent(Bool.self, forKey: .archived)
+        description = try values.decodeIfPresent(String.self, forKey: .description)
+        startDate = try values.decodeIfPresent(String.self, forKey: .startDate)
+        endDate = try values.decodeIfPresent(String.self, forKey: .endDate)
+        tripRates = try values.decodeIfPresent([String: Int64].self, forKey: .tripRates)
+        canDelete = try values.decodeIfPresent(Bool.self, forKey: .canDelete)
+        let storedKind = try values.decodeIfPresent(String.self, forKey: .kind)
+        kind = if let storedKind, !storedKind.isEmpty { storedKind }
+            else { startDate != nil || endDate != nil ? "trip" : "home" }
+    }
+}
+
 struct Portion: Codable, Equatable { var memberID: String; var amount: Int64; var nights: Int? = nil; var stay: ExpenseSpread? = nil }
 struct Payer: Codable, Equatable, Identifiable {
     var memberID: String
@@ -109,6 +131,7 @@ struct LedgerEntry: Codable, Identifiable, Equatable {
     var pending: Bool? = nil
     var pendingNote: String? = nil
     var combinedCount: Int? = nil
+    var phase: TripPhase? = nil
     var spread: ExpenseSpread? = nil
     var usesNights: Bool { splits.contains { $0.nights != nil } }
     var nightRate: Int64 {

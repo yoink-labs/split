@@ -1,5 +1,6 @@
 import { FormPicker, Picker } from "./picker";
 import { balanceLine } from "../../worker/src/ledger";
+import { GroupTypePicker } from "./tripFields";
 import { DiscoverySetting } from "./people";
 import { PaymentEditor, PaymentOptions, personPaymentMethods } from "./paymentMethods";
 import { useEffect, useState } from "react";
@@ -33,7 +34,7 @@ export function NewGroup() {
   const [query] = useSearchParams();
   const [id] = useState(() => crypto.randomUUID());
   const [seat] = useState(() => crypto.randomUUID());
-  const [kind, setKind] = useState(query.get("kind") || "trip");
+  const [kind, setKind] = useState(query.get("kind") === "home" ? "home" : "trip");
   const [placeholders, setPlaceholders] = useState("");
 
   return (
@@ -52,6 +53,7 @@ export function NewGroup() {
               .split(",")
               .map((s) => s.trim())
               .filter(Boolean);
+            if (kind === "trip" && value(f, "endDate") < value(f, "startDate")) throw new Error("End date must be on or after the start date.");
             await save("/v1/groups", {
               id,
               name: value(f, "name"),
@@ -73,10 +75,7 @@ export function NewGroup() {
               Name
               <input type="text" name="name" maxLength={80} required autoFocus placeholder={kind === "trip" ? "Patagonia Trip" : "Apt 4B Rent"} />
             </label>
-            <div className="field">
-              Type
-              <Picker label="Group type" value={kind} onChange={(selected) => setKind(selected)} options={[{ value: "trip", label: "Trip (day-by-day)" }, { value: "home", label: "Long-term / Home (monthly)" }, { value: "friend", label: "Friends tab" }]} />
-            </div>
+            <GroupTypePicker value={kind} onChange={setKind} />
           </div>
           <label className="field">
             Description (optional)
@@ -100,12 +99,12 @@ export function NewGroup() {
           {kind === "trip" && (
             <div className="form-row">
               <label className="field">
-                Start date (optional)
-                <input type="date" name="startDate" />
+                Start date
+                <input type="date" name="startDate" required />
               </label>
               <label className="field">
-                End date (optional)
-                <input type="date" name="endDate" />
+                End date
+                <input type="date" name="endDate" required />
               </label>
             </div>
           )}

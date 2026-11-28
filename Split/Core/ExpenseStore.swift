@@ -422,11 +422,15 @@ private struct ActiveInviteResponse: Decodable {
         try persist(next)
     }
 
-    func updateGroup(_ group: ExpenseGroup, name: String, currency: String, simplify: Bool,
-                     description: String, start: Date?, end: Date?) async throws {
+    func updateGroup(_ group: ExpenseGroup, name: String, kind: String, currency: String, simplify: Bool,
+                     description: String, start: Date?, end: Date?, reason: String) async throws {
         let clean = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !clean.isEmpty, clean.count <= 80 else { throw LedgerError.invalid("Give the group a name of up to 80 characters.") }
         var updated = group
+        if kind == "trip" && group.kind != "trip" && (start == nil || end == nil) {
+            throw LedgerError.invalid("Choose a start and end date for the trip.")
+        }
+        updated.kind = kind
         try updated.setMetadata(description: description, start: start, end: end)
         updated.name = clean
         updated.currency = currency
@@ -438,8 +442,8 @@ private struct ActiveInviteResponse: Decodable {
             try persist(next)
         } else {
             _ = try await groupAction(group.id, "update", [
-                "name": clean, "currency": currency, "simplify": simplify,
-                "description": updated.description ?? "",
+                "name": clean, "kind": kind, "currency": currency, "simplify": simplify,
+                "description": updated.description ?? "", "reason": reason,
                 "startDate": (updated.startDate as Any?) ?? NSNull(),
                 "endDate": (updated.endDate as Any?) ?? NSNull()
             ])
@@ -798,10 +802,23 @@ private struct ActiveInviteResponse: Decodable {
             try persist(next)
         } else {
             let action = replacement == nil ? "delete" : "edit"
-            _ = try await post("/v1/entries/\(original.id)/\(action)", JSONEncoder().encode(EntryChange(original: original, entry: replacement, reason: reason)))
+            _ = try await post("/v1/entries/\(original.id)/\(action)", JSONSerialization.data(withJSONObject: try entryRevision(original, replacement, reason: reason)))
             try await waitForSync()
             await sync()
         }
+    }
+
+    private func entryRevision(_ original: LedgerEntry, _ replacement: LedgerEntry?, reason: String?) throws -> [String: Any] {
+        let encoder = JSONEncoder()
+        func payload(_ entry: LedgerEntry) throws -> [String: Any] {
+            guard var fields = try JSONSerialization.jsonObject(with: encoder.encode(entry)) as? [String: Any] else {
+                throw LedgerError.invalid("Could not encode the expense.")
+            }
+            fields["phase"] = (entry.phase?.rawValue as Any?) ?? NSNull()
+            return fields
+        }
+        return ["original": try payload(original), "entry": try replacement.map(payload) as Any? ?? NSNull(),
+                "reason": (reason as Any?) ?? NSNull()]
     }
 
     func receiptDrafts(in groupID: String) -> [ReceiptDraft] {
@@ -842,7 +859,7 @@ private struct ActiveInviteResponse: Decodable {
         var payload:[String:Any]
         let path:String
         if let original {
-            payload=["entry":try JSONSerialization.jsonObject(with:encoder.encode(entry)), "original":try JSONSerialization.jsonObject(with:encoder.encode(original))]
+            payload = try entryRevision(original, entry, reason: reason)
             path="/v1/entries/\(entry.id)/edit"
         } else {
             payload=try JSONSerialization.jsonObject(with:encoder.encode(entry)) as? [String:Any] ?? [:]
@@ -1142,7 +1159,6 @@ private struct ActiveInviteResponse: Decodable {
 }
 private struct APIError: Decodable { var error: String }
 private struct ResolveRefund: Encodable { var action = "refund"; var refund: LedgerEntry; var reason: String? }
-private struct EntryChange: Encodable { var original: LedgerEntry; var entry: LedgerEntry?; var reason: String? }
 private struct InviteResponse: Decodable { var url: URL }
 struct ChargedAmountChange: Decodable, Identifiable {
     var id: Int
@@ -1189,7 +1205,9 @@ enum Fixtures {
         let houseMembers = [Person(id:"demo-home-alex",groupID:home,userID:"demo-user",name:"Alex"),Person(id:"demo-home-sam",groupID:home,userID:"demo-sam-account",name:"Sam"),Person(id:"demo-home-nina",groupID:home,name:"Nina")]
         let house = ExpenseGroup(id:home,name:"Our place",kind:"home",currency:"USD",members:houseMembers,simplify:true)
         let spainMembers = [Person(id:"demo-spain-alex",groupID:spain,userID:"demo-user",name:"Alex"),Person(id:"demo-spain-harris",groupID:spain,userID:"demo-harris-account",name:"Harris"),Person(id:"demo-spain-sanjit",groupID:spain,name:"Sanjit"),Person(id:"demo-spain-rock",groupID:spain,name:"Rock")]
-        let spainGroup = ExpenseGroup(id:spain,name:"Spain",kind:"trip",currency:"EUR",members:spainMembers,simplify:true)
+        var spainGroup = ExpenseGroup(id:spain,name:"Spain",kind:"trip",currency:"EUR",members:spainMembers,simplify:true)
+        spainGroup.startDate = "2026-11-10"
+        spainGroup.endDate = "2026-11-14"
         let samGroup = ExpenseGroup(id:sam,name:"Sam",kind:"friend",currency:"USD",members:[Person(id:"demo-sam-alex",groupID:sam,userID:"demo-user",name:"Alex"),Person(id:"demo-sam-sam",groupID:sam,userID:"demo-sam-account",name:"Sam")],simplify:false)
         let mayaGroup = ExpenseGroup(id:maya,name:"Maya",kind:"friend",currency:"USD",members:[Person(id:"demo-maya-alex",groupID:maya,userID:"demo-user",name:"Alex"),Person(id:"demo-maya-maya",groupID:maya,userID:"demo-maya-account",name:"Maya")],simplify:false)
 
@@ -1236,6 +1254,8 @@ enum Fixtures {
         e.append(entry("demo-ride",trip,"Uber to Av. Corrientes",884100,"ARS",people[3].id,[("demo-alex",221025),("demo-maya",221025),("demo-sam",221025),("demo-harris",221025)],category:"Transport",day:"2026-11-13T21:15:00Z"))
         e.append(entry("demo-rainforest",spain,"Rainforest dinner",62109,"EUR",spainMembers[1].id,[("demo-spain-alex",15527),("demo-spain-harris",15527),("demo-spain-sanjit",15527),("demo-spain-rock",15528)],category:"Dining",notes:"Table for four, set menu.",day:"2026-11-12T20:00:00Z"))
         e.append(entry("demo-boat",spain,"WeBoat Tour",47044,"EUR",spainMembers[2].id,[("demo-spain-alex",11761),("demo-spain-harris",11761),("demo-spain-sanjit",11761),("demo-spain-rock",11761)],category:"Travel",day:"2026-11-09T10:00:00Z"))
+        e.append(entry("demo-late-fee",spain,"Rental cleaning fee",4800,"EUR",spainMembers[0].id,
+                       spainMembers.map { ($0.id, 1200) },category:"Lodging",day:"2026-11-16T12:00:00Z"))
         e.append(entry("demo-rent",home,"November rent",240000,"USD",houseMembers[0].id,[("demo-home-alex",80000),("demo-home-sam",80000),("demo-home-nina",80000)],category:"Rent",day:"2026-11-01T08:00:00Z"))
         e.append(entry("demo-groceries",home,"Sunday groceries",9214,"USD",houseMembers[1].id,[("demo-home-alex",3071),("demo-home-sam",3071),("demo-home-nina",3072)],category:"Groceries",day:"2026-11-08T17:40:00Z"))
         e.append(entry("demo-utilities",home,"Internet",6000,"USD",houseMembers[0].id,[("demo-home-alex",2000),("demo-home-sam",2000),("demo-home-nina",2000)],category:"Utilities",day:"2026-11-05T09:00:00Z"))

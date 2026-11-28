@@ -1,3 +1,4 @@
+import { expenseTripPhase, groupKind, tripPhases, type GroupSchedule, type TripPhase } from '../tripPhases';
 import type { openDisputes } from '../disputes';
 import { historyDatabase } from '../history';
 import {settlementEntry} from '../exchange';
@@ -19,7 +20,7 @@ interface Args {
   query: string; user?: string; email?: string; phone?: string; invitation?: string; discoverable?: 'on'|'off';
   invite: string; kind?: string; title?: string; amount?: string; payer?: string; currency?: string;
   notes?: string; date?: string; spreadStart?: string; spreadEnd?: string;
-  stays?: {member: string; start?: string; end?: string}[]; reason?: string; before?: string;
+  stays?: {member: string; start?: string; end?: string}[]; phase?: TripPhase | 'auto'; reason?: string; before?: string;
   bill?: { items: { title: string; amount: string; memberIDs?: string[]; shares?: number[] }[]; tax?: string; tip?: string };
   share?: string; shares?: number[];
   payers?: { member: string; amount: string }[];
@@ -34,7 +35,7 @@ interface Args {
   methods?: { platform: string; handle: string; preferred?: boolean }[]; paypal?: string; venmo?: string; mercado?: string; alias?: string;
 }
 interface Member { id: string; userID: string|null; name: string; removed?: boolean }
-interface Group { defaultWeights?:Record<string,number>; tripRates?:Record<string,number>; id: string; name: string; currency: string; members: Member[]; canDelete?: boolean }
+interface Group extends GroupSchedule { kind?: string; defaultWeights?:Record<string,number>; tripRates?:Record<string,number>; id: string; name: string; currency: string; members: Member[]; canDelete?: boolean }
 type SnapshotEntry = Entry & { editable: boolean; recurrence: string | null; commentCount: number; likeCount: number; likedByMe: boolean };
 export type LedgerHandler = (r: Request, env: Env, user: string) => Promise<Response>;
 const provider = new CfWorkerJsonSchemaValidator();
@@ -171,10 +172,11 @@ function makeExpense(a: Args, group: Group, old?: Entry): Entry {
     if (payers.reduce((n, p) => n + p.amount, 0) !== amount) throw new InputError('The payer amounts must match the total exactly.');
     if (payers.length === 1) payers = undefined;
   }
+  if (a.phase && groupKind(group)!=='trip') throw new InputError('Trip phases are available only in trip groups.');
   return validateEntry({ id: old?.id ?? crypto.randomUUID(), groupID: group.id, title: a.title ?? old?.title,
     amount, currency, paidBy: a.payers && !a.payer ? a.payers[0].member : payer,
     exchange, bill, spread, category:a.category??old?.category, splits, kind: 'expense', splitMode: mode, createdAt,
-    payers, notes: a.notes ?? old?.notes, handled: old?.handled,
+    payers, notes: a.notes ?? old?.notes, handled: old?.handled, phase: a.phase === 'auto' ? null : a.phase ?? old?.phase,
     ...pendingFields(a, old) }, ids,old?.bill,{reconcileBill:true});
 }
 async function dailyEntriesInCurrency(entries: Entry[], currency: string): Promise<Entry[]> {
@@ -317,7 +319,7 @@ export async function operate(name: string, input: unknown, env: Env, user: stri
     const members = [a.self, ...(a.placeholders ?? [])].map((label,i) => ({
       id: crypto.randomUUID(), groupID, name: label, userID: i === 0 ? user : null
     }));
-    await ledger('/v1/groups', { id: groupID, name: a.name, kind: a.kind ?? 'trip', currency: a.currency ?? 'USD', members,
+    await ledger('/v1/groups', { id: groupID, name: a.name, kind: a.kind, currency: a.currency ?? 'USD', members,
       description: clearable(a.description) ?? undefined, startDate: clearable(a.start) ?? undefined, endDate: clearable(a.end) ?? undefined });
     return { id: groupID, members };
   }
@@ -360,8 +362,9 @@ export async function operate(name: string, input: unknown, env: Env, user: stri
   if (name === 'profile_discoverable') return a.discoverable === undefined
     ? ledger('/v1/profile/discoverable') : ledger('/v1/profile/discoverable', { discoverable: a.discoverable === 'on' });
   if (name === 'groups_list') {
-    return (await env.DB.prepare(`SELECT g.id,g.name,g.kind,g.currency,g.created_at AS createdAt FROM groups g
-      JOIN members m ON g.id=m.group_id WHERE m.user_id=? ORDER BY g.created_at DESC`).bind(user).all()).results;
+    return (await env.DB.prepare(`SELECT g.id,g.name,g.kind,g.currency,g.start_date AS startDate,g.end_date AS endDate,g.created_at AS createdAt FROM groups g
+      JOIN members m ON g.id=m.group_id WHERE m.user_id=? ORDER BY g.created_at DESC`).bind(user).all<Group>()).results
+      .map(g => ({ ...g, kind: groupKind(g) }));
   }
   if (name === 'disputes_list' || name === 'disputes_history') {
     const path = name === 'disputes_list' ? '/v1/disputes' : '/v1/disputes/activity';
@@ -387,6 +390,7 @@ export async function operate(name: string, input: unknown, env: Env, user: stri
   const { members } = group;
   const nameOf = (id: string) => members.find(m => m.id === id)?.name ?? id;
   const expenseDetails = (entry: Entry) => ({
+    phase: expenseTripPhase(group, entry),
     date: new Date(entry.createdAt).toISOString().slice(0,10),
     payerNames: entryPayers(entry).map(p => ({...p, name: nameOf(p.memberID)})),
     ...(entry.splits.some(s => s.nights !== undefined) ? {splitMode: 'nights', nightRate: nightRate(entry)} : {}),
@@ -479,8 +483,8 @@ export async function operate(name: string, input: unknown, env: Env, user: stri
   if(name==='expenses_repeat') return ledger('/v1/groups/'+group.id+'/repeat',{entryID:a.expense,cadence:a.cadence});
   if (name === 'groups_show') return group;
   if (name === 'groups_update') return ledger('/v1/groups/'+group.id+'/update', {
-    name: a.name, description: clearable(a.description), startDate: clearable(a.start), endDate: clearable(a.end),
-    simplify: a.simplify === undefined ? undefined : a.simplify === 'on', currency: a.currency });
+    kind: a.kind, name: a.name, description: clearable(a.description), startDate: clearable(a.start), endDate: clearable(a.end),
+    simplify: a.simplify === undefined ? undefined : a.simplify === 'on', currency: a.currency, reason: a.reason });
   if (name === 'groups_archive') return ledger('/v1/groups/'+group.id+'/archive', { archived: a.action !== 'restore' });
   if (name === 'groups_delete') {
     // Preview and confirm with the same creator rule the delete route enforces.
@@ -563,12 +567,12 @@ export async function operate(name: string, input: unknown, env: Env, user: stri
       // These fields are stored outside the editable entry payload.
       const { receiptIDs, recurrence, editable, commentCount, likeCount, likedByMe } = before;
       return { preview: true, before,
-        after: after && { ...after, receiptIDs, recurrence, editable, commentCount, likeCount, likedByMe }, revision };
+        after: after && { ...after, phase: expenseTripPhase(group, after), receiptIDs, recurrence, editable, commentCount, likeCount, likedByMe }, revision };
     }
     if (a.revision !== revision) throw new HTTPError(409,'Review a fresh preview before confirming.');
     const action = after ? 'edit' : 'delete';
-    await ledger(`/v1/entries/${before.id}/${action}`, { original: before, entry: after, reason: a.reason, disputeReply: a.disputeReply });
-    return { applied: true, id: a.expense, category: after?.category };
+    await ledger(`/v1/entries/${before.id}/${action}`, { original: { ...before, phase: before.phase ?? null }, entry: after && { ...after, phase: a.phase === 'auto' ? null : after.phase }, reason: a.reason, disputeReply: a.disputeReply });
+    return { applied: true, id: a.expense, category: after?.category, phase: after && expenseTripPhase(group,after) };
   }
   const entries = snapshot.entries.filter(e => e.groupID === group.id);
   if (name === 'groups_export') {
@@ -613,8 +617,15 @@ export async function operate(name: string, input: unknown, env: Env, user: stri
   if(name==='groups_breakdown') {
     if(a.member && !members.some(m=>m.id===a.member)) throw new InputError('Choose a group member.');
     return [...new Set([group.currency,...entries.map(e=>e.exchange?.target??e.currency)])].map(currency=>{
-      const report=breakdown(entries.map(settlementEntry),members,currency);
-      return a.member ? {...report,members:report.members.filter(m=>m.id===a.member),expenses:entries.filter(e=>(e.exchange?.target??e.currency)===currency && e.kind==='expense' && (e.paidBy===a.member || e.splits.some(s=>s.memberID===a.member)))} : report;
+      const settled=entries.map(settlementEntry);
+      const report=breakdown(settled,members,currency);
+      const phases=groupKind(group)==='trip' ? Object.fromEntries(tripPhases.map(phase => {
+        const rows=settled.filter(e => e.currency===currency && expenseTripPhase(group,e)===phase &&
+          (!a.member || entryPayers(e).some(p => p.memberID===a.member) || e.splits.some(s => s.memberID===a.member)));
+        const amount=rows.reduce((sum,e) => sum+(a.member ? e.splits.find(s => s.memberID===a.member)?.amount ?? 0 : e.amount),0);
+        return [phase,{ count:rows.length,amount }];
+      })) : undefined;
+      return a.member ? {...report,phases,members:report.members.filter(m=>m.id===a.member),expenses:entries.filter(e=>(e.exchange?.target??e.currency)===currency && e.kind==='expense' && (e.paidBy===a.member || e.splits.some(s=>s.memberID===a.member)))} : {...report,phases};
     });
   }
   if(name==='receipts_inbox') return (await ledger<{receipts:{uploadedBy:string}[]}>('/v1/groups/'+group.id+'/receipts')).receipts
@@ -679,7 +690,7 @@ export async function operate(name: string, input: unknown, env: Env, user: stri
       const prefix = e.id.slice(0,8);
       prefixes.set(prefix, (prefixes.get(prefix) ?? 0) + 1);
     }
-    return expenses.map(e => {
+    return expenses.filter(e => !a.phase || expenseTripPhase(group,e) === a.phase).map(e => {
       const prefix = e.id.slice(0,8);
       return { ...e, ...expenseDetails(e), shortID: prefixes.get(prefix) === 1 ? prefix : e.id };
     });

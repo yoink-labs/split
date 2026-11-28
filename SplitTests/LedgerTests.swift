@@ -1,6 +1,29 @@
 import XCTest
 @testable import Split
 final class LedgerTests: XCTestCase {
+    func testLegacyGroupClassificationAndTripPhases() throws {
+        func decode(_ fields: String) throws -> ExpenseGroup {
+            try JSONDecoder().decode(ExpenseGroup.self, from: Data("""
+            {"id":"trip","name":"Trip","currency":"USD","members":[],"createdAt":"2026-11-01T12:00:00Z"\(fields)}
+            """.utf8))
+        }
+        XCTAssertEqual(try decode("").kind, "home")
+        XCTAssertEqual(try decode(#","kind":"friend""#).kind, "friend")
+        var group = try decode(#","startDate":"2026-11-12","endDate":"2026-11-21""#)
+        XCTAssertEqual(group.kind, "trip")
+        XCTAssertEqual(group.defaultPhase(on: "2026-11-11"), .pre)
+        XCTAssertEqual(group.defaultPhase(on: "2026-11-12"), .during)
+        XCTAssertEqual(group.defaultPhase(on: "2026-11-21"), .during)
+        XCTAssertEqual(group.defaultPhase(on: "2026-11-22"), .post)
+        var entry = LedgerEntry(groupID: group.id, title: "Flight", amount: 100, currency: "USD",
+                                paidBy: "alex", splits: [], createdAt: "2026-11-12T12:00:00Z")
+        XCTAssertEqual(group.phase(for: entry), .during)
+        entry.phase = .pre
+        XCTAssertEqual(group.phase(for: entry), .pre)
+        group.kind = "home"
+        XCTAssertNil(group.phase(for: entry))
+    }
+
     func testPaymentLinksAndLegacyHandles() throws {
         let legacy = try JSONDecoder().decode(Person.self, from: Data("""
         {"id":"seat","groupID":"group","name":"Alex","payment":{"venmo":"alex"}}

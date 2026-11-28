@@ -136,6 +136,9 @@ struct AnalyticsView: View {
                 }
             } else {
                 AnalyticsSummary(report: report, format: context.format, member: context.member, home: fx.home)
+                if let group = context.scope.group, group.kind == "trip" {
+                    phaseBreakdown(group, context: context)
+                }
                 SpendingTimeChart(
                     report: report, format: context.format, grain: $grain,
                     active: context.drill?.bucket,
@@ -157,6 +160,30 @@ struct AnalyticsView: View {
                         active: context.drill?.currency,
                         onSelect: { select(.currency($0), proxy: proxy) }
                     )
+                }
+            }
+        }
+    }
+
+    private func phaseBreakdown(_ group: ExpenseGroup, context: Context) -> some View {
+        Card {
+            VStack(alignment: .leading, spacing: Spacing.m) {
+                SectionHeader(title: "Expenses by trip phase")
+                ForEach(TripPhase.allCases) { phase in
+                    let rows = context.report.rows.filter { group.phase(for: $0.entry) == phase }
+                    let amounts = rows.compactMap(\.amount)
+                    let missing = rows.count - amounts.count
+                    LabeledContent {
+                        Text(!rows.isEmpty && amounts.isEmpty ? "Unavailable" : context.format.money(amounts.reduce(0, +)))
+                            .monospacedDigit()
+                    } label: {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(phase.title)
+                            Text("\(rows.count) \(rows.count == 1 ? "expense" : "expenses")" + (missing > 0 ? " · \(missing) unpriced" : ""))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
                 }
             }
         }

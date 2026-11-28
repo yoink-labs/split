@@ -83,6 +83,8 @@ function amountText(cents, currency) {
   return `${currency} ${cents < 0 ? "-" : ""}${digits.slice(0, -2)}.${digits.slice(-2)}`;
 }
 
+const phaseLabels = { pre: 'Pre-trip', during: 'During trip', post: 'Post-trip' };
+const kindLabels = { trip: 'Trip', home: 'Long-term / Home', friend: 'Friends tab' };
 function describeExpense(entry, names = {}, receipts = entry.receiptIDs?.join(', ') || 'none') {
   const money = (cents, currency = entry.currency) => amountText(cents, currency);
   const portions = people => people.map(p => `${names[p.memberID] ?? p.memberID} (${money(p.amount)})`).join(', ');
@@ -95,6 +97,7 @@ function describeExpense(entry, names = {}, receipts = entry.receiptIDs?.join(',
     `  Receipt photos: ${receipts}`,
     `  Recurrence: ${entry.recurrence ?? 'off'}`
   ];
+  if (entry.phase) lines.push('  Trip phase: ' + (phaseLabels[entry.phase] ?? entry.phase));
   if (entry.splits.some(part => part.nights !== undefined)) {
     const count = entry.splits.reduce((sum, part) => sum + part.nights, 0);
     const rate = entry.nightRate ?? Math.floor((entry.amount + Math.floor(count / 2)) / count);
@@ -408,6 +411,8 @@ export async function main(argv = process.argv.slice(2), io = terminal()) {
           event.action + ' ' + event.type + ' · ' + (event.title ?? event.entity));
         for (const [field, { before, after }] of Object.entries(event.changes)) {
           const format = (value, side) => {
+            if (field === 'phase') return value == null ? 'Automatic' : phaseLabels[value] ?? value;
+            if (field === 'kind' && kindLabels[value]) return kindLabels[value];
             const currencyField = field === 'chargedAmount' ? 'chargedCurrency' : 'currency';
             const currency = event.changes[currencyField]?.[side] ?? event[currencyField];
             if (currency && typeof value === 'number' && ['amount', 'chargedAmount'].includes(field))
@@ -418,8 +423,10 @@ export async function main(argv = process.argv.slice(2), io = terminal()) {
                   (p.stay ? ', ' + p.stay.start + ' to ' + p.stay.end : '') + ')')).join(', ');
             return value == null ? 'None' : typeof value === 'string' ? value : JSON.stringify(value);
           };
-          const change = before == null ? format(after, 'after') : format(before, 'before') + ' → ' + format(after, 'after');
-          console.log('  ' + field + ': ' + change);
+          const showBefore = before != null || (field === 'phase' && event.action === 'edit');
+          const change = showBefore ? format(before, 'before') + ' → ' + format(after, 'after') : format(after, 'after');
+          const label = field === 'phase' ? 'Trip phase' : field === 'kind' ? 'Group type' : field;
+          console.log('  ' + label + ': ' + change);
         }
         if (event.reason) console.log('  Reason: ' + event.reason);
       }

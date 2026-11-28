@@ -68,6 +68,8 @@ struct ChangeHistoryEvent: Decodable, Identifiable {
         case "chargedAmount": "Charged amount"
         case "chargedCurrency": "Charged currency"
         case "bill": "Receipt items"
+        case "kind": "Group type"
+        case "phase": "Trip phase"
         default: field.replacing(/[A-Z]/) { " " + $0.output.lowercased() }.capitalized
         }
     }

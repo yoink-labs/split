@@ -69,6 +69,6 @@ struct AnalyticsScope {
     }
 
     var hasExpenses: Bool { entries.contains(where: \.isSpending) }
-    var tripRange: Bool { group?.startDate != nil || group?.endDate != nil }
+    var tripRange: Bool { group?.kind == "trip" && (group?.startDate != nil || group?.endDate != nil) }
     var title: String { group?.name ?? "All groups" }
 }

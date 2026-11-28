@@ -1,3 +1,5 @@
+import { defaultTripPhase, tripPhaseLabels, type TripPhase } from "../../worker/src/tripPhases";
+import { phaseOptions } from "./tripFields";
 import { readStay, spreadLength, type Portion, type StayDates } from "../../worker/src/ledger";
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
@@ -153,6 +155,7 @@ function Composer({ g, existing }: { g: Group; existing?: Expense }) {
   const homeMoney = useHomeMoney();
   useRates([currency], homeMoney.home);
   const [amountText, setAmountText] = useState(existing ? (existing.amount / 100).toFixed(2) : "");
+  const [phase, setPhase] = useState(existing?.phase ?? "");
   const [category, setCategory] = useState(existing?.category ?? "Dining");
   const [notes, setNotes] = useState(existing?.notes ?? "");
   const [extrasOpen, setExtrasOpen] = useState(Boolean(existing?.notes || existing?.handled || existing?.pending || query.has("receipt")));
@@ -359,14 +362,15 @@ function Composer({ g, existing }: { g: Group; existing?: Expense }) {
             if (existing) {
               const { editable: _ed, recurrence: _rec, commentCount: _cc, likeCount: _lc, likedByMe: _lm, receiptIDs: _ri, ...orig } = existing;
               await save(`/v1/entries/${existing.id}/edit`, {
-                original: orig,
-                entry,
+                original: { ...orig, phase: orig.phase ?? null },
+                entry: { ...entry, phase: g.kind === "trip" ? phase || null : existing.phase },
                 ...(resolving ? { disputeReply: value(f, "disputeReply") } : {}),
                 reason: value(f, "reason"),
                 ...(photos.length ? { photos } : {}),
               });
             } else {
               await save("/v1/entries", {
+                ...(g.kind === "trip" && phase ? { phase } : {}),
                 ...entry,
                 ...(photos.length ? { photos } : {}),
               });
@@ -413,6 +417,13 @@ function Composer({ g, existing }: { g: Group; existing?: Expense }) {
                     setDate(e.target.value);
                   }} />
               </label>
+              {g.kind === "trip" && (
+                <div className="field">
+                  <span>Trip phase</span>
+                  <Picker label="Trip phase" value={phase} onChange={(value) => setPhase(value as TripPhase | "")}
+                    options={[{ value: "", label: `Automatic · ${tripPhaseLabels[defaultTripPhase(g, date) ?? "during"]}` }, ...phaseOptions]} />
+                </div>
+              )}
               {!foreign ? (
                 <div>
                   <button type="button" className="btn btn-sm btn-ghost" onClick={() => setConverter(true)}>

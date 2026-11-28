@@ -22,6 +22,7 @@ struct AddExpenseView: View {
     @State private var currency = ""
     @State private var purchaseDate = Date()
     @State private var category = ""
+    @State private var phase: TripPhase?
     /// Set while the category came from a recognised merchant rather than the user.
     @State private var autoCategory = false
     @State private var notes = ""
@@ -83,6 +84,11 @@ struct AddExpenseView: View {
         return group.currency
     }
     private var showExchange: Bool { !currency.isEmpty && currency != settlementCurrency }
+    private var retainsOriginalDate: Bool {
+        guard let original, let previous = ISO8601DateFormatter().date(from: original.createdAt) else { return false }
+        return Calendar.current.isDate(previous, inSameDayAs: purchaseDate)
+    }
+
     private var quoteDate: String {
         Exchange.localDay(purchaseDate)
     }
@@ -407,6 +413,14 @@ struct AddExpenseView: View {
                     .font(.subheadline.weight(.medium))
                     .accessibilityLabel("Expense date")
                 Divider()
+                if current.kind == "trip" {
+                    let automatic = current.defaultPhase(on: retainsOriginalDate ? original?.createdAt ?? quoteDate : quoteDate)
+                    Picker("Trip phase", selection: $phase) {
+                        Text("Automatic · " + automatic.title).tag(nil as TripPhase?)
+                        ForEach(TripPhase.allCases) { phase in Text(phase.title).tag(Optional(phase)) }
+                    }
+                    Divider()
+                }
                 Toggle(isOn: $handled.animation(.snappy)) {
                     VStack(alignment: .leading, spacing: 3) {
                         Text("Already handled").font(.subheadline.weight(.semibold))
@@ -1270,10 +1284,9 @@ struct AddExpenseView: View {
         }
 
         let created: String
-        if let original, let previous = ISO8601DateFormatter().date(from: original.createdAt),
-           Calendar.current.isDate(previous, inSameDayAs: purchaseDate) {
+        if let original, retainsOriginalDate {
             created = original.createdAt
-        } else if currency != settlementCurrency {
+        } else if currency != settlementCurrency || current.kind == "trip" {
             created = quoteDate + "T12:00:00Z"
         } else {
             created = ISO8601DateFormatter().string(from: purchaseDate)
@@ -1296,6 +1309,7 @@ struct AddExpenseView: View {
             splitMode: itemized ? .exact : mode == .nights ? .shares : mode,
             createdAt: created
         )
+        entry.phase = current.kind == "trip" ? phase : original?.phase
         if spreading {
             let spread = ExpenseSpread(start: Exchange.localDay(spreadStart), end: Exchange.localDay(spreadEnd))
             let count = spread.dayCount
@@ -1422,6 +1436,7 @@ struct AddExpenseView: View {
             title = UserDefaults.standard.string(forKey: "splitComposerTitle") ?? title
         }
         #endif
+        phase = original?.phase
         category = original?.category ?? ""
         chargedText = original?.exchange?.statementAmount.map(Money.input) ?? ""
         notes = original?.notes ?? ""

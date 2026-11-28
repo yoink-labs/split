@@ -85,3 +85,37 @@ it('records authorized edits atomically, keeps cents exact, and exposes a read-o
   await expect(call('/v1/groups', { id: groupID, name: 'Reused', kind: 'trip', currency: 'USD',
     members: [{ id: memberID, name: 'Unrelated', userID: actor }] })).rejects.toThrow('Group ID already used');
 });
+
+it('audits group type changes and trip phase overrides with their actor and optional reason', async () => {
+  const groupID = 'history-trip-phases';
+  const memberID = 'history-trip-member';
+  const group = '/v1/groups/' + groupID;
+  await call('/v1/groups', {
+    id: groupID, name: 'Lisbon', kind: 'trip', currency: 'USD', startDate: '2026-09-10', endDate: '2026-09-15',
+    members: [{ id: memberID, name: 'Amine', userID: actor }],
+  });
+  const entry = {
+    id: 'history-phase-expense', groupID, kind: 'expense', title: 'Flights', amount: 120_000,
+    currency: 'USD', paidBy: memberID, splitMode: 'equal', createdAt: '2026-09-12T12:00:00Z',
+    splits: [{ memberID, amount: 120_000 }],
+  };
+  await call('/v1/entries', entry);
+
+  const changePhase = async (phase: string, reason?: string) => {
+    const args = { group: groupID, expense: entry.id, phase, ...(reason === undefined ? {} : { reason }) };
+    const preview = await operate('expenses_edit', args, env, actor, handle) as { revision: string };
+    await operate('expenses_edit', { ...args, yes: true, revision: preview.revision }, env, actor, handle);
+  };
+  await changePhase('pre', ' Booked in advance ');
+  await changePhase('auto');
+  await operate('groups_update', { group: groupID, kind: 'home', reason: 'Shared household' }, env, actor, handle);
+
+  const who = { actor, actorName: 'Amine', member: memberID, action: 'edit' };
+  const result = await (await call(group + '/history')).json<{ events: unknown[] }>();
+  expect(result.events.slice(0, 3)).toMatchObject([
+    { ...who, type: 'group', reason: 'Shared household', changes: { kind: { before: 'trip', after: 'home' } } },
+    { ...who, type: 'expense', expense: entry.id, reason: null, changes: { phase: { before: 'pre', after: null } } },
+    { ...who, type: 'expense', expense: entry.id, reason: 'Booked in advance', changes: { phase: { before: null, after: 'pre' } } },
+  ]);
+  await expect(call(group + '/history', undefined, 'history-outside-account')).rejects.toMatchObject({ status: 403 });
+});

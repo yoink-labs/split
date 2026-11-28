@@ -49,6 +49,7 @@ is noted next to each release. The CLI is versioned separately with
 - Delete groups you created and respond to pending payments from the CLI or MCP.
 - Set trip exchange rates and payment methods, and mark expenses as handled from the CLI or MCP.
 - Create remote MCP tokens and revoke AI, CLI, and Finance access from the Split web app.
+- Create and edit Trip and Long-term / Home groups. Trip expenses get a date-based phase you can override, filter, group, and see in analytics. CLI and MCP expose the same group types and trip phases. Empty group sections stay hidden. Activity records group type and trip phase edits with the actor, before-and-after values, and an optional reason.
 
 ### Changed
 

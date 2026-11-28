@@ -164,7 +164,7 @@ struct ChangeHistoryView: View {
                 if let change = event.changes[field] {
                     let before = display(change.before, field: field, event: event, after: false)
                     let after = display(change.after, field: field, event: event, after: true)
-                    Text(change.before == nil
+                    Text(change.before == nil && (field != "phase" || event.action != "edit")
                          ? "\(ChangeHistoryEvent.label(field)): \(after)"
                          : "\(ChangeHistoryEvent.label(field)): \(before) → \(after)")
                         .font(.footnote)
@@ -176,6 +176,10 @@ struct ChangeHistoryView: View {
     }
 
     private func display(_ value: HistoryValue?, field: String, event: ChangeHistoryEvent, after: Bool) -> String {
+        if field == "phase" {
+            guard let raw = value?.string else { return "Automatic" }
+            return TripPhase(rawValue: raw)?.title ?? raw
+        }
         guard let value else { return "None" }
         let currencyField = field == "chargedAmount" ? "chargedCurrency" : "currency"
         let changedCurrency = event.changes[currencyField]
@@ -185,6 +189,9 @@ struct ChangeHistoryView: View {
         switch (field, value) {
         case ("amount", .integer(let cents)), ("chargedAmount", .integer(let cents)): return Money.text(cents, code)
         case ("paidBy", .text(let id)), ("canonicalMember", .text(let id)): return name(id)
+        case ("kind", .text("trip")): return "Trip"
+        case ("kind", .text("home")): return "Long-term / Home"
+        case ("kind", .text("friend")): return "Friends tab"
         case ("createdAt", .text(let date)): return String(date.prefix(10))
         case ("participants", .list(let ids)): return ids.map { name($0.description) }.joined(separator: ", ")
         case ("splits", .list(let parts)), ("payers", .list(let parts)):

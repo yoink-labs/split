@@ -1,3 +1,4 @@
+import { tripPhaseLabels, type TripPhase } from "../../worker/src/tripPhases";
 import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { Form, useLedger } from "./context";
@@ -29,10 +30,17 @@ const actions: Record<string, string> = {
 const labels: Record<string, string> = {
   paidBy: "payer", splits: "shares", createdAt: "date", chargedAmount: "charged amount",
   chargedCurrency: "charged currency", splitMode: "split method", bill: "receipt items",
+  kind: "Group type", phase: "Trip phase",
 };
 
 function format(field: string, side: "before" | "after", event: Event, group: Group): string {
   const value = event.changes[field][side];
+  if (field === "phase") return value === null ? "Automatic" : tripPhaseLabels[value as TripPhase] ?? String(value);
+  if (field === "kind") {
+    if (value === "trip") return "Trip";
+    if (value === "home") return "Long-term / Home";
+    if (value === "friend") return "Friends tab";
+  }
   if (value === null) return "None";
   const currency = (event.changes.currency?.[side] as string | undefined) ?? event.currency ?? group.currency;
   const name = (id: string) => memberName(group, id);
@@ -145,7 +153,7 @@ export function ChangeHistory({ group, expense, liveIDs, revision }: {
             {fields.length > 0 && <dl>
               {fields.map(([field, change]) =>
                 <div key={field}><dt>{labels[field] ?? field.replace(/[A-Z]/g, letter => " " + letter.toLowerCase())}</dt>
-                  <dd>{change.before !== null && <>{format(field, "before", event, group)} <span aria-label="changed to">→</span> </>}
+                  <dd>{(change.before !== null || (field === "phase" && event.action === "edit")) && <>{format(field, "before", event, group)} <span aria-label="changed to">→</span> </>}
                     {format(field, "after", event, group)}</dd></div>,
               )}
             </dl>}

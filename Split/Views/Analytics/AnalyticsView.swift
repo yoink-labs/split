@@ -31,7 +31,7 @@ struct AnalyticsView: View {
     @State private var customFrom = Calendar.current.date(byAdding: .day, value: -29, to: Date()) ?? Date()
     @State private var customTo = Date()
     @State private var person: String?
-    @State private var grain: SpendAnalytics.Granularity?
+    @State private var grain: SpendAnalytics.Granularity = .week
     @State private var drill: SpendAnalytics.Drill?
     @State private var inspecting: LedgerEntry?
     @State private var width: CGFloat = 0
@@ -190,7 +190,7 @@ struct AnalyticsView: View {
         var to: String
         var range: SpendAnalytics.Range
         var person: String?
-        var grain: SpendAnalytics.Granularity?
+        var grain: SpendAnalytics.Granularity
     }
 
     private func drillTitle(_ context: Context) -> String {

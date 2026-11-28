@@ -33,12 +33,12 @@ struct AnalyticsSummary: View {
             Grid(alignment: .leading, horizontalSpacing: Spacing.m, verticalSpacing: Spacing.s) {
                 if columns == 1 {
                     GridRow { expensesStat }
-                    GridRow { averageStat }
+                    GridRow { secondaryStat }
                     if let largest = report.categories.first { GridRow { largestStat(largest) } }
                 } else {
                     GridRow {
                         expensesStat
-                        averageStat
+                        secondaryStat
                         if let largest = report.categories.first { largestStat(largest) }
                     }
                 }
@@ -71,8 +71,12 @@ struct AnalyticsSummary: View {
         stat("Expenses", "\(report.rows.count)")
     }
 
-    private var averageStat: some View {
-        stat("Average expense", format.money(report.average))
+    private var secondaryStat: some View {
+        if let member {
+            stat("Paid", format.money(report.people.first { $0.key == member.key }?.paid ?? 0))
+        } else {
+            stat("Average expense", format.money(report.average))
+        }
     }
 
     private func largestStat(_ largest: SpendAnalytics.CategoryTotal) -> some View {

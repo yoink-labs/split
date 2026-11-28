@@ -63,7 +63,7 @@ struct AnalyticsFilterBar: View {
         .accessibilityLabel("Date range, \(range.title)")
         .accessibilityIdentifier("analytics-range")
         Menu {
-            Picker("Member", selection: $person) {
+            Picker("View as", selection: $person) {
                 Label("Everyone", systemImage: "person.3").tag(String?.none)
                 ForEach(scope.members) { member in
                     Text(member.removed ? "\(member.name) (removed)" : member.name).tag(Optional(member.key))
@@ -72,7 +72,7 @@ struct AnalyticsFilterBar: View {
         } label: {
             FilterChip(title: scope.members.first { $0.key == person }?.name ?? "Everyone", symbol: "person.crop.circle", active: person != nil)
         }
-        .accessibilityLabel("Member, \(scope.members.first { $0.key == person }?.name ?? "Everyone")")
+        .accessibilityLabel("View as, \(scope.members.first { $0.key == person }?.name ?? "Everyone")")
         .accessibilityIdentifier("analytics-member")
     }
 

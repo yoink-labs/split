@@ -1,8 +1,8 @@
-import { useRef, useState, type CSSProperties } from "react";
+import { useId, useRef, useState, type CSSProperties } from "react";
 import { analyze, drillRows, type Analytics, type Drill, type Granularity } from "./analytics";
 import { categoryMeta } from "./categories";
 import { CategoryDonut } from "./categoryDonut";
-import { memberName, moneyCompact, type Expense, type Group } from "./data";
+import { entryPayers, memberName, moneyCompact, type Expense, type Group } from "./data";
 import { useHomeMoney } from "./homeMoney";
 import { Picker } from "./picker";
 import { TransactionTable } from "./transactionTable";
@@ -13,8 +13,6 @@ type Range = "all" | "trip" | "30d" | "90d" | "12m" | "custom";
 const RANGE_LABELS: Record<Range, string> = {
   all: "All time", trip: "Trip dates", "30d": "30 days", "90d": "90 days", "12m": "12 months", custom: "Custom",
 };
-const STACK_LIMIT = 6;
-const OTHER = "__other";
 
 const utcDay = (ms: number) => new Date(ms).toISOString().slice(0, 10);
 const labelDay = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
@@ -35,7 +33,7 @@ function scale(max: number) {
   const raw = Math.max(1, max) / 4;
   const magnitude = 10 ** Math.floor(Math.log10(raw));
   const step = [1, 2, 2.5, 5, 10].map((n) => n * magnitude).find((n) => n >= raw) ?? raw;
-  return { tick: Math.ceil(step), ceiling: Math.ceil(step) * 4 };
+  return Math.ceil(step);
 }
 
 function rangeBounds(range: Range, g: Group, custom: { from: string; to: string }) {
@@ -61,16 +59,16 @@ export function GroupAnalytics({ g, entries, onInspect, inspectedID }: {
   const [range, setRange] = useState<Range>("all");
   const [custom, setCustom] = useState({ from: "", to: "" });
   const [memberID, setMemberID] = useState("");
-  const [grain, setGrain] = useState<Granularity | "auto">("auto");
+  const [grain, setGrain] = useState<Granularity>("week");
   const [drill, setDrill] = useState<Drill | null>(null);
   const drillPanel = useRef<HTMLElement>(null);
 
   const bounds = rangeBounds(range, g, custom);
   const people = g.members.filter((m) => !m.removed || entries.some((e) =>
-    e.splits.some((s) => s.memberID === m.id) || e.paidBy === m.id));
+    e.splits.some((s) => s.memberID === m.id) || entryPayers(e).some((p) => p.memberID === m.id)));
   const member = people.find((m) => m.id === memberID);
   const data = analyze(entries, homeMoney.project, homeMoney.home, { ...bounds, memberID: member?.id },
-    g.members.map((m) => m.id), grain === "auto" ? undefined : grain);
+    g.members.map((m) => m.id), grain);
   const format = (amount: number, estimated = data.estimated) => homeMoney.format(amount, estimated);
   const drilled = drillRows(data, drill);
   const drillTotal = drilled.reduce((sum, row) => sum + (row.amount ?? 0), 0);
@@ -118,9 +116,9 @@ export function GroupAnalytics({ g, entries, onInspect, inspectedID }: {
         )}
         <div className="analytics-filter-end">
           <span className="analytics-scope muted">
-            {member ? `${member.name}’s share` : "All members"} · {homeMoney.home}
+            View as
           </span>
-          <Picker label="Member" value={member?.id ?? ""} search={people.length > 8} onChange={resetDrill(setMemberID)}
+          <Picker label="View as" value={member?.id ?? ""} search={people.length > 8} onChange={resetDrill(setMemberID)}
             options={[{ value: "", label: "Everyone" }, ...people.map((p) => ({
               value: p.id, label: p.name, icon: <Avatar name={p.name} avatarURL={p.avatarURL} size={21} />,
             }))]} />
@@ -151,8 +149,8 @@ export function GroupAnalytics({ g, entries, onInspect, inspectedID }: {
               <div className="metric-sub">{data.buckets.filter((b) => b.count > 0).length} active {data.granularity === "day" ? "days" : data.granularity === "week" ? "weeks" : "months"}</div>
             </div>
             <div className="metric-cell">
-              <dt className="metric-label">Average entry</dt>
-              <dd className="metric-val num">{format(average)}</dd>
+              <dt className="metric-label">{member ? "Paid" : "Average entry"}</dt>
+              <dd className="metric-val num">{format(member ? data.people[0]?.paid ?? 0 : average)}</dd>
               <div className="metric-sub">Net of refunds</div>
             </div>
             {largest && (
@@ -205,21 +203,46 @@ export function GroupAnalytics({ g, entries, onInspect, inspectedID }: {
 
 function TimeChart({ data, grain, onGrain, format, active, onSelect }: {
   data: Analytics;
-  grain: Granularity | "auto";
-  onGrain: (grain: Granularity | "auto") => void;
+  grain: Granularity;
+  onGrain: (grain: Granularity) => void;
   format: (amount: number, estimated?: boolean) => string;
   active: string;
   onSelect: (key: string) => void;
 }) {
-  const [hover, setHover] = useState("");
-  const stackIDs = data.categories.slice(0, STACK_LIMIT).map((c) => c.id);
-  const stacked = new Set(stackIDs);
-  const max = data.buckets.reduce((m, b) => Math.max(m, b.amount), 0);
-  const { tick, ceiling } = scale(max);
+  const tooltipID = useId();
+  const plot = useRef<HTMLDivElement>(null);
+  const [hover, setHover] = useState<{ key: string; x: number; left: boolean } | null>(null);
+  const [highlight, setHighlight] = useState("");
+  const [pinned, setPinned] = useState("");
+  const category = highlight || pinned;
+  const stackIDs = data.categories.map((c) => c.id);
+  const extrema = data.buckets.reduce(({ max, min }, bucket) => {
+    let positive = 0, negative = 0;
+    for (const amount of bucket.parts.values()) {
+      positive += Math.max(0, amount);
+      negative += Math.min(0, amount);
+    }
+    return { max: Math.max(max, positive), min: Math.min(min, negative) };
+  }, { max: 0, min: 0 });
+  const tick = scale(extrema.max - extrema.min);
+  const above = Math.max(extrema.min === 0 ? 4 : 0, Math.ceil(extrema.max / tick));
+  const below = Math.ceil(-extrema.min / tick);
+  const ticks = Array.from({ length: above + below + 1 }, (_, index) => (above - index) * tick);
+  const span = (above + below) * tick;
+  const position = (amount: number) => (above * tick - amount) / span * 100;
+  function showBucket(key: string, target: HTMLButtonElement) {
+    const bounds = target.getBoundingClientRect();
+    const chartBounds = plot.current?.getBoundingClientRect();
+    if (!chartBounds) return;
+    const midpoint = bounds.left + bounds.width / 2;
+    const left = midpoint < chartBounds.left + chartBounds.width / 2;
+    setHover({ key, x: (left ? bounds.right : bounds.left) - chartBounds.left, left });
+  }
   const withSpend = data.buckets.filter((b) => b.count > 0);
   const mean = withSpend.length ? Math.round(data.total / data.buckets.length) : 0;
   const every = Math.max(1, Math.ceil(data.buckets.length / 10));
-  const focus = data.buckets.find((b) => b.key === (hover || active));
+  const focus = data.buckets.find((b) => b.key === (hover?.key || active));
+  const hovered = data.buckets.find((b) => b.key === hover?.key);
   const busiest = withSpend.reduce<typeof withSpend[number] | undefined>((top, b) => !top || b.amount > top.amount ? b : top, undefined);
   const noun = data.granularity === "day" ? "day" : data.granularity === "week" ? "week" : "month";
 
@@ -234,43 +257,46 @@ function TimeChart({ data, grain, onGrain, format, active, onSelect }: {
           </p>
         </div>
         <div className="seg" role="group" aria-label="Group by">
-          {(["auto", "day", "week", "month"] as const).map((key) => (
+          {(["day", "week", "month"] as const).map((key) => (
             <button type="button" key={key} aria-pressed={grain === key} onClick={() => onGrain(key)}>
-              {key === "auto" ? "Auto" : key[0].toUpperCase() + key.slice(1)}
+              {key[0].toUpperCase() + key.slice(1)}
             </button>
           ))}
         </div>
       </header>
-      <div className="tchart">
+      <div className="tchart" ref={plot} onKeyDown={(event) => { if (event.key === "Escape") setHover(null); }}>
         <div className="tchart-axis" aria-hidden="true">
-          {[4, 3, 2, 1, 0].map((n) => <span key={n}>{axis.format((n * tick) / 100)}</span>)}
+          {ticks.map((n) => <span key={n}>{axis.format(n / 100)}</span>)}
         </div>
-        <div className="tchart-scroll" tabIndex={data.buckets.length > 24 ? 0 : undefined} role="group" aria-label="Spending by period">
+        <div className="tchart-scroll" onScroll={() => setHover(null)} tabIndex={data.buckets.length > 24 ? 0 : undefined} role="group" aria-label="Spending by period">
           <div className="tchart-plot" style={{ gridTemplateColumns: `repeat(${data.buckets.length}, minmax(${data.buckets.length > 60 ? 9 : 16}px, 1fr))` }}>
-            <div className="tchart-grid" aria-hidden="true"><i /><i /><i /><i /><i /></div>
-            {mean > 0 && <div className="tchart-mean" style={{ "--mean": String(mean / ceiling) } as CSSProperties} aria-hidden="true">
+            <div className="tchart-grid" aria-hidden="true">{ticks.map((n) => <i key={n} className={n === 0 ? "zero" : undefined} style={{ top: `${position(n)}%` }} />)}</div>
+            {mean !== 0 && <div className="tchart-mean" style={{ "--mean": `${position(mean) / 100}` } as CSSProperties} aria-hidden="true">
               <span>avg {format(mean)}</span>
             </div>}
             {data.buckets.map((b, index) => {
-              const parts = [...b.parts].reduce((acc, [id, amount]) => {
-                const key = stacked.has(id) ? id : OTHER;
-                acc.set(key, (acc.get(key) ?? 0) + amount);
-                return acc;
-              }, new Map<string, number>());
-              const order = [...stackIDs, OTHER].filter((id) => parts.has(id));
+              let positive = 0, negative = 0;
+              const segments = stackIDs.flatMap((id) => {
+                const amount = b.parts.get(id) ?? 0;
+                if (amount === 0) return [];
+                const top = amount > 0 ? (positive += amount) : negative;
+                if (amount < 0) negative += amount;
+                return [{ id, top: position(top), height: Math.abs(amount) / span * 100 }];
+              });
               return (
                 <button type="button" key={b.key} className="tchart-col" aria-pressed={active === b.key}
                   disabled={!b.count}
                   aria-label={`${bucketLabel(b.key, data.granularity, true)}: ${format(b.amount)}, ${b.count} expenses`}
-                  onMouseEnter={() => setHover(b.key)} onMouseLeave={() => setHover("")}
-                  onFocus={() => setHover(b.key)} onBlur={() => setHover("")}
+                  aria-describedby={hovered?.key === b.key ? tooltipID : undefined}
+                  onMouseEnter={(event) => showBucket(b.key, event.currentTarget)} onMouseLeave={() => setHover(null)}
+                  onFocus={(event) => showBucket(b.key, event.currentTarget)} onBlur={() => setHover(null)}
                   onClick={() => onSelect(b.key)}>
                   <span className="tchart-track">
-                    <span className="tchart-stack" style={{ height: `${(b.amount / ceiling) * 100}%` }}>
-                      {order.map((id) => (
-                        <span key={id} style={{ flexGrow: parts.get(id), background: id === OTHER ? "var(--chart-other)" : categoryMeta(id).color }} />
-                      ))}
-                    </span>
+                    {segments.map(({ id, top, height }) => (
+                      <span key={id} className="tchart-segment" data-dimmed={!!category && category !== id}
+                        style={{ top: `${top}%`, height: `${height}%`, background: categoryMeta(id).color }}
+                        onMouseEnter={() => setHighlight(id)} onMouseLeave={() => setHighlight("")} />
+                    ))}
                   </span>
                   <span className="tchart-label" aria-hidden="true">{index % every === 0 ? bucketLabel(b.key, data.granularity) : ""}</span>
                 </button>
@@ -278,10 +304,28 @@ function TimeChart({ data, grain, onGrain, format, active, onSelect }: {
             })}
           </div>
         </div>
+        {hover && hovered && (
+          <div className="tchart-tooltip" id={tooltipID} role="tooltip" data-bar-left={hover.left} style={{ "--tooltip-x": `${hover.x}px` } as CSSProperties}>
+            <b>{bucketLabel(hovered.key, data.granularity, true)} · {format(hovered.amount)}</b>
+            <ul>
+              {stackIDs.filter((id) => hovered.parts.has(id)).map((id) => (
+                <li key={id}><i style={{ background: categoryMeta(id).color }} />
+                  <span>{categoryMeta(id).label}</span><b className="num">{format(hovered.parts.get(id)!)}</b>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
       </div>
-      <ul className="analytics-legend" aria-label="Colors">
-        {stackIDs.map((id) => <li key={id}><i style={{ background: categoryMeta(id).color }} />{categoryMeta(id).label}</li>)}
-        {data.categories.length > STACK_LIMIT && <li><i style={{ background: "var(--chart-other)" }} />Everything else</li>}
+      <ul className="analytics-legend tchart-legend" aria-label="Highlight a category">
+        {stackIDs.map((id) => <li key={id}>
+          <button type="button" aria-pressed={pinned === id}
+            onMouseEnter={() => setHighlight(id)} onMouseLeave={() => setHighlight("")}
+            onFocus={() => setHighlight(id)} onBlur={() => setHighlight("")}
+            onClick={() => setPinned((current) => current === id ? "" : id)}>
+            <i style={{ background: categoryMeta(id).color }} />{categoryMeta(id).label}
+          </button>
+        </li>)}
       </ul>
     </section>
   );

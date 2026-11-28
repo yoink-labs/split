@@ -79,9 +79,9 @@ export function validateEntry(value: unknown, memberIDs: string[], previous?:Bil
 export function validID(id: unknown): id is string { return typeof id === 'string' && /^[a-zA-Z0-9_-]{8,80}$/.test(id); }
 /** Payers in canonical form. Older entries with a single payer keep their stored shape. */
 export function entryPayers(e: Entry): Payer[] { return e.payers?.length ? e.payers : [{memberID:e.paidBy, amount:e.amount}]; }
-export function balances(entries: Entry[], currency: string): Record<string,number> {
+export function balances(entries: Entry[], currency: string, { includeHandled = false } = {}): Record<string,number> {
   const result: Record<string,number> = {};
-  for (const e of entries.filter(e=>!e.handled).map(settlementEntry).filter(e=>e.currency===currency)) {
+  for (const e of entries.filter(e=>includeHandled || !e.handled).map(settlementEntry).filter(e=>e.currency===currency)) {
     for (const p of entryPayers(e)) result[p.memberID]=(result[p.memberID]??0)+p.amount;
     for (const s of e.splits) result[s.memberID]=(result[s.memberID]??0)-s.amount;
   }

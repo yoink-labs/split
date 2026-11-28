@@ -61,12 +61,20 @@ describe('CLI parity', () => {
 
   it('lists pending payments and lets the recipient approve or decline and the payer cancel', async () => {
     const alex = runner(await authorize('pay-alex')), maya = runner(await authorize('pay-maya'));
+    const observer = runner(await authorize('pay-observer'));
     const { id: group, members: [me] } = await alex.run('groups_create', { name: 'Flat', self: 'Alex', placeholders: ['Maya'] });
     const mayaSeat = (await alex.run('members_list', { group })).find((m: any) => m.name === 'Maya').id;
     await maya.run('join', { invite: (await alex.run('invite', { group, member: mayaSeat })).url });
+    await observer.run('join', { invite: (await alex.run('invite', { group })).url });
     const first = await maya.run('settle_up', { group, from: mayaSeat, to: me.id, amount: '12.50' });
     const second = await maya.run('settle_up', { group, from: mayaSeat, to: me.id, amount: '3.00' });
 
+    expect(await alex.run('activity', { group })).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: first.id, status: 'pending' }),
+      expect.objectContaining({ id: second.id, status: 'pending' })
+    ]));
+    expect(await maya.run('activity', {})).toEqual(await maya.run('activity', { group }));
+    expect(await observer.run('activity', { group })).toEqual([]);
     const forAlex = await alex.run('settlements_pending', { group });
     expect(forAlex).toHaveLength(2);
     expect(forAlex.find((p: any) => p.id === first.id)).toMatchObject({ amount: 1250, youAre: 'recipient', canDo: ['approve', 'decline'], from: { name: 'Maya' } });
@@ -78,7 +86,11 @@ describe('CLI parity', () => {
     expect(await maya.run('settlements_respond', { group, settlement: second.id, action: 'cancel' })).toMatchObject({ status: 'cancelled' });
     expect(await alex.run('settlements_pending', { group })).toEqual([]);
     await expect(alex.run('settlements_respond', { group, settlement: second.id, action: 'decline' })).rejects.toMatchObject({ status: 404 });
-    expect((await alex.run('activity', { group })).filter((e: any) => e.kind === 'settlement')).toHaveLength(1);
+    const received = await alex.run('settle_up', { group, from: mayaSeat, to: me.id, amount: '85.00' });
+    expect(received).toMatchObject({ status: 'approved', amount: 8500, paidBy: mayaSeat });
+    const activity = (await alex.run('activity', { group })).filter((e: any) => e.kind === 'settlement');
+    expect(activity.map((e: any) => e.id).sort()).toEqual([first.id, received.id].sort());
+    expect(activity.every((e: any) => e.status !== 'pending')).toBe(true);
   });
 
   it('plans a Splitwise import without saving, suggests only unique matches and keeps explicit mappings', async () => {
@@ -185,6 +197,13 @@ describe('CLI parity', () => {
 
     expect(await alex.run('expenses_handled', { group, expense: expense.id })).toEqual({ id: expense.id, handled: true });
     expect(await shown()).toBe(true);
+    expect((await alex.run('groups_breakdown', { group }))[0]).toMatchObject({
+      members: [expect.objectContaining({ paid: 10000, share: 5000, net: 5000 }), expect.objectContaining({ net: -5000 })],
+      settlements: []
+    });
+    expect((await alex.run('balances', { group }))[0].settlements).toEqual([]);
+    expect((await alex.run('groups_export', { group })).content).toContain('Handled,50.00,-50.00');
+    expect((await alex.run('groups_export', { group, format:'summary' })).content).toContain('USD,Alex,active,100.00,50.00,50.00');
     await expect(maya.run('expenses_handled', { group, expense: expense.id, state: 'unhandled' })).rejects.toMatchObject({ status: 403 });
     expect(await alex.run('expenses_handled', { group, expense: expense.id, state: 'unhandled' })).toMatchObject({ handled: false });
     expect(Boolean(await shown())).toBe(false);

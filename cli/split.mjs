@@ -148,7 +148,9 @@ export async function main(argv = process.argv.slice(2), io = terminal()) {
     if (outputs.has(tool.name)) options.out = { type:'string' };
     if (tool.name === 'import_splitwise') options.yes = { type:'boolean' };
     const parsed = parseArgs({ args: words.slice(spelling(tool).split(' ').length), options });
-    const { photo: paths, file: files, out, ...values } = parsed.values;
+    const paths = tool.inputSchema.properties.photos ? parsed.values.photo : undefined;
+    if (paths) delete parsed.values.photo;
+    const { file: files, out, ...values } = parsed.values;
     const confirmed = tool.name === 'import_splitwise' && values.yes;
     if (tool.name === 'import_splitwise') delete values.yes;
     const guided = io.interactive && !compact;
@@ -161,11 +163,12 @@ export async function main(argv = process.argv.slice(2), io = terminal()) {
           : !values[key] || typeof values[key] !== 'object' || Array.isArray(values[key])) throw new Error(expected);
       }
     }
-    if (values.photos) values.photos = await resolvePhotos(values.photos);
     if (paths?.length) {
       if (values.photos) throw new Error('Use --photo or --photos, not both.');
       if (paths.length > 4) throw new Error('Attach up to four receipt photos.');
       values.photos = await Promise.all(paths.map(photoData));
+    } else if (values.photos) {
+      values.photos = await resolvePhotos(values.photos);
     }
     const run = args => c.request('/v1/cli', { name:tool.name, arguments:args });
     if (files?.length > 1) {
@@ -225,10 +228,11 @@ export async function main(argv = process.argv.slice(2), io = terminal()) {
     }
     if (tool.name === 'import_splitwise' && result?.preview && guided) return console.log(describeImport(result));
     if (tool.name === 'groups_delete' && result?.preview && guided) return console.log(describeGroupDelete(result));
-    if (tool.name === 'groups_export' && !compact) {
-      if (out) { await writeFile(out, result.content); return console.log('Wrote ' + out); }
-      return process.stdout.write(result.content);
+    if (tool.name === 'groups_export' && out) {
+      await writeFile(out, result.content);
+      return compact ? print({ saved: out }, true) : console.log('Wrote ' + out);
     }
+    if (tool.name === 'groups_export' && !compact) return process.stdout.write(result.content);
     if (tool.name === 'receipts_get' && out) {
       await writeFile(out, Buffer.from(result.data, 'base64'));
       return compact ? print({ saved: out }, true) : console.log('Wrote ' + out);

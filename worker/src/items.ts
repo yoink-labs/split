@@ -50,14 +50,14 @@ export function itemSplit(b:Bill,payer:string) {
 }
 export function breakdown(entries:Entry[],members:{id:string;name:string}[],currency:string) {
   const expenses=entries.filter(e=>e.currency===currency && e.kind==='expense');
-  const net=balances(entries,currency);
+  const net=balances(entries,currency,{includeHandled:true});
   const categories:Record<string,number>=Object.create(null), months:Record<string,number>=Object.create(null);
   for (const e of expenses) {
     const category=e.category??'Uncategorized', month=new Date(e.createdAt).toISOString().slice(0,7);
     categories[category]=(categories[category]??0)+e.amount;
     months[month]=(months[month]??0)+e.amount;
   }
-  return {currency,total:expenses.reduce((sum,e)=>sum+e.amount,0),categories,months,settlements:simplify(net),
+  return {currency,total:expenses.reduce((sum,e)=>sum+e.amount,0),categories,months,settlements:simplify(balances(entries,currency)),
     members:members.map(m=>({...m,paid:expenses.reduce((s,e)=>s+entryPayers(e).filter(p=>p.memberID===m.id).reduce((n,p)=>n+p.amount,0),0),
       share:expenses.reduce((s,e)=>s+(e.splits.find(p=>p.memberID===m.id)?.amount??0),0),net:net[m.id]??0,
       expenses:expenses.filter(e=>entryPayers(e).some(p=>p.memberID===m.id) || e.splits.some(p=>p.memberID===m.id)).map(e=>e.id)}))};

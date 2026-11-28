@@ -214,11 +214,16 @@ export async function operate(name: string, input: unknown, env: Env, user: stri
       JOIN members m ON g.id=m.group_id WHERE m.user_id=? ORDER BY g.created_at DESC`).bind(user).all()).results;
   }
   const snapshot = await ledger<{groups: Group[]; entries: (Entry & {editable: boolean})[]; settlementRequests?: Entry[]; paymentMethods?: unknown[]}>('/v1/snapshot');
-  if (name === 'activity' && !a.group) return snapshot.entries;
   if (name === 'profile_payment') {
     if (a.methods === undefined) return { methods: snapshot.paymentMethods ?? [] };
     await ledger('/v1/profile/payment-methods', { methods: a.methods });
     return { methods: a.methods };
+  }
+  if (name === 'activity') {
+    if (a.group && !snapshot.groups.some(g => g.id === a.group)) throw new HTTPError(404, 'Group not found.');
+    const pending = (snapshot.settlementRequests ?? []).map(e => ({...e, status:'pending'}));
+    return [...snapshot.entries, ...pending].filter(e => !a.group || e.groupID === a.group)
+      .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
   }
   const group = snapshot.groups.find(g => g.id === a.group);
   if (!group) throw new HTTPError(404, 'Group not found.');
@@ -393,7 +398,6 @@ export async function operate(name: string, input: unknown, env: Env, user: stri
     return ledger(path+'/claim',{itemID:item.id,original:item.memberIDs,memberIDs:ids,mergeEdits:true,...(shares?{shares}:{})});
   }
   if (name === 'expenses_list') return entries.filter(e => e.kind === 'expense');
-  if (name === 'activity') return entries;
   if (name === 'balances') return [...new Set([group.currency, ...entries.map(e=>e.exchange?.target??e.currency)])].map(currency => {
     const net = balances(entries,currency);
     return { currency, net, settlements: simplify(net) };

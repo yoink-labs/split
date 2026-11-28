@@ -52,7 +52,7 @@ split settle up --group "$GROUP" --from "$MAYA" --to "$ALEX" --amount 7.50
 split activity --group "$GROUP"
 ```
 
-Replace sample IDs with the IDs in your group. Enter money as decimal major units. Responses use integer minor units, so USD 24.50 appears as `2450`. Balances stay separate by currency. Equal splits default to every member. For exact and percent splits, supply values in participant order. `settle up` requests approval. The ledger records the payment after the recipient approves it.
+Replace sample IDs with the IDs in your group. Enter money as decimal major units. Responses use integer minor units, so USD 24.50 appears as `2450`. Balances stay separate by currency. Equal splits default to every member. For exact and percent splits, supply values in participant order. Use `settle up` to request approval for a payment you made or to record a payment you received. Payments you received are confirmed when you record them. Pending requests appear in `activity` for the payer and recipient and enter the ledger once approved.
 
 Only the author can edit or delete an expense. Preview first. Pass the returned revision to commit that exact change. A stale revision fails. The CLI also fetches and prints the current preview before each confirmed write.
 
@@ -93,6 +93,8 @@ split settlements respond --group "$GROUP" --settlement "$PAYMENT" --action appr
 split profile avatar --avatar preset:ocean
 ```
 
+Use `--format` to select what an export file contains. With `--json --out`, the CLI writes the selected format to disk and prints a JSON object with the saved path.
+
 To delete a group in a terminal, `--yes` prompts you to type its name. For scripts and MCP, pass the revision from the preview as well. A payment recipient can approve or decline it. The payer can cancel it while approval is pending.
 
 ### Importing Splitwise exports
@@ -124,7 +126,7 @@ split expenses handled --group GROUP_ID --expense EXPENSE_ID --state handled
 split expenses add --group GROUP_ID --title Lunch --amount 12.00 --payer MEMBER_ID --currency USD --rate 1039.5
 ```
 
-Exchange rates use group currency units per one unit of foreign currency. Pass `--rate none` to clear the trip rate. Account payment methods apply to groups without an override. `members payment --reset` restores the account methods for that group. `expenses handled` keeps an expense in spending reports and removes it from balances. The matching MCP tools use underscores in place of spaces.
+Exchange rates use group currency units per one unit of foreign currency. Pass `--rate none` to clear the trip rate. Account payment methods apply to groups without an override. `members payment --reset` restores the account methods for that group. `expenses handled` keeps an expense in spending and export totals and removes it from outstanding balances and suggested transfers. The matching MCP tools use underscores in place of spaces.
 
 ## Receipts, claims and spending
 

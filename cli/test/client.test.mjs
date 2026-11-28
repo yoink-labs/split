@@ -78,8 +78,53 @@ test('every web action has a CLI command with file flags where they help', () =>
     'expenses show','expenses like','comments add','comments delete','receipts add','items list','items assign','import splitwise','profile avatar'])
     assert.match(help, new RegExp('split ' + command + ' '), command);
   assert.match(run(['expenses','add','--help']).stdout, /--photo PATH/);
+  assert.match(run(['expenses','add','--help']).stdout, /"items":\[\{"title":"Coffee","amount":"4\.50"\}/);
+  assert.match(run(['expenses','repeat','--help']).stdout, /off, daily, weekly, monthly, or yearly/);
   assert.match(run(['import','splitwise','--help']).stdout, /--file PATH/);
   assert.match(run(['groups','export','--help']).stdout, /--out PATH/);
+});
+
+test('receipt downloads send a photo ID and JSON mode writes both kinds of output files', async t => {
+  const launcher = fileURLToPath(new URL('../bin/split', import.meta.url));
+  const dir = await mkdtemp(join(tmpdir(), 'split-cli-download-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const group = 'group-1234', expense = 'expense-1234', photo = 'receipt-1234';
+  const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
+  const content = '{"entries":[]}\n';
+  const csv = 'Title,Amount\r\nCoffee,4.50\r\n';
+  const requests = [];
+  const server = createServer(async (req, res) => {
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    const payload = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    requests.push(payload);
+    const result = payload.name === 'receipts_get'
+      ? { data: jpeg.toString('base64') }
+      : { content: payload.arguments.format === 'json' ? content : csv };
+    res.end(JSON.stringify(result));
+  });
+  server.listen(0, '127.0.0.1');
+  t.after(() => server.close());
+  await once(server, 'listening');
+  const env = { ...process.env, SPLIT_TOKEN: 'spl_test', SPLIT_API_URL: 'http://127.0.0.1:' + server.address().port };
+  const run = args => promisify(execFile)(launcher, args, { env });
+  const receiptPath = join(dir, 'receipt.jpg');
+  const exportPath = join(dir, 'export.json');
+  const ledgerPath = join(dir, 'ledger.csv');
+  const receipt = await run(['receipts', 'get', '--group', group, '--expense', expense, '--photo', photo, '--out', receiptPath, '--json']);
+  const exported = await run(['groups', 'export', '--group', group, '--format', 'json', '--out', exportPath, '--json']);
+  const ledger = await run(['groups', 'export', '--group', group, '--out', ledgerPath, '--json']);
+  assert.deepEqual(JSON.parse(receipt.stdout), { saved: receiptPath });
+  assert.deepEqual(JSON.parse(exported.stdout), { saved: exportPath });
+  assert.deepEqual(JSON.parse(ledger.stdout), { saved: ledgerPath });
+  assert.deepEqual(await readFile(receiptPath), jpeg);
+  assert.equal(await readFile(exportPath, 'utf8'), content);
+  assert.equal(await readFile(ledgerPath, 'utf8'), csv);
+  assert.deepEqual(requests, [
+    { name: 'receipts_get', arguments: { group, expense, photo } },
+    { name: 'groups_export', arguments: { group, format: 'json' } },
+    { name: 'groups_export', arguments: { group } }
+  ]);
 });
 
 test('Splitwise file batches send each export and report partial failures', async t => {

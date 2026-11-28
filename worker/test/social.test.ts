@@ -62,20 +62,19 @@ describe('entry comments',()=>{
     await expect(call(userA,path('/comments'),{body:42})).rejects.toThrow('2,000');
   });
 
-  it('uses the current profile name and falls back to the stored author name',async()=>{
+  it('prefers the group display name for new and existing comments',async()=>{
     await addEntry();
     await env.DB.prepare('UPDATE split_profiles SET name=? WHERE user_id=?').bind('Maya Chen',userB).run();
     const saved=await call(userB,path('/comments'),{body:'Hello'});
-    expect(saved.data.authorName).toBe('Maya Chen');
+    expect(saved.data.authorName).toBe('Maya');
 
-    await env.DB.prepare('UPDATE split_profiles SET name=? WHERE user_id=?').bind('Maya C.',userB).run();
+    await env.DB.prepare('UPDATE entry_comments SET author_name=? WHERE id=?').bind('Maya Chen',saved.data.id).run();
+    await env.DB.prepare('UPDATE members SET name=? WHERE id=?').bind('Maya C.',seatB).run();
     expect((await call(userA,path('/comments'))).data.comments[0].authorName).toBe('Maya C.');
+    await call(userB,path('/comments'),{body:'Second comment'});
 
-    await env.DB.prepare('DELETE FROM split_profiles WHERE user_id=?').bind(userB).run();
-    expect((await call(userA,path('/comments'))).data.comments[0].authorName).toBe('Maya Chen');
-
-    const fallback=await call(userB,path('/comments'),{body:'Still here'});
-    expect(fallback.data.authorName).toBe('Split member');
+    await env.DB.prepare('UPDATE members SET user_id=NULL WHERE id=?').bind(seatB).run();
+    expect((await call(userA,path('/comments'))).data.comments.map((c:any)=>c.authorName)).toEqual(['Maya Chen','Maya C.']);
   });
 
   it('stops comments for deleted entries',async()=>{

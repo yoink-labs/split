@@ -11,13 +11,23 @@ export function optionalDay(value: unknown, label: string): string | null | unde
   }
   return day;
 }
+const bodyObservers = new WeakMap<Request, (value: Record<string, unknown>) => void>();
+export function observeBody(request: Request, observe: (value: Record<string, unknown>) => void) {
+  bodyObservers.set(request, observe);
+}
 export async function body(request:Request,limit=32_768):Promise<Record<string,unknown>> {
   if (!request.headers.get('content-type')?.includes('application/json')) throw new HTTPError(415,'Send JSON.');
   const reader=request.body?.getReader(); if(!reader) throw new InputError('Missing body.');
   let size=0; const chunks:Uint8Array[]=[];
   while(true){ const {done,value}=await reader.read(); if(done)break; size+=value.length; if(size>limit){await reader.cancel();throw new HTTPError(413,'Request too large.');} chunks.push(value); }
   const bytes=new Uint8Array(size);let offset=0;for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.length;}
-  try { const value=JSON.parse(new TextDecoder().decode(bytes));if(!value||typeof value!=='object'||Array.isArray(value))throw 0;return value; } catch {throw new InputError('Invalid JSON.');}
+  let value: Record<string, unknown>;
+  try {
+    value = JSON.parse(new TextDecoder().decode(bytes));
+    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error();
+  } catch { throw new InputError('Invalid JSON.'); }
+  bodyObservers.get(request)?.(value);
+  return value;
 }
 
 export async function fingerprint(value: unknown) {

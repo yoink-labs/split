@@ -1,3 +1,4 @@
+import { historyDatabase } from '../history';
 import {settlementEntry} from '../exchange';
 import {convert, FxCache, impliedRate, rateE8 as parseRate, type Exchange} from '../fx';
 import { breakdown, consumptionReport, entryItems, grossItems, itemRefund, itemSplit, type Bill } from '../items';
@@ -16,7 +17,8 @@ interface Args {
   cadence:string; weights:number[];rate?:string; chargedAmount?:string; group: string; expense: string; member: string; name: string; self: string; placeholders?: string[];
   query: string; user?: string; email?: string; phone?: string; invitation?: string; discoverable?: 'on'|'off';
   invite: string; kind?: string; title?: string; amount?: string; payer?: string; currency?: string;
-  notes?: string; date?: string; spreadStart?: string; spreadEnd?: string; stays?: {member: string; start?: string; end?: string}[];
+  notes?: string; date?: string; spreadStart?: string; spreadEnd?: string;
+  stays?: {member: string; start?: string; end?: string}[]; reason?: string; before?: string;
   bill?: { items: { title: string; amount: string; memberIDs?: string[]; shares?: number[] }[]; tax?: string; tip?: string };
   share?: string; shares?: number[];
   payers?: { member: string; amount: string }[];
@@ -261,6 +263,11 @@ export async function operate(name: string, input: unknown, env: Env, user: stri
     });
     return (await handle(req, env, user)).json<T>();
   }
+  if (name === 'history') {
+    const query = new URLSearchParams();
+    for (const key of ['expense', 'member', 'before'] as const) if (a[key]) query.set(key, a[key]!);
+    return ledger('/v1/groups/' + a.group + '/history?' + query);
+  }
   async function importPlan(a: Args, parsed: SplitwiseGroup, people: { name: string; me?: boolean; memberID?: string }[],
     currencies: Record<string, number>, currency: string) {
     const days = parsed.rows.map(r => r.day).sort();
@@ -413,7 +420,7 @@ export async function operate(name: string, input: unknown, env: Env, user: stri
     if(a.expense && (!original || original.kind !== 'expense')) throw new HTTPError(404,'Expense not found.');
     if(name==='refunds_add') {
       const refund = makeRefund(a, group, groupEntries, original);
-      await ledger('/v1/entries', refund);
+      await ledger('/v1/entries', {...refund, reason: a.reason});
       return { ...refund, receiverName: nameOf(refund.paidBy), credits: refund.splits.map(s => ({ ...s, name: nameOf(s.memberID) })) };
     }
     if(!original!.pending && a.action !== 'confirm') throw new InputError('This expense is not pending. Use refunds add or expenses edit.');
@@ -424,7 +431,7 @@ export async function operate(name: string, input: unknown, env: Env, user: stri
       return { id: original!.id, pending: false, amount: result.amount };
     }
     const refund = makeRefund(a, group, groupEntries, original);
-    await ledger('/v1/entries/'+original!.id+'/resolve',{action:'refund',refund});
+    await ledger('/v1/entries/'+original!.id+'/resolve',{action:'refund',refund,reason:a.reason});
     return { id: original!.id, pending: false, refund: { ...refund, receiverName: nameOf(refund.paidBy) } };
   }
   if (name === 'expenses_combine') {
@@ -471,7 +478,7 @@ export async function operate(name: string, input: unknown, env: Env, user: stri
       next: 'Export the group first if you want a copy. Confirm with yes and this revision.' };
     if (!a.yes) return preview;
     if (a.revision !== revision) throw new HTTPError(409, 'This group changed or the preview is missing. Review a fresh preview before deleting.');
-    await deleteGroup(env, group.id, user, { name: group.name, members: members.filter(m => !m.removed).map(m => ({ id: m.id, name: m.name })),
+    await deleteGroup({ ...env, DB: historyDatabase(env.DB, {actor:user,action:'delete',reason:null}) }, group.id, user, { name: group.name, members: members.filter(m => !m.removed).map(m => ({ id: m.id, name: m.name })),
       expenses: preview.expenses, settlements: preview.settlements, receipts: preview.receipts });
     return { deleted: true, id: group.id, name: group.name };
   }
@@ -540,7 +547,7 @@ export async function operate(name: string, input: unknown, env: Env, user: stri
     }
     if (a.revision !== revision) throw new HTTPError(409,'Review a fresh preview before confirming.');
     const action = after ? 'edit' : 'delete';
-    await ledger(`/v1/entries/${before.id}/${action}`, { original: before, entry: after });
+    await ledger(`/v1/entries/${before.id}/${action}`, { original: before, entry: after, reason: a.reason });
     return { applied: true, id: a.expense, category: after?.category };
   }
   const entries = snapshot.entries.filter(e => e.groupID === group.id);

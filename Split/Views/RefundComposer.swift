@@ -26,6 +26,7 @@ struct RefundComposer: View {
     @State private var itemIDs: [String] = []
     @State private var pending = false
     @State private var pendingNote = ""
+    @State private var reason = ""
     @State private var saving = false
     @State private var error: String?
 
@@ -97,6 +98,7 @@ struct RefundComposer: View {
                 Section("Refund") {
                     TextField("Description", text: $title)
                         .accessibilityIdentifier("refund-title")
+                    TextField("Reason for change (optional)", text: $reason)
                     if !refundable.isEmpty {
                         Picker("Refund", selection: $byItems.animation(.snappy)) {
                             Text("Amount").tag(false)
@@ -264,10 +266,10 @@ struct RefundComposer: View {
             }
             try Refunds.validate(refund, original: original, others: others)
             if resolving, let original {
-                try await store.resolve(original, .refund(refund))
+                try await store.resolve(original, .refund(refund), reason: String(reason.prefix(500)))
             } else {
                 refund.editable = true
-                try store.add(refund)
+                try store.add(refund, reason: String(reason.prefix(500)))
             }
             dismiss()
         } catch {

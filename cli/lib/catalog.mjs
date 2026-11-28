@@ -5,6 +5,7 @@ const money = { ...text('Amount in major currency units, e.g. "12.50".'), patter
 const enumeration = (description, values) => ({ type: 'string', description, enum: values });
 const group = id('Group ID from groups list.');
 const expense = id('Expense ID from expenses list.');
+const reason = text('Optional reason for the change (up to 500 characters).', 500);
 const member = id('Member ID from members list.');
 const currency = enumeration('Three-letter currency. Defaults to the group currency.', ['USD','ARS','EUR','GBP','BRL','CAD','AUD','MXN']);
 // Keep in sync with CategoryMeta.all in Split/Core/Categories.swift.
@@ -100,8 +101,9 @@ export const tools = [
     receiver:{...member,description:'Who received the refund. Defaults to the original payer.'},
     participants:list('Refund: member IDs to credit. Defaults to everyone who shared the expense, in proportion to their shares.',member),
     values:{...listValues(),description:'Refund: exact credits in participant order. They must sum to the amount. Omit to split in proportion to shares.'},
-    title:text('Refund description. Defaults to "Refund: <expense title>".')},['group','expense','action']),
-  op('refunds_add','Record a refund of an expense or a standalone credit. A refund lowers the shares of the people credited and the balance of whoever received the money. Linked refunds cannot exceed the original amount or any one person’s share.',{group,
+    reason, title:text('Refund description. Defaults to "Refund: <expense title>".')},['group','expense','action']),
+  op('history','List recorded group changes, newest first. Filter by expense or actor member ID.', { group, expense, member, before: {...text('Cursor from the previous page.', 16), pattern: '^[0-9]+$'} }, ['group'], true),
+  op('refunds_add','Record a refund of an expense or a standalone credit. A refund lowers the shares of the people credited and the balance of whoever received the money. Linked refunds cannot exceed the original amount or any one person’s share.',{group, reason,
     expense:{...expense,description:'Original expense ID. Omit for a standalone credit.'},
     amount:{...money,description:'Refunded amount. Omit when refunding items.'}, receiver:{...member,description:'Who received the money back, or who is giving the credit. Defaults to the original payer.'},
     items:list('Receipt item IDs from items list to refund. Each person who had an item gets back exactly what it cost them, tax and tip included.',id('Receipt item ID.')),
@@ -216,8 +218,8 @@ export const tools = [
   op('comments_add','Comment on an expense.', { group, expense, text: text('Comment.', 2000) }, ['group','expense','text']),
   op('comments_delete','Delete one of your comments.', { group, expense, comment: id('Comment ID.') }, ['group','expense','comment'], false, true),
   op('receipts_add','Attach up to four receipt photos to an expense you recorded.', { group, expense, photos: receiptPhotos }, ['group','expense','photos']),
-  op('expenses_edit','Preview changes to your expense, or supply a bill to break a whole expense into items. Review the preview before confirming with yes and revision.', { group, expense, ...allocation, bill: receiptBill, ...confirmation }, ['group','expense'], false, true),
-  op('expenses_delete','Preview deletion of your expense. Review the preview before confirming with yes and revision.', { group, expense, ...confirmation }, ['group','expense'], false, true),
+  op('expenses_edit','Preview changes to your expense, or supply a bill to break a whole expense into items. Review the preview before confirming with yes and revision.', { group, expense, ...allocation, bill: receiptBill, reason, ...confirmation }, ['group','expense'], false, true),
+  op('expenses_delete','Preview deletion of your expense. Review the preview before confirming with yes and revision.', { group, expense, reason, ...confirmation }, ['group','expense'], false, true),
   op('balances','Show each member’s net balance and suggested settlements, separately by currency, in minor units. Pending expenses count; confirmedNet and pending show the balance without them. Provide a member ID for signed expense, payment and refund lines that add up to their balance.', { group, member }, ['group'], true),
   op('settlements_pending','List payments waiting for approval in a group, who made them and what you can do.', { group }, ['group'], true),
   op('settlements_respond','Approve or decline a payment someone recorded to you, or cancel one you recorded. The ID comes from settlements pending.', {

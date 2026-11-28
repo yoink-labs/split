@@ -360,6 +360,7 @@ function Composer({ g, existing }: { g: Group; existing?: Expense }) {
               await save(`/v1/entries/${existing.id}/edit`, {
                 original: orig,
                 entry,
+                reason: value(f, "reason"),
                 ...(photos.length ? { photos } : {}),
               });
             } else {
@@ -374,6 +375,7 @@ function Composer({ g, existing }: { g: Group; existing?: Expense }) {
           <div className="expense-layout">
             <section className="card expense-panel">
               <h2>Expense details</h2>
+              {existing && <label className="field">Reason for change (optional)<input name="reason" maxLength={500} /></label>}
               <label className="field">
                 Description
                 <input type="text" required name="title" maxLength={120}

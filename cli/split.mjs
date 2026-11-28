@@ -389,6 +389,19 @@ export async function main(argv = process.argv.slice(2), io = terminal()) {
       await writeFile(out, Buffer.from(result.data, 'base64'));
       return compact ? print({ saved: out }, true) : console.log('Wrote ' + out);
     }
+    if (tool.name === 'history' && !compact) {
+      if (!result.events.length) return console.log('No changes recorded.');
+      for (const event of clean(result.events)) {
+        console.log(event.timestamp + '  ' + (event.actorName ?? event.actor ?? 'Unknown actor') + '  ' +
+          event.action + ' ' + event.type + ' · ' + (event.title ?? event.entity));
+        for (const [field, { before, after }] of Object.entries(event.changes)) {
+          console.log('  ' + field + ': ' + JSON.stringify(before) + ' → ' + JSON.stringify(after));
+        }
+        if (event.reason) console.log('  Reason: ' + event.reason);
+      }
+      if (result.next) console.log('Earlier changes: --before ' + result.next);
+      return;
+    }
     if (tool.name === 'balances' && values.member && !compact) return console.log(describeBalance(result));
     print(result,compact);
   } catch (error) {

@@ -83,3 +83,44 @@ it('uses the existing membership-protected CLI and MCP paths for daily costs', a
   expect(costs).toMatchObject([{memberID: ids[3], days: [{day: '2026-11-15', amount: 8420}, {}, {}, {}]}]);
   await expect(operate('groups_daily', args, env, 'stranger', handle)).rejects.toThrow();
 });
+
+it('derives nights from personal dates and skips nights before arrival', () => {
+  const [first, ...others] = stay.splits;
+  const dated = {...first, stay: {start: '2026-11-13', end: '2026-11-16'}, nights: undefined};
+  const input = {...stay, splits: [dated, ...others]};
+  const validated = validateEntry(input, ids);
+  expect(validated.splits[0]).toMatchObject({nights: 3, stay: dated.stay});
+  const days = dailyCosts([validated], ids[0]);
+  expect(days.map(day => day.day)).toEqual(['2026-11-15', '2026-11-14', '2026-11-13']);
+  expect(days.reduce((sum, day) => sum + day.amount, 0)).toBe(first.amount);
+  for (const invalid of [
+    {start: '2026-11-15', end: '2026-11-14'},
+    {start: '2026-11-13', end: '2026-11-13'},
+    {start: '2026-11-11', end: '2026-11-16'},
+    {start: '2026-11-13', end: '2026-11-17'},
+    {start: '2026-11-31', end: '2026-12-01'},
+  ]) {
+    expect(() => validateEntry({...input, splits: [{...dated, stay: invalid}, ...others]}, ids)).toThrow();
+  }
+  expect(() => validateEntry({...input, splits: [{...dated, memberID: 'unknown-member'}, ...others]}, ids)).toThrow();
+});
+
+it('edits a member’s dates and uses an actual charged amount in converted daily totals', async () => {
+  await handle(request('/v1/groups', group), env, owner);
+  const added = await operate('expenses_add', {
+    group: group.id, title: 'Airbnb', amount: '120.00', currency: 'EUR', chargedAmount: '130.00',
+    date: '2026-11-12', payer: ids[0], mode: 'nights', participants: ids.slice(0, 2), values: ['3', '4'],
+    stays: [{member: ids[0], start: '2026-11-13', end: '2026-11-16'}],
+    spreadStart: '2026-11-12', spreadEnd: '2026-11-16',
+  }, env, owner, handle) as Entry;
+  const args = {group: group.id, expense: added.id, stays: [{member: ids[0], start: '2026-11-14', end: '2026-11-16'}]};
+  const preview = await operate('expenses_edit', args, env, owner, handle) as {revision: string};
+  await operate('expenses_edit', {...args, yes: true, revision: preview.revision}, env, owner, handle);
+  const original = await operate('groups_daily', {group: group.id, member: ids[0]}, env, owner, handle);
+  expect(original).toMatchObject([{days: [{day: '2026-11-15', currency: 'EUR', amount: 2000}, {day: '2026-11-14', amount: 2000}]}]);
+  const converted = await operate('groups_daily', {group: group.id, member: ids[0], currency: 'USD'}, env, owner, handle);
+  expect(converted).toMatchObject([{convertedTo: 'USD', days: [
+    {day: '2026-11-15', currency: 'USD', amount: 2166},
+    {day: '2026-11-14', currency: 'USD', amount: 2167},
+  ]}]);
+});

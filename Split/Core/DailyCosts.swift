@@ -56,7 +56,7 @@ struct DailyCost: Identifiable {
             for portion in entry.splits where key(entry.groupID, portion.memberID) == person {
                 let dates: [String]
                 if let spread = entry.spread, (1...366).contains(spread.dayCount) {
-                    dates = spread.days(count: min(portion.nights ?? spread.dayCount, spread.dayCount))
+                    dates = (portion.stay ?? spread).days(count: min(portion.nights ?? spread.dayCount, spread.dayCount))
                 } else {
                     dates = [entry.day]
                 }

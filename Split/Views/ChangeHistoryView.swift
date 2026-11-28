@@ -191,7 +191,13 @@ struct ChangeHistoryView: View {
             return parts.map { part in
                 guard case .object(let fields) = part, let id = fields["memberID"]?.string,
                       case .integer(let cents) = fields["amount"] else { return part.description }
-                return "\(name(id)) \(Money.text(cents, code))"
+                let share = "\(name(id)) \(Money.text(cents, code))"
+                guard case .integer(let nights) = fields["nights"] else { return share }
+                if case .object(let stay) = fields["stay"],
+                   let start = stay["start"]?.string, let end = stay["end"]?.string {
+                    return "\(share) (\(nights) nights, \(start) to \(end))"
+                }
+                return "\(share) (\(nights) nights)"
             }.joined(separator: ", ")
         default: return value.description
         }

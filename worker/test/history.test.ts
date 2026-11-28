@@ -25,8 +25,9 @@ it('records authorized edits atomically, keeps cents exact, and exposes a read-o
   expect((await call('/v1/groups', { id: groupID, name: 'Trip', kind: 'trip', currency: 'USD',
     members: [{ id: memberID, name: 'Amine', userID: actor }] })).status).toBe(201);
   await call('/v1/entries', entry);
+  const stay = { start: '2026-09-02', end: '2026-09-04' };
   const updated = { ...entry, amount: 81_000, createdAt: '2026-09-02T12:00:00Z', splitMode: 'nights',
-    splits: [{ memberID, amount: 81_000, nights: 2 }] };
+    spread: { start: '2026-09-02', end: '2026-09-05' }, splits: [{ memberID, amount: 81_000, nights: 2, stay }] };
   const edit = { original: entry, entry: updated, reason: ' partial refund ', actor: 'forged' };
   await call(entryPath + '/edit', edit);
   await call(entryPath + '/edit', edit); // Idempotent retry.
@@ -44,7 +45,7 @@ it('records authorized edits atomically, keeps cents exact, and exposes a read-o
       amount: { before: 90_000, after: 81_000 },
       createdAt: { before: entry.createdAt, after: updated.createdAt },
       splitMode: { before: 'equal', after: 'nights' },
-      splits: { after: [{ memberID, amount: 81_000, nights: 2 }] },
+      splits: { after: [{ memberID, amount: 81_000, nights: 2, stay }] },
     },
   });
   expect(events[0].timestamp).toEqual(expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/));

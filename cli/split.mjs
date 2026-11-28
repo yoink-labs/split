@@ -404,7 +404,8 @@ export async function main(argv = process.argv.slice(2), io = terminal()) {
               return amountText(value, currency);
             if (currency && ['splits', 'payers'].includes(field) && Array.isArray(value))
               return value.map(p => p.memberID + ' ' + amountText(p.amount, currency) +
-                (p.nights === undefined ? '' : ' (' + p.nights + ' nights)')).join(', ');
+                (p.nights === undefined ? '' : ' (' + p.nights + ' nights' +
+                  (p.stay ? ', ' + p.stay.start + ' to ' + p.stay.end : '') + ')')).join(', ');
             return value == null ? 'None' : typeof value === 'string' ? value : JSON.stringify(value);
           };
           const change = before == null ? format(after, 'after') : format(before, 'before') + ' → ' + format(after, 'after');

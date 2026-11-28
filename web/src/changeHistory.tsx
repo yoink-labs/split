@@ -45,7 +45,12 @@ function format(field: string, side: "before" | "after", event: Event, group: Gr
   if (field === "createdAt") return String(value).slice(0,10);
   if (field === "participants") return (value as string[]).map(name).join(", ");
   if (field === "splits" || field === "payers") {
-    return (value as { memberID: string; amount: number; nights?: number }[]).map(p => name(p.memberID) + " " + money(p.amount, currency) + (p.nights === undefined ? "" : " (" + p.nights + " nights)")).join(", ");
+    return (value as { memberID: string; amount: number; nights?: number; stay?: {start: string; end: string} }[])
+      .map(p => {
+        const stay = p.stay ? ", " + p.stay.start + " to " + p.stay.end : "";
+        const nights = p.nights === undefined ? "" : " (" + p.nights + " nights" + stay + ")";
+        return name(p.memberID) + " " + money(p.amount, currency) + nights;
+      }).join(", ");
   }
   if (field === "bill") {
     const bill = value as { closed: boolean; tax: number; tip: number; items: {title: string; amount: number; memberIDs: string[]; shares?: Record<string, number>}[] };

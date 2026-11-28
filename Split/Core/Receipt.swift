@@ -49,6 +49,143 @@ struct ReceiptBill: Codable, Equatable {
     }
 }
 struct ReceiptPhoto: Codable, Identifiable { var id = UUID().uuidString; var data: Data }
+/// One person's part of an item or a bill: their share split into item price, tax and tip.
+/// `items + tax + tip == amount`, always.
+struct ConsumptionPart: Equatable {
+    var memberID: String
+    var amount: Int64
+    var items: Int64
+    var tax: Int64
+    var tip: Int64
+}
+
+/// Who consumed one receipt item, with the item's own share of tax and tip.
+struct ItemConsumption: Equatable, Identifiable {
+    var id: String
+    var title: String
+    var amount: Int64
+    var gross: Int64
+    var tax: Int64
+    var tip: Int64
+    var open: Bool
+    var portions: [ConsumptionPart]
+}
+
+struct BillConsumption: Equatable {
+    var items: [ItemConsumption]
+    var people: [ConsumptionPart]
+}
+
+/// One consumption line for a person: a receipt item, or a whole non-itemized expense.
+struct ConsumptionLine: Equatable {
+    var part: ConsumptionPart
+    var entryID: String
+    var itemID: String?
+    var title: String
+}
+
+struct PersonConsumption: Equatable {
+    var total: ConsumptionPart
+    var lines: [ConsumptionLine]
+}
+
+/// Swift port of the Worker's `billConsumption`, `entryConsumption` and `consumptionReport`
+/// (`worker/src/items.ts`). Keep the two in step: both must agree to the cent.
+enum Consumption {
+    /// Largest remainder over the weights, or all zeros when there is nothing to spread.
+    static func spread(_ total: Int64, _ weights: [Int64]) throws -> [Int64] {
+        guard total > 0, weights.contains(where: { $0 > 0 }) else { return weights.map { _ in 0 } }
+        return try Ledger.allocate(total: total, weights: weights, maximumTotal: .max)
+    }
+
+    static func bill(_ bill: ReceiptBill, payer: String) throws -> BillConsumption {
+        let gross = try bill.gross()
+        let extras = zip(bill.items, gross).map { $1 - $0.amount }
+        let taxes = try spread(bill.tax, extras)
+        var items: [ItemConsumption] = []
+        for (index, item) in bill.items.enumerated() {
+            let raw = try item.portions(gross: gross[index], payer: payer)
+            var ids: [String] = []
+            for portion in raw where !ids.contains(portion.memberID) { ids.append(portion.memberID) }
+            let amounts = ids.map { id in raw.filter { $0.memberID == id }.reduce(Int64(0)) { $0 + $1.amount } }
+            let base = try spread(item.amount, amounts)
+            let rest = zip(amounts, base).map { $0 - $1 }
+            let tax = try spread(taxes[index], rest)
+            let portions = ids.indices.map { k in
+                ConsumptionPart(memberID: ids[k], amount: amounts[k], items: base[k], tax: tax[k], tip: rest[k] - tax[k])
+            }
+            items.append(ItemConsumption(id: item.id, title: item.title, amount: item.amount, gross: gross[index],
+                                         tax: taxes[index], tip: extras[index] - taxes[index],
+                                         open: item.memberIDs.isEmpty, portions: portions))
+        }
+        var people: [ConsumptionPart] = []
+        for part in items.flatMap(\.portions) {
+            if let index = people.firstIndex(where: { $0.memberID == part.memberID }) {
+                people[index].amount += part.amount
+                people[index].items += part.items
+                people[index].tax += part.tax
+                people[index].tip += part.tip
+            } else {
+                people.append(part)
+            }
+        }
+        return BillConsumption(items: items, people: people)
+    }
+
+    /// Receipt items for itemized expenses, otherwise one line per person equal to their split.
+    static func lines(_ entry: LedgerEntry) throws -> [ConsumptionLine] {
+        if let bill = entry.bill {
+            return try Consumption.bill(bill, payer: entry.paidBy).items.flatMap { item in
+                item.portions.map { ConsumptionLine(part: $0, entryID: entry.id, itemID: item.id, title: item.title) }
+            }
+        }
+        return entry.splits.filter { $0.amount != 0 }.map {
+            ConsumptionLine(part: ConsumptionPart(memberID: $0.memberID, amount: $0.amount, items: $0.amount, tax: 0, tip: 0),
+                            entryID: entry.id, itemID: nil, title: entry.title)
+        }
+    }
+
+    /// Consumption by person across the expenses recorded in one currency, in first-seen order.
+    static func report(_ entries: [LedgerEntry], currency: String) throws -> [PersonConsumption] {
+        var people: [PersonConsumption] = []
+        for entry in entries where entry.kind == "expense" && entry.currency == currency {
+            for line in try lines(entry) {
+                if let index = people.firstIndex(where: { $0.total.memberID == line.part.memberID }) {
+                    people[index].total.amount += line.part.amount
+                    people[index].total.items += line.part.items
+                    people[index].total.tax += line.part.tax
+                    people[index].total.tip += line.part.tip
+                    people[index].lines.append(line)
+                } else {
+                    people.append(PersonConsumption(total: line.part, lines: [line]))
+                }
+            }
+        }
+        return people
+    }
+}
+
+/// A receipt photo uploaded to a group's inbox and not yet paired to an expense.
+struct InboxReceipt: Codable, Identifiable, Equatable {
+    var id: String
+    var groupID: String
+    var uploadedBy: String
+    var createdAt: String
+    var note: String?
+    var bytes: Int
+
+    var date: Date? {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter.date(from: createdAt) ?? ISO8601DateFormatter().date(from: createdAt)
+    }
+}
+
+struct InboxReceiptList: Codable { var receipts: [InboxReceipt] }
+
+/// The most receipt photos one expense can hold.
+let receiptLimit = 4
+
 
 struct ReceiptDraft: Codable, Identifiable {
     var id = UUID().uuidString

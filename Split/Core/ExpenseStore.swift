@@ -39,6 +39,7 @@ private struct ActiveInviteResponse: Decodable {
     private var scope: String?
     private var demoPhotos: [String:Data] = [:]
     private var demoComments: [String:[EntryComment]] = [:]
+    private var demoInbox: [InboxReceipt] = []
     private var demo = false
     private var monitor = NWPathMonitor()
     private var generation = UUID()
@@ -81,11 +82,14 @@ private struct ActiveInviteResponse: Decodable {
         state = next
     }
     func activate(userID: String?, demo: Bool) async {
-        demoPhotos.removeAll(); demoComments.removeAll(); comments.removeAll()
+        demoPhotos.removeAll(); demoComments.removeAll(); demoInbox.removeAll(); comments.removeAll()
         generation = UUID(); syncing = false; self.scope = userID.map { baseURL.host == "127.0.0.1" ? "local-" + $0 : $0 }; joinedGroupID = nil; self.demo = demo; state = DiskState(); error = nil; hasLoaded = false
         currentUserID = userID
         guard let scope else { return }
-        if demo { state.snapshot = Fixtures.snapshot(); demoComments = Fixtures.comments(); hasLoaded = true }
+        if demo {
+            state.snapshot = Fixtures.snapshot(); demoComments = Fixtures.comments(); hasLoaded = true
+            (demoInbox, demoPhotos) = Fixtures.inbox()
+        }
         else {
             do {
                 let url = try file(for: scope)
@@ -609,6 +613,97 @@ private struct ActiveInviteResponse: Decodable {
         if demo, let data=demoPhotos[id] { return data }
         return try await request(path:"/v1/entries/\(entry)/receipts/\(id)")
     }
+    // MARK: - Receipts inbox
+
+    private func inboxPath(_ groupID: String, _ rest: String = "") -> String {
+        "/v1/groups/\(groupID)/receipts" + rest
+    }
+
+    /// Receipts uploaded to the group and not yet paired to an expense, newest first.
+    func inboxReceipts(groupID: String) async throws -> [InboxReceipt] {
+        if demo { return demoInbox.filter { $0.groupID == groupID } }
+        let data = try await request(path: inboxPath(groupID))
+        return try JSONDecoder().decode(InboxReceiptList.self, from: data).receipts
+    }
+
+    func inboxImage(groupID: String, id: String) async throws -> Data {
+        if demo, let data = demoPhotos[id] { return data }
+        return try await request(path: inboxPath(groupID, "/\(id)"))
+    }
+
+    /// Uploads a prepared JPEG (see `ReceiptReader.photo`) to the group inbox. Idempotent per photo ID.
+    func uploadInboxReceipt(groupID: String, photo: ReceiptPhoto, note: String?) async throws {
+        let clean = note?.trimmingCharacters(in: .whitespacesAndNewlines).prefix(200)
+        let trimmed = clean.flatMap { $0.isEmpty ? nil : String($0) }
+        if demo {
+            guard !demoInbox.contains(where: { $0.id == photo.id }) else { return }
+            let me = group(groupID).flatMap { Analytics.me(in: $0, userID: currentUserID) }
+            demoPhotos[photo.id] = photo.data
+            demoInbox.insert(InboxReceipt(id: photo.id, groupID: groupID, uploadedBy: me?.id ?? "",
+                                          createdAt: ISO8601DateFormatter().string(from: Date()), note: trimmed,
+                                          bytes: photo.data.count), at: 0)
+            return
+        }
+        var body: [String: Any] = ["id": photo.id, "data": photo.data.base64EncodedString()]
+        if let trimmed { body["note"] = trimmed }
+        _ = try await post(inboxPath(groupID), JSONSerialization.data(withJSONObject: body))
+    }
+
+    func deleteInboxReceipt(groupID: String, id: String) async throws {
+        if demo { demoInbox.removeAll { $0.id == id }; demoPhotos[id] = nil; return }
+        _ = try await post(inboxPath(groupID, "/\(id)/delete"), Data("{}".utf8))
+    }
+
+    /// Attaches an inbox receipt to an expense in the same group.
+    func pairInboxReceipt(groupID: String, id: String, to entry: LedgerEntry) async throws {
+        guard (entry.receiptIDs?.count ?? 0) < receiptLimit else {
+            throw LedgerError.invalid("An expense holds up to \(receiptLimit) receipt photos.")
+        }
+        if demo {
+            guard demoInbox.contains(where: { $0.id == id }) else { throw LedgerError.invalid("This receipt is no longer in the inbox.") }
+            demoInbox.removeAll { $0.id == id }
+            try setDemoReceipts(entry.id) { $0.append(id) }
+            return
+        }
+        _ = try await post(inboxPath(groupID, "/\(id)/pair"), JSONSerialization.data(withJSONObject: ["entryID": entry.id]))
+        try await waitForSync()
+        await sync()
+    }
+
+    /// Moves an attached receipt to another expense in the same group, or back to the inbox when `target` is nil.
+    func moveReceipt(_ id: String, from entry: LedgerEntry, to target: LedgerEntry?) async throws {
+        if let target, (target.receiptIDs?.count ?? 0) >= receiptLimit {
+            throw LedgerError.invalid("\(target.title) already has \(receiptLimit) receipt photos.")
+        }
+        if demo {
+            try setDemoReceipts(entry.id) { $0.removeAll { $0 == id } }
+            if let target {
+                try setDemoReceipts(target.id) { $0.append(id) }
+            } else {
+                let me = group(entry.groupID).flatMap { Analytics.me(in: $0, userID: currentUserID) }
+                demoInbox.insert(InboxReceipt(id: id, groupID: entry.groupID, uploadedBy: me?.id ?? "",
+                                              createdAt: ISO8601DateFormatter().string(from: Date()), note: entry.title,
+                                              bytes: demoPhotos[id]?.count ?? 0), at: 0)
+            }
+            return
+        }
+        let body: [String: Any] = ["entryID": target?.id ?? NSNull()]
+        _ = try await post("/v1/entries/\(entry.id)/receipts/\(id)/move", JSONSerialization.data(withJSONObject: body))
+        try await waitForSync()
+        await sync()
+    }
+
+    private func setDemoReceipts(_ entryID: String, _ change: (inout [String]) -> Void) throws {
+        var next = state
+        guard let index = next.snapshot.entries.firstIndex(where: { $0.id == entryID }) else {
+            throw LedgerError.invalid("This expense is unavailable.")
+        }
+        var ids = next.snapshot.entries[index].receiptIDs ?? []
+        change(&ids)
+        next.snapshot.entries[index].receiptIDs = ids.isEmpty ? nil : ids
+        try persist(next)
+    }
+
     func claim(_ entry: LedgerEntry, item: Purchase?, people: [String], shares: [String: Int64] = [:]) async throws {
         guard var bill=entry.bill, !bill.closed else { throw LedgerError.invalid("This receipt is closed.") }
         if demo {
@@ -804,6 +899,45 @@ enum Fixtures {
         e[4].commentCount = 1
         e[0].notes = "Split the provoleta three ways. Harris covered the tip in cash."
         return Snapshot(groups:[group,house,spainGroup,samGroup,mayaGroup],entries:e)
+    }
+
+    /// Two demo receipts waiting in the Buenos Aires inbox, with rendered photos.
+    static func inbox() -> ([InboxReceipt], [String: Data]) {
+        let receipts = [
+            (InboxReceipt(id: "demo-inbox-parrilla", groupID: "demo-buenos-aires", uploadedBy: "demo-alex",
+                          createdAt: "2026-11-18T22:40:00Z", note: "Don Julio parrilla", bytes: 0),
+             ["DON JULIO", "Bife de chorizo  38.500,00", "Provoleta  9.800,00", "Malbec  24.000,00", "Propina  7.230,00"]),
+            (InboxReceipt(id: "demo-inbox-market", groupID: "demo-buenos-aires", uploadedBy: "demo-maya",
+                          createdAt: "2026-11-18T13:05:00Z", note: "San Telmo market snacks", bytes: 0),
+             ["MERCADO SAN TELMO", "Choripán x3  13.500,00", "Agua  2.400,00", "Alfajores  6.000,00"])
+        ]
+        var photos: [String: Data] = [:]
+        var list: [InboxReceipt] = []
+        for (receipt, lines) in receipts {
+            var item = receipt
+            let data = receiptImage(lines)
+            item.bytes = data.count
+            photos[item.id] = data
+            list.append(item)
+        }
+        return (list, photos)
+    }
+
+    private static func receiptImage(_ lines: [String]) -> Data {
+        let size = CGSize(width: 360, height: 520)
+        let image = UIGraphicsImageRenderer(size: size).image { context in
+            UIColor(white: 0.97, alpha: 1).setFill()
+            context.fill(CGRect(origin: .zero, size: size))
+            var y: CGFloat = 36
+            for (index, line) in lines.enumerated() {
+                let font = index == 0 ? UIFont.monospacedSystemFont(ofSize: 22, weight: .bold) : UIFont.monospacedSystemFont(ofSize: 16, weight: .regular)
+                (line as NSString).draw(at: CGPoint(x: 24, y: y), withAttributes: [.font: font, .foregroundColor: UIColor.darkGray])
+                y += index == 0 ? 56 : 34
+            }
+            ("GRACIAS" as NSString).draw(at: CGPoint(x: 24, y: size.height - 60),
+                                         withAttributes: [.font: UIFont.monospacedSystemFont(ofSize: 16, weight: .semibold), .foregroundColor: UIColor.gray])
+        }
+        return image.jpegData(compressionQuality: 0.7) ?? Data()
     }
 
     static func comments() -> [String:[EntryComment]] {

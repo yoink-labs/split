@@ -34,6 +34,10 @@ struct EntryDetails: View {
     @State private var resolvingRefund = false
     @State private var markingPending = false
     @State private var adjusting = false
+    @State private var attaching = false
+    @State private var moving: String?
+    @State private var receiptWorking = false
+    @State private var receiptError: String?
 
     init(entry: LedgerEntry, group: ExpenseGroup, embedded: Bool = false, showsBreakdownFirst: Bool = false) {
         self.initial = entry
@@ -129,7 +133,7 @@ struct EntryDetails: View {
                     if entry.kind == "expense" && (!refunds.isEmpty || canRefund) { refundsCard }
                     if entry.exchange != nil { settlementCard }
                     if showsBreakdownFirst { breakdown }
-                    if let ids = entry.receiptIDs, !ids.isEmpty { receiptCard(ids) }
+                    if entry.kind == "expense" || entry.receiptIDs?.isEmpty == false { receiptCard(entry.receiptIDs ?? []) }
                     if let bill = entry.bill { purchasesCard(bill) }
                     if !showsBreakdownFirst { breakdown }
                     if let notes = entry.notes, !notes.isEmpty { notesCard(notes) }
@@ -165,6 +169,15 @@ struct EntryDetails: View {
         }
         .fullScreenCover(item: $gallery) { presentation in
             ReceiptViewer(presentation)
+        }
+        .sheet(isPresented: $attaching) {
+            InboxPickerSheet(group: liveGroup, entry: entry)
+        }
+        .sheet(item: Binding(get: { moving.map(MovingReceipt.init) }, set: { moving = $0?.id })) { value in
+            ExpensePickerSheet(group: liveGroup, entries: store.entries(in: liveGroup), title: "Move receipt",
+                               message: "The photo moves to the expense you choose.", excluding: entry.id) { target in
+                try await store.moveReceipt(value.id, from: entry, to: target)
+            }
         }
         .sheet(isPresented: $editing) {
             AddExpenseView(group: liveGroup, original: entry)
@@ -430,13 +443,67 @@ struct EntryDetails: View {
         }
     }
 
-    private func receiptCard(_ ids: [String]) -> some View {
+    private struct MovingReceipt: Identifiable { let id: String }
+
+    @ViewBuilder private func receiptCard(_ ids: [String]) -> some View {
         Card {
-            ReceiptGallery(entry: entry.id, ids: ids) { presentation in
-                gallery = presentation
+            VStack(alignment: .leading, spacing: 10) {
+                if ids.isEmpty {
+                    SectionHeader(title: "Receipts", subtitle: "No photos yet")
+                } else {
+                    ReceiptGallery(entry: entry.id, ids: ids) { presentation in
+                        gallery = presentation
+                    }
+                }
+                if entry.kind == "expense" {
+                    FlowLayout(spacing: 8) {
+                        if ids.count < receiptLimit {
+                            Button { attaching = true } label: { Label("Attach from inbox", systemImage: "tray.and.arrow.up") }
+                                .buttonStyle(GhostButton())
+                                .accessibilityIdentifier("receipt-attach-inbox")
+                        }
+                        if !ids.isEmpty {
+                            Menu {
+                                ForEach(Array(ids.enumerated()), id: \.element) { index, id in
+                                    if ids.count > 1 {
+                                        Section("Photo \(index + 1)") { moveButtons(id) }
+                                    } else {
+                                        moveButtons(id)
+                                    }
+                                }
+                            } label: {
+                                Label("Move receipt", systemImage: "arrow.left.arrow.right")
+                                    .font(.subheadline.weight(.semibold))
+                                    .padding(.horizontal, 14)
+                                    .frame(minHeight: 44)
+                                    .background(Palette.raised)
+                                    .clipShape(Capsule())
+                                    .overlay(Capsule().stroke(Palette.line, lineWidth: 1))
+                            }
+                            .disabled(receiptWorking)
+                            .accessibilityIdentifier("receipt-move")
+                        }
+                        if receiptWorking { ProgressView().frame(minHeight: 44) }
+                    }
+                }
+                if let receiptError { InlineError(text: receiptError) }
             }
         }
         .tint(Palette.evergreen)
+    }
+
+    @ViewBuilder private func moveButtons(_ id: String) -> some View {
+        Button { moving = id } label: { Label("To another expense…", systemImage: "arrow.right.doc.on.clipboard") }
+        Button { Task { await moveToInbox(id) } } label: { Label("Back to inbox", systemImage: "tray.and.arrow.down") }
+    }
+
+    private func moveToInbox(_ id: String) async {
+        guard !receiptWorking else { return }
+        receiptWorking = true
+        receiptError = nil
+        defer { receiptWorking = false }
+        do { try await store.moveReceipt(id, from: entry, to: nil) }
+        catch { receiptError = error.localizedDescription }
     }
 
     private func purchasesCard(_ bill: ReceiptBill) -> some View {

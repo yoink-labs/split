@@ -346,7 +346,7 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
       }
       if(updated.exchange && updated.exchange.target!==canonical.exchange?.target &&
         updated.exchange.target!==await env.DB.prepare('SELECT currency FROM groups WHERE id=?').bind(saved.group_id).first('currency')) throw new InputError('Use the group settlement currency.');
-      if((updated.exchange || updated.bill) && await env.DB.prepare('SELECT 1 FROM recurring WHERE entry_id=?').bind(updated.id).first()) throw new InputError('Stop the recurring schedule before itemizing or converting this expense.');
+      if((updated.exchange || updated.bill || updated.spread) && await env.DB.prepare('SELECT 1 FROM recurring WHERE entry_id=?').bind(updated.id).first()) throw new InputError('Stop the recurring schedule before itemizing, converting, or spreading this expense over days.');
       payload=JSON.stringify(updated);
       if (old.bill && !updated.bill) throw new InputError('Keep the receipt items when editing this expense.');
       if (saved.payload===payload && !b.photos) return json({ok:true});

@@ -33,6 +33,7 @@ struct AnalyticsView: View {
     @State private var person: String?
     @State private var grain: SpendAnalytics.Granularity = .week
     @State private var drill: SpendAnalytics.Drill?
+    @State private var showingDailyCosts = false
     @State private var inspecting: LedgerEntry?
     @State private var width: CGFloat = 0
 
@@ -82,6 +83,9 @@ struct AnalyticsView: View {
         .refreshable { await store.sync() }
         .navigationTitle("Analytics")
         .navigationBarTitleDisplayMode(.large)
+        .sheet(isPresented: $showingDailyCosts) {
+            DailyCostsView(scope: scope, initialPerson: member?.key, from: bounds.from, to: bounds.to)
+        }
         .sheet(item: $inspecting) { EntrySheet(entry: $0) }
         .onChange(of: groupID) { person = nil; self.range = .all; drill = nil }
         .onChange(of: self.range) { drill = nil }
@@ -107,6 +111,10 @@ struct AnalyticsView: View {
         let report = context.report
         VStack(alignment: .leading, spacing: Spacing.section) {
             header(context)
+            Button { showingDailyCosts = true } label: {
+                Label("Daily costs", systemImage: "calendar")
+                    .frame(minHeight: HitTarget.minimum)
+            }
             AnalyticsFilterBar(
                 scope: context.scope,
                 range: $range,

@@ -1,4 +1,5 @@
 import { expenseTripPhase, tripPhaseLabels, tripPhases } from "../../worker/src/tripPhases";
+import { dailyCosts } from "../../worker/src/ledger";
 import { useId, useRef, useState, type CSSProperties } from "react";
 import { analyze, drillRows, type Analytics, type Drill, type Granularity } from "./analytics";
 import { categoryMeta } from "./categories";
@@ -47,6 +48,35 @@ function rangeBounds(range: Range, g: Group, custom: { from: string; to: string 
     case "custom": return custom.from && custom.to && custom.from > custom.to ? { from: custom.to, to: custom.from } : custom;
     default: return { from: "", to: "" };
   }
+}
+
+export function DailyCostView({ g, entries, memberID, from = "", to = "" }: {
+  g: Group; entries: Expense[]; memberID?: string; from?: string; to?: string;
+}) {
+  const [selected, setSelected] = useState("");
+  const people = g.members.filter(m => !m.removed || entries.some(e => e.splits.some(s => s.memberID === m.id)));
+  const person = people.find(m => m.id === (memberID || selected)) ?? people[0];
+  const days = person ? dailyCosts(entries, person.id).filter(day =>
+    (!from || day.day >= from) && (!to || day.day <= to)) : [];
+  return (
+    <section className="card card-pad" aria-label="Daily costs">
+      <h3>Daily costs</h3>
+      {!memberID && people.length > 0 && <Picker label="Daily costs for" value={person?.id ?? ""} onChange={setSelected}
+        options={people.map(m => ({ value: m.id, label: m.name }))} />}
+      <div className="panel" style={{ maxHeight: "28rem", overflowY: "auto" }}>
+        {days.map(day => (
+          <div className="row" key={day.day + day.currency}>
+            <div>
+              <strong>{bucketLabel(day.day, "day", true)}</strong>
+              <div className="muted">{day.items.map(item => item.title + " " + moneyCompact(item.amount, day.currency)).join(" + ")}</div>
+            </div>
+            <b className="num">{moneyCompact(day.amount, day.currency)}</b>
+          </div>
+        ))}
+        {!days.length && <p className="muted">No daily costs in this range.</p>}
+      </div>
+    </section>
+  );
 }
 
 export function GroupAnalytics({ g, entries, onInspect, inspectedID }: {
@@ -125,6 +155,8 @@ export function GroupAnalytics({ g, entries, onInspect, inspectedID }: {
             }))]} />
         </div>
       </div>
+
+      <DailyCostView g={g} entries={entries} memberID={member?.id} {...bounds} />
 
       {data.rows.length === 0 ? (
         <p className="card ledger-empty muted">

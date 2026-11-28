@@ -1,11 +1,12 @@
 import { expenseTripPhase, tripPhaseLabels } from "../../worker/src/tripPhases";
+import { nightRate } from "../../worker/src/ledger";
 import { PaymentOptions } from "./paymentMethods";
 import { memberBalances, useHomeMoney } from "./homeMoney";
 import { PendingPayments } from "./settlements";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { analyze } from "./analytics";
-import { GroupAnalytics } from "./analyticsView";
+import { DailyCostView, GroupAnalytics } from "./analyticsView";
 import { CategoryDonut } from "./categoryDonut";
 import { TransactionTable } from "./transactionTable";
 import { categoryMeta } from "./categories";
@@ -21,6 +22,7 @@ import {
   memberPath,
   minor,
   money,
+  moneyCompact,
   settlementEntry,
   shortDate,
   stamp,
@@ -366,8 +368,9 @@ function ExpenseDrawer({
           {/* Split with */}
           <div>
             <h4 style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 8 }}>
-              {refund ? "Credited to" : entry.kind === "settlement" ? "Paid to" : `Split with (${entry.splitMode})`}
+              {refund ? "Credited to" : entry.kind === "settlement" ? "Paid to" : entry.splits.some(s => s.nights !== undefined) ? "Split by nights" : `Split with (${entry.splitMode})`}
             </h4>
+            {entry.spread && <p className="muted">First day {entry.spread.start} · End date {entry.spread.end} (excluded)</p>}
             <div className="panel">
               {entry.splits.map((s) => {
                 const m = g.members.find((x) => x.id === s.memberID);
@@ -377,7 +380,10 @@ function ExpenseDrawer({
                       <Avatar name={m?.name ?? "?"} avatarURL={m?.avatarURL} size={26} />
                       <strong style={{ fontSize: 13.5, color: "var(--ink)" }}>{m?.name ?? "Member"}</strong>
                     </span>
-                    <b className="num" style={{ color: "var(--ink)" }}>{homeMoney.portion(entry, s.memberID)}</b>
+                    <span style={{ textAlign: "right" }}>
+                      {s.nights !== undefined && <small className="muted">{s.nights} × {moneyCompact(nightRate(entry), entry.currency)}/night<br /></small>}
+                      <b className="num" style={{ color: "var(--ink)" }}>{homeMoney.portion(entry, s.memberID)}</b>
+                    </span>
                   </Link>
                 );
               })}
@@ -385,7 +391,7 @@ function ExpenseDrawer({
           </div>
 
           {/* Recurring schedule for ordinary fixed-currency expenses */}
-          {entry.editable && entry.kind === "expense" && !entry.bill && !entry.exchange && (
+          {entry.editable && entry.kind === "expense" && !entry.bill && !entry.exchange && !entry.spread && (
             <div className="card card-pad" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
               <div>
                 <strong style={{ fontSize: 13 }}>Repeat schedule</strong>
@@ -916,6 +922,7 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
         <GroupAnalytics g={g} entries={entries} inspectedID={inspected?.id} onInspect={setInspectID} />
       )}
 
+      {tab === "overview" && <DailyCostView g={g} entries={entries} />}
       {(tab === "ledger" || tab === "transactions") && (
         <GroupLedger
           g={g} entries={entries} memberID={me?.id}

@@ -57,8 +57,8 @@ export function refundProblem(refund: Entry, original: Entry | undefined, others
 /** The resolve "adjust" action: every split and payer rescaled to the new amount, exact to the cent, pending cleared. */
 export function adjustedEntry<T extends Entry>(entry: T, amount: number, statementAmount?: unknown): T {
   if (entry.bill) throw new InputError('Edit the receipt items to change an itemized expense.');
-  const scale = <P extends {amount:number}>(list: P[]) => {
-    const amounts = allocate(amount, list.map(p => p.amount));
+  const scale = <P extends {amount:number; nights?:number}>(list: P[]) => {
+    const amounts = allocate(amount, list.map(p => p.nights ?? p.amount));
     return list.map((p, i) => ({...p, amount: amounts[i]}));
   };
   let exchange = entry.exchange;

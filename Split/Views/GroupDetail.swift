@@ -84,6 +84,7 @@ struct GroupDetail: View {
     }
 
     private var group: ExpenseGroup? { store.group(groupID) }
+    @State private var showingDailyCosts = false
     private var entries: [LedgerEntry] { group.map { store.entries(in: $0) } ?? [] }
     private var summary: GroupSummary? { group.map { store.summary(for: $0) } }
     private var openCount: Int { entries.reduce(0) { $0 + $1.openPurchaseCount } }
@@ -129,6 +130,10 @@ struct GroupDetail: View {
                         switch section {
                         case .overview:
                             overview(group)
+                            Button { showingDailyCosts = true } label: {
+                                Label("Daily costs", systemImage: "calendar")
+                                    .frame(minHeight: HitTarget.minimum)
+                            }
                         case .transactions:
                             let canCombine = group.members.contains(where: { $0.userID == store.currentUserID && $0.userID != nil && $0.removed != true })
                             GroupTransactionsView(group: group, entries: entries, phase: $phase, groupByPhase: $groupByPhase,
@@ -163,6 +168,9 @@ struct GroupDetail: View {
                             Label("More", systemImage: "ellipsis.circle")
                         }
                     }
+                }
+                .sheet(isPresented: $showingDailyCosts) {
+                    DailyCostsView(scope: AnalyticsScope(group: group, allGroups: [group], allEntries: entries, currentUserID: store.currentUserID))
                 }
                 .sheet(isPresented: $combining) { ExpenseCombinationsView(group: group) }
                 .sheet(isPresented: $settings) { GroupTools(group: group) }

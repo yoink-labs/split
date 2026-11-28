@@ -101,6 +101,27 @@ final class LedgerTests: XCTestCase {
         XCTAssertThrowsError(try Ledger.allocate(total:100,weights:[0,0]))
         XCTAssertEqual(try Ledger.allocate(total:Money.maxAmount,weights:[Money.maxAmount,1]).reduce(0,+),Money.maxAmount)
     }
+    func testNightsSplitAndDailyCosts() throws {
+        let people = ["alex", "maya", "harris", "sam"]
+        let values = ["alex": "3", "maya": "3", "harris": "3", "sam": "4"]
+        let splits = try Ledger.split(total: 109_462, people: people, mode: .nights, values: values)
+        XCTAssertEqual(splits.map(\.amount), [25_261, 25_260, 25_260, 33_681])
+        let stay = LedgerEntry(groupID: "trip", title: "Airbnb", amount: 109_462, currency: "USD",
+                               paidBy: "alex", splits: splits, splitMode: .shares,
+                               spread: ExpenseSpread(start: "2026-11-12", end: "2026-11-16"))
+        let dinner = LedgerEntry(groupID: "trip", title: "Dinner", amount: 3_100, currency: "USD",
+                                 paidBy: "alex", splits: [Portion(memberID: "alex", amount: 3_100)],
+                                 createdAt: "2026-11-12T20:00:00Z")
+        let restored = try JSONDecoder().decode(LedgerEntry.self, from: JSONEncoder().encode(stay))
+        XCTAssertEqual(restored, stay)
+        let alex = DailyCost.report([restored, dinner], person: "alex") { _, member in member }
+        let sam = DailyCost.report([restored, dinner], person: "sam") { _, member in member }
+        XCTAssertEqual(alex.map(\.day), ["2026-11-14", "2026-11-13", "2026-11-12"])
+        XCTAssertEqual(alex.map(\.amount), [8_420, 8_420, 11_521])
+        XCTAssertEqual(sam.first?.day, "2026-11-15")
+        XCTAssertEqual(sam.reduce(0) { $0 + $1.amount }, 33_681)
+    }
+
     func testDecimalInput() {
         XCTAssertEqual(Money.parse("1234,56"),123456)
         XCTAssertEqual(Money.parse("0.01"),1)

@@ -40,7 +40,7 @@ enum Refunds {
             throw LedgerError.invalid("The refund can’t be more than \(Money.text(available, original.currency)) for these people.")
         }
         let amounts = try Ledger.allocate(total: amount, weights: left.map(\.amount))
-        return zip(left, amounts).map { Portion(memberID: $0.memberID, amount: $1) }.filter { $0.amount > 0 }
+        return zip(left, amounts).map { Portion(memberID: $0.memberID, amount: $1, nights: $0.nights) }.filter { $0.amount > 0 }
     }
 
     /// Mirrors the Worker's checks so the composer can explain a problem before saving.
@@ -106,7 +106,7 @@ enum Refunds {
         guard entry.bill == nil else { throw LedgerError.invalid("Edit the receipt items to change an itemized expense.") }
         var next = entry
         next.amount = amount
-        let shares = try Ledger.allocate(total: amount, weights: entry.splits.map(\.amount))
+        let shares = try Ledger.allocate(total: amount, weights: entry.splits.map { $0.nights.map(Int64.init) ?? $0.amount })
         next.splits = zip(entry.splits, shares).map { Portion(memberID: $0.memberID, amount: $1) }
         if let payers = entry.payers, !payers.isEmpty {
             let paid = try Ledger.allocate(total: amount, weights: payers.map(\.amount))

@@ -12,6 +12,7 @@ is noted next to each release. The CLI is versioned separately with
 
 ### Added
 
+- Split stays by nights and spread expenses over a date range. See each person’s daily costs on web and iOS or with the CLI and MCP.
 - See how expenses, payments, and linked refunds add up in a group member’s balance breakdown on web and iOS, or with `split balances --group ID --member ID`.
 
 - Create and edit Trip and Long-term / Home groups. Trip expenses get a date-based phase you can override, filter, group, and see in analytics. CLI and MCP expose the same group types and trip phases. Empty group sections stay hidden.

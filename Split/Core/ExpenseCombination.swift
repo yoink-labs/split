@@ -21,7 +21,7 @@ struct CombinationResult: Decodable { let entryID: String }
 
 extension LedgerEntry {
     func canCombine(in entries: [LedgerEntry]) -> Bool {
-        kind == "expense" && combinedCount == nil && !isPending && !isHandled && exchange == nil &&
+        kind == "expense" && combinedCount == nil && !isPending && !isHandled && exchange == nil && spread == nil && !usesNights &&
         (recurrence == nil || recurrence == "off") && !entries.contains { $0.refundOf == id }
     }
 }

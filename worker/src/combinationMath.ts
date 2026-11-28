@@ -3,7 +3,7 @@ import { allocate, entryPayers, InputError, validateEntry, type Entry } from './
 export interface CombinationSuggestion { title:string; entryIDs:string[] }
 export interface CombinationEvent { entryID:string; title:string; count:number; actor:string|null; at:string; action:'combine'|'uncombine' }
 export function canCombineExpense(entry: Entry & {recurrence?:string|null}, entries: Entry[]) {
-  return entry.kind === 'expense' && !entry.combinedCount && !entry.pending && !entry.handled && !entry.exchange
+  return entry.kind === 'expense' && !entry.combinedCount && !entry.pending && !entry.handled && !entry.exchange && !entry.spread && !entry.splits.some(s => s.nights !== undefined)
     && (!entry.recurrence || entry.recurrence === 'off') && !entries.some(other => other.refundOf === entry.id);
 }
 

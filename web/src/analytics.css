@@ -109,13 +109,13 @@
   display: grid;
   gap: 14px;
   min-width: 0;
-  container-type: inline-size;
+  container: overview / inline-size;
 }
 .overview-pair {
   display: grid;
-  grid-template-columns: minmax(0, 1.35fr) minmax(290px, 1fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr);
   gap: 14px;
-  align-items: stretch;
+  align-items: start;
 }
 .overview-card {
   display: flex;
@@ -148,9 +148,36 @@
   font-size: 12px;
 }
 .overview-empty { font-size: 13px; padding: 20px 12px; text-align: center; }
-.overview-ledger { min-width: 0; }
-@media (max-width: 920px) {
+.overview-ledger { min-width: 0; container-type: inline-size; }
+.overview-ledger .txn-frame { max-block-size: min(340px, 55vh); }
+.overview-ledger .ledger-entry-link,
+.overview-ledger .txn-col-payer { overflow-wrap: anywhere; }
+@container overview (min-width: 1060px) {
+  .overview-ledger .txn-frame { max-block-size: min(260px, 55vh); }
+}
+.overview-ledger .txn-table { min-width: 0; }
+.overview-filter-status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+.overview-pair .overview-card { container-type: inline-size; }
+@container overview (max-width: 650px) {
   .overview-pair { grid-template-columns: minmax(0, 1fr); }
+}
+@container (max-width: 560px) {
+  .overview-ledger .txn-table { table-layout: fixed; }
+  .overview-ledger .txn-table th.ledger-number { width: 35%; }
+  .overview-ledger .ledger-pending-note { max-inline-size: min(28ch, 100%); }
+  .overview-ledger .txn-col-date, .overview-ledger .txn-col-payer { display: none; }
+  .overview-ledger .txn-inline-date { display: inline; }
+  .overview-ledger .txn-table td:first-child { min-width: 0; width: auto; }
+}
+@container (max-width: 460px) {
+  .overview-card .donut-layout { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+  .overview-card .donut-list { max-block-size: 190px; }
 }
 
 /* Interactive Category Donut + Breakdown (Overview & Analytics) */
@@ -195,6 +222,10 @@
 }
 .donut-row:hover, .donut-row.hovered { background: var(--surface-hover); }
 .donut-row[aria-pressed="true"] { background: var(--primary-soft); border-color: var(--primary); }
+.donut-row:focus-visible { outline: 2px solid var(--ink); outline-offset: -3px; }
+@media (prefers-reduced-motion: reduce) {
+  .donut-slice { transition: none; }
+}
 .donut-row .cat-icon { width: 26px; height: 26px; }
 .donut-row-main { display: grid; gap: 4px; min-width: 0; font-size: 12.5px; }
 .donut-row-top { display: flex; align-items: baseline; gap: 6px; min-width: 0; }

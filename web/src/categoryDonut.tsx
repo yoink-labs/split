@@ -123,7 +123,7 @@ export function CategoryDonut({
               <button
                 type="button"
                 className={"donut-row" + (isHovered ? " hovered" : "")}
-                aria-pressed={active ? isSelected : undefined}
+                aria-pressed={onSelect ? isSelected : undefined}
                 onMouseEnter={() => setHovered(c.id)}
                 onMouseLeave={() => setHovered("")}
                 onFocus={() => setHovered(c.id)}

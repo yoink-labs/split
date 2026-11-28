@@ -8,6 +8,8 @@ struct CategoryBreakdownCard: View {
     var active: String?
     var onSelect: (String) -> Void
 
+    private let innerRadiusRatio = 0.64
+
     var body: some View {
         Card {
             VStack(alignment: .leading, spacing: Spacing.s) {
@@ -27,15 +29,40 @@ struct CategoryBreakdownCard: View {
     }
 
     private var donut: some View {
-        Chart(report.categories) { category in
+        let positive = report.categories.filter { $0.amount > 0 }
+        return Chart(positive) { category in
             SectorMark(
                 angle: .value("Spent", Double(category.amount)),
-                innerRadius: .ratio(0.64),
+                innerRadius: .ratio(innerRadiusRatio),
                 angularInset: 1.5
             )
             .cornerRadius(3)
             .foregroundStyle(AnalyticsCategory.meta(category.id).tint)
             .opacity(active == nil || active == category.id ? 1 : 0.3)
+        }
+        .chartAngleSelection(value: Binding<Double?>(
+            get: { nil },
+            set: { value in
+                guard let value else { return }
+                var end: Int64 = 0
+                for category in positive {
+                    end += category.amount
+                    if value < Double(end) {
+                        onSelect(category.id)
+                        return
+                    }
+                }
+            }
+        ))
+        .chartGesture { proxy in
+            SpatialTapGesture()
+                .onEnded { tap in
+                    let size = proxy.plotSize
+                    let radius = min(size.width, size.height) / 2
+                    let distance = hypot(tap.location.x - size.width / 2, tap.location.y - size.height / 2)
+                    guard distance >= radius * innerRadiusRatio, distance <= radius else { return }
+                    proxy.selectAngleValue(at: proxy.angle(at: tap.location))
+                }
         }
         .chartBackground { proxy in
             GeometryReader { geometry in
@@ -99,7 +126,7 @@ struct CategoryBreakdownCard: View {
         .accessibilityLabel(meta.label)
         .accessibilityValue("\(format.money(category.amount)), \(category.percent) percent, \(AnalyticsFormat.count(category.count, "expense"))")
         .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
-        .accessibilityHint("Lists these expenses")
+        .accessibilityHint(selected ? "Clears the category filter" : "Lists these expenses")
     }
 }
 

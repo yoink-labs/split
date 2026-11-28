@@ -11,6 +11,7 @@ export interface AnalyticsFilter {
   to?: string;
   /** When set, only expenses this member paid for or shares in, measured by their share. */
   memberID?: string;
+  memberByGroup?: ReadonlyMap<string, string>;
 }
 
 export interface AnalyticsRow {
@@ -113,7 +114,8 @@ export function analyticsRows(entries: Expense[], project: (entry: Expense) => E
     const day = entry.createdAt.slice(0, 10);
     if (filter.from && day < filter.from) continue;
     if (filter.to && day > filter.to) continue;
-    const member = filter.memberID;
+    const member = filter.memberByGroup?.get(entry.groupID) ?? filter.memberID;
+    if (filter.memberByGroup && !member) continue;
     if (member && !entry.splits.some((s) => s.memberID === member && s.amount > 0)
       && !entryPayers(entry).some((p) => p.memberID === member && p.amount > 0)) continue;
     const projected = project(entry);
@@ -166,12 +168,13 @@ export function analyze(
     .sort((a, b) => b.amount - a.amount || a.id.localeCompare(b.id));
   const categoryPercents = percents(categoryList.map((item) => Math.max(0, item.amount)));
 
-  const people = (filter.memberID ? [filter.memberID] : memberIDs).map((memberID) => {
+  const people = (filter.memberByGroup ? ["viewer"] : filter.memberID ? [filter.memberID] : memberIDs).map((memberID) => {
     let paid = 0, share = 0, count = 0;
     for (const row of priced) {
       const direction = sign(row.entry);
-      const p = direction * portion(entryPayers(row.home!), memberID);
-      const s = direction * portion(row.home!.splits, memberID);
+      const seat = filter.memberByGroup?.get(row.entry.groupID) ?? memberID;
+      const p = direction * portion(entryPayers(row.home!), seat);
+      const s = direction * portion(row.home!.splits, seat);
       paid += p;
       share += s;
       if (p || s) count += 1;

@@ -73,8 +73,9 @@ enum Analytics {
     }
 
     static func groupSummaries(groups: [ExpenseGroup], entries: [LedgerEntry], userID: String?, includeArchived: Bool = false) -> [GroupSummary] {
-        groups.filter { includeArchived || !($0.archived ?? false) }.map { group in
-            let groupEntries = entries.filter { $0.groupID == group.id }
+        let byGroup = Dictionary(grouping: entries, by: \.groupID)
+        return groups.filter { includeArchived || !($0.archived ?? false) }.map { group in
+            let groupEntries = byGroup[group.id] ?? []
             let currencies = currencies(in: group, entries: groupEntries)
             let meID = me(in: group, userID: userID)?.id
             var mine: [String: Int64] = [:]
@@ -236,27 +237,90 @@ enum Search {
     }
 }
 
+struct DashboardTransfer: Identifiable {
+    var group: ExpenseGroup
+    var person: Person
+    var transfer: Transfer
+    var amount: Int64
+    var id: String { group.id + "/" + transfer.id }
+}
+
+struct DashboardTransaction: Identifiable {
+    var entry: LedgerEntry
+    var group: ExpenseGroup
+    var paid: Int64
+    var share: Int64
+    var direction: Int64
+    var id: String { entry.id }
+}
+
 struct DashboardModel {
     var owed: [String: Int64]
     var owe: [String: Int64]
     var people: [PersonBalance]
+    var transfers: [String: [DashboardTransfer]]
     var groups: [GroupSummary]
-    var recent: [LedgerEntry]
-    var settled: Bool { owed.isEmpty && owe.isEmpty }
+    var transactions: [DashboardTransaction]
+    var seats: [String: String]
+
+    init(groups: [ExpenseGroup], entries: [LedgerEntry], userID: String?) {
+        let active = groups.filter { group in
+            guard let userID else { return false }
+            return group.members.contains { $0.userID == userID && $0.removed != true }
+        }
+        let seats = Dictionary(uniqueKeysWithValues: active.compactMap { group in
+            group.members.first { $0.userID == userID && $0.removed != true }.map { (group.id, $0.id) }
+        })
+        self.seats = seats
+        let byGroup = Dictionary(grouping: entries, by: \.groupID)
+        self.groups = Analytics.groupSummaries(groups: active, entries: entries, userID: userID, includeArchived: true)
+        let totals = Analytics.balanceDirections(self.groups.map(\.mine))
+        owed = totals.owed
+        owe = totals.owe
+
+        var people: [String: PersonBalance] = [:]
+        var transfers: [String: [DashboardTransfer]] = [:]
+        var transactions: [DashboardTransaction] = []
+        for group in active {
+            guard let seat = seats[group.id] else { continue }
+            let entries = byGroup[group.id] ?? []
+            let members = Dictionary(uniqueKeysWithValues: group.members.map { ($0.id, $0) })
+            for currency in Analytics.currencies(in: group, entries: entries) {
+                let values = Ledger.balances(entries, currency: currency)
+                guard values[seat, default: 0] != 0 else { continue }
+                let plan = group.simplify == false ? Ledger.directPlan(values, currency: currency) : Ledger.plan(values, currency: currency)
+                for transfer in plan where transfer.from == seat || transfer.to == seat {
+                    let outgoing = transfer.from == seat
+                    guard let person = members[outgoing ? transfer.to : transfer.from] else { continue }
+                    let key = person.userID.map { "u:" + $0 } ?? "m:" + person.id
+                    let amount = outgoing ? -transfer.amount : transfer.amount
+                    transfers[key, default: []].append(DashboardTransfer(group: group, person: person, transfer: transfer, amount: amount))
+                    var row = people[key] ?? PersonBalance(key: key, name: person.name, memberIDs: [], groupIDs: [], amounts: [:])
+                    if !row.memberIDs.contains(person.id) { row.memberIDs.append(person.id) }
+                    if !row.groupIDs.contains(group.id) { row.groupIDs.append(group.id) }
+                    row.amounts[currency, default: 0] += amount
+                    people[key] = row
+                }
+            }
+            for entry in entries {
+                let paid = SpendAnalytics.paid(entry, by: seat)
+                let share = SpendAnalytics.share(entry, of: seat)
+                guard paid > 0 || share > 0 else { continue }
+                let direction = Ledger.net(entry.settling, for: seat)
+                transactions.append(DashboardTransaction(entry: entry, group: group, paid: paid, share: share, direction: direction))
+            }
+        }
+        self.people = people.values.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        self.transfers = transfers
+        self.transactions = transactions.sorted {
+            $0.entry.createdAt == $1.entry.createdAt ? $0.id > $1.id : $0.entry.createdAt > $1.entry.createdAt
+        }
+    }
 }
 
 extension ExpenseStore {
     var dashboard: DashboardModel {
-        let people = Analytics.personBalances(groups: groups, entries: entries, userID: currentUserID)
-        let summaries = Analytics.groupSummaries(groups: groups, entries: entries, userID: currentUserID)
-        let totals = Analytics.balanceDirections(summaries.map(\.mine))
-        return DashboardModel(
-            owed: totals.owed,
-            owe: totals.owe,
-            people: people,
-            groups: summaries,
-            recent: Array(entries.prefix(8))
-        )
+        DashboardModel(groups: groups, entries: entries, userID: currentUserID)
     }
 
     func summary(for group: ExpenseGroup) -> GroupSummary {

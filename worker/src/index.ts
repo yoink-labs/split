@@ -1,4 +1,5 @@
 import { groupKind } from './tripPhases';
+import { normalizeName } from './names';
 import { knownPerson, knownAccount } from './relationships';
 import { legacyPayment, paymentMethods, saveAccountPayments } from './paymentProfiles';
 import { preserveStatementAmount } from './exchange';
@@ -152,7 +153,7 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
         members:roster.map(({payment,accountPayment,viewerRemoved,removedAt,avatarURL,...m})=>{
           const override=!removedAt && !viewerRemoved ? paymentMethods(payment) : undefined;
           const methods=!removedAt && !viewerRemoved ? override ?? paymentMethods(accountPayment) ?? [] : [];
-          return {...m,payment:legacyPayment(methods),paymentMethods:methods,
+          return {...m,name:normalizeName(m.name),payment:legacyPayment(methods),paymentMethods:methods,
             ...(m.userID===userID && override!==undefined ? {paymentOverride:override} : {}),
             ...(removedAt?{removed:true}:{}),
             ...(avatarURL?{avatarURL}:{})};
@@ -205,7 +206,7 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
       ? env.DB.prepare('INSERT INTO groups(id,name,kind,currency,creator,created_at,description,start_date,end_date) VALUES (?,?,?,?,?,?,?,?,?)').bind(...fields,desc,startDate,endDate)
       : env.DB.prepare('INSERT INTO groups(id,name,kind,currency,creator,created_at) VALUES (?,?,?,?,?,?)').bind(...fields)];
     for (const person of m) {
-      let name=person.name.trim();
+      let name=normalizeName(person.name);
       if (person.userID && person.userID!==userID) {
         const profile=await knownPerson(env.DB,userID,person.userID);
         if (!profile) throw new InputError('Choose a friend or someone from a shared group.');
@@ -416,7 +417,7 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
     await requireActiveMember(env,groupID,userID);
     const b=await body(request);
     if(!validID(b.id)) throw new InputError('Invalid member.');
-    const name=typeof b.name==='string' ? b.name.trim() : '';
+    const name=typeof b.name==='string' ? normalizeName(b.name) : '';
     if (!name || name.length>60) throw new InputError('Enter a name of up to 60 characters.');
     const {email,phone}=contactInfo(b.email,b.phone);
     const target=typeof b.userID==='string' ? await knownPerson(env.DB,userID,b.userID) : null;
@@ -458,7 +459,7 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
     const groupID=inviteMatch[1];await requireActiveMember(env,groupID,userID);const b=await body(request);
     const hasMember=b.memberID!==undefined && b.memberID!==null;
     if (hasMember && !validID(b.memberID)) throw new InputError('Choose an unclaimed member to invite.');
-    const name=typeof b.name==='string' ? b.name.trim() : '';
+    const name=typeof b.name==='string' ? normalizeName(b.name) : '';
     if (b.name!==undefined && (!name || name.length>60 || hasMember))
       throw new InputError('Enter a name of up to 60 characters for a new placeholder, or choose an existing member.');
     const email=b.email===undefined ? undefined : memberEmail(b.email);

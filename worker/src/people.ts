@@ -1,3 +1,4 @@
+import { normalizeName } from './names';
 import { knownAccount } from './relationships';
 import { itemSplit } from './items';
 import { type Entry } from './ledger';
@@ -12,8 +13,8 @@ type ClerkUser = {
 export function verifiedProfile(user: ClerkUser): Profile {
   const primary = user.email_addresses.find(address =>
     address.id === user.primary_email_address_id && address.verification?.status === 'verified');
-  const name = [user.first_name, user.last_name].filter(Boolean).join(' ') || user.username || 'Split member';
-  return {userID: user.id, name: name.slice(0, 60), email: primary?.email_address.trim().toLowerCase() ?? null, username: user.username};
+  const name = normalizeName([user.first_name, user.last_name].join(' ')) || normalizeName(user.username ?? '') || 'Split member';
+  return {userID: user.id, name: name.slice(0, 60).trimEnd(), email: primary?.email_address.trim().toLowerCase() ?? null, username: user.username};
 }
 
 // Keep old seat IDs valid for cached devices and immutable upload receipts.
@@ -56,6 +57,18 @@ export function resolveEntry(entry: Entry, aliases: Map<string,string>): Entry {
 // Evidence is the invitation that authorizes the claim. It is rechecked inside
 // every statement so a revoke that races the claim wins.
 export type ClaimEvidence = 'link' | 'direct' | { actor: string };
+type LinkSummary = {
+  placeholder: { memberID: string; name: string };
+  account: { userID: string; name: string; email: string | null };
+  keptMemberID: string;
+  mergedMemberID: string | null;
+  moved: { expenses: number; splits: number; receipts: number };
+};
+
+export async function claimSeat(db: D1Database, groupID: string, seatID: string, userID: string, tokenHash: string,
+  evidence: { actor: string }): Promise<LinkSummary | null>;
+export async function claimSeat(db: D1Database, groupID: string, seatID: string, userID: string, tokenHash: string,
+  evidence?: 'link' | 'direct'): Promise<boolean>;
 export async function claimSeat(db: D1Database, groupID: string, seatID: string, userID: string, tokenHash: string,
   evidence: ClaimEvidence = 'link') {
   const link = typeof evidence === 'object' ? evidence : null;
@@ -74,15 +87,52 @@ export async function claimSeat(db: D1Database, groupID: string, seatID: string,
     AND EXISTS (SELECT 1 FROM split_profiles p WHERE p.user_id=? AND p.user_id<>? AND ${knownAccount})
     AND NOT EXISTS (SELECT 1 FROM members WHERE group_id=? AND user_id=? AND removed_at IS NOT NULL)`)
     .bind(tokenHash,link.actor,userID,Date.now(),seatID,groupID,groupID,link.actor,userID,link.actor,link.actor,link.actor,link.actor,groupID,userID)] : [];
-  const results = await db.batch([
+  // Report the active expense history associated with the seat at link time.
+  // Receipts stay on those expenses. Existing seat IDs remain valid through aliases.
+  const summary = link ? [db.prepare(`WITH expense_history AS (
+    SELECT e.id,e.payload FROM member_links l JOIN entries e ON e.group_id=l.group_id
+    WHERE l.id=? AND json_extract(e.payload,'$.kind')='expense'
+      AND NOT EXISTS (SELECT 1 FROM deleted_entries WHERE entry_id=e.id)
+  ), split_history AS (
+    SELECT e.id FROM expense_history e, json_each(e.payload,'$.splits') s
+    WHERE json_extract(s.value,'$.memberID')=?
+  ), affected AS (
+    SELECT id FROM split_history
+    UNION
+    SELECT e.id FROM expense_history e WHERE json_extract(e.payload,'$.paidBy')=?
+      OR EXISTS (SELECT 1 FROM json_each(e.payload,'$.payers') p WHERE json_extract(p.value,'$.memberID')=?)
+  )
+  SELECT l.member_name AS placeholderName,p.name AS accountName,p.email,
+    a.canonical_id AS canonicalID,
+    (SELECT count(*) FROM affected) AS expenses,
+    (SELECT count(*) FROM split_history) AS splits,
+    (SELECT count(*) FROM receipts r JOIN affected e ON e.id=r.entry_id) AS receipts
+  FROM member_links l JOIN split_profiles p ON p.user_id=l.recipient
+  LEFT JOIN member_aliases a ON a.member_id=l.member_id WHERE l.id=?`)
+    .bind(tokenHash,seatID,seatID,seatID,tokenHash)] : [];
+  const results = await db.batch<{
+    placeholderName: string; accountName: string; email: string | null; canonicalID: string | null;
+    expenses: number; splits: number; receipts: number;
+  }>([
     ...audit,
     db.prepare(`INSERT INTO member_aliases(member_id, canonical_id)
       SELECT target.id, existing.id FROM members target JOIN members existing ON existing.group_id=target.group_id
       WHERE target.id=? AND target.group_id=? AND target.user_id IS NULL AND target.removed_at IS NULL AND existing.user_id=? AND ${invite}
       ON CONFLICT(member_id) DO NOTHING`).bind(seatID, groupID, userID, ...inviteArgs),
     db.prepare(`UPDATE members SET user_id=? WHERE ${eligible} AND ${invite}`).bind(userID, seatID, groupID, ...inviteArgs),
+    ...summary,
   ]);
-  if (link) return Boolean(results[0].meta.changes);
+  if (link) {
+    const row = results.at(-1)?.results[0];
+    if (!row) return null;
+    return {
+      placeholder: { memberID: seatID, name: normalizeName(row.placeholderName) },
+      account: { userID, name: normalizeName(row.accountName), email: row.email },
+      keptMemberID: row.canonicalID ?? seatID,
+      mergedMemberID: row.canonicalID ? seatID : null,
+      moved: { expenses: row.expenses, splits: row.splits, receipts: row.receipts },
+    };
+  }
   return Boolean(await db.prepare(`SELECT m.id FROM members m LEFT JOIN member_aliases a ON a.member_id=m.id
     JOIN members owner ON owner.id=COALESCE(a.canonical_id,m.id)
     WHERE m.id=? AND m.group_id=? AND owner.user_id=? AND ${invite}`).bind(seatID,groupID,userID,...inviteArgs).first());
@@ -91,7 +141,7 @@ export async function claimSeat(db: D1Database, groupID: string, seatID: string,
 export async function saveProfile(db: D1Database, profile: Profile) {
   await db.prepare(`INSERT INTO split_profiles VALUES (?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET
     name=excluded.name, username=excluded.username, email=excluded.email, refreshed_at=excluded.refreshed_at`)
-    .bind(profile.userID, profile.name, profile.username, profile.email, Date.now()).run();
+    .bind(profile.userID, normalizeName(profile.name), profile.username, profile.email, Date.now()).run();
   if (!profile.email) return;
   // Claim one seat per new group first. Remaining matching seats in those
   // groups (including groups the user already belongs to) become aliases.

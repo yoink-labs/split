@@ -195,12 +195,31 @@ async function leaveGroup(env:Env,groupID:string,seatID:string) {
   return json({ok:true});
 }
 
-async function deleteGroup(env:Env,groupID:string,userID:string) {
-  const result=await env.DB.prepare(`DELETE FROM groups WHERE id=? AND creator=? AND EXISTS (
+export interface DeleteExpectation { name: string; members: { id: string; name: string }[]; expenses: number; settlements: number; receipts: number }
+
+// The HTTP route passes no expectation. The CLI passes what its preview showed, checked in the same statement as the delete.
+export async function deleteGroup(env:Env,groupID:string,userID:string,expected?:DeleteExpectation) {
+  const creator=`id=? AND creator=? AND EXISTS (
     SELECT 1 FROM members WHERE group_id=? AND user_id=? AND removed_at IS NULL
-  )`).bind(groupID,userID,groupID,userID).run();
-  if(!result.meta.changes) throw new HTTPError(403,'Only the active group creator can delete this group.');
-  return json({ok:true});
+  )`;
+  const args:unknown[]=[groupID,userID,groupID,userID];
+  let guard='';
+  if(expected) {
+    const live='SELECT id,payload FROM entries WHERE group_id=? AND id NOT IN (SELECT entry_id FROM deleted_entries)';
+    guard=` AND name=?
+      AND (SELECT json_group_array(json_array(id,name)) FROM (SELECT id,name FROM members WHERE group_id=? AND removed_at IS NULL
+        AND id NOT IN (SELECT member_id FROM member_aliases) ORDER BY rowid))=json(?)
+      AND (SELECT count(*) FROM (${live}) WHERE json_extract(payload,'$.kind')='expense')=?
+      AND (SELECT count(*) FROM (${live}) WHERE json_extract(payload,'$.kind')='settlement')=?
+      AND (SELECT count(*) FROM receipts WHERE entry_id IN (SELECT id FROM (${live})))=?`;
+    args.push(expected.name,groupID,JSON.stringify(expected.members.map(m=>[m.id,m.name])),
+      groupID,expected.expenses,groupID,expected.settlements,groupID,expected.receipts);
+  }
+  const result=await env.DB.prepare(`DELETE FROM groups WHERE ${creator}${guard}`).bind(...args).run();
+  if(result.meta.changes) return json({ok:true});
+  if(guard && await env.DB.prepare(`SELECT 1 FROM groups WHERE ${creator}`).bind(groupID,userID,groupID,userID).first())
+    throw new HTTPError(409,'This group changed since you reviewed it. Review a fresh preview before deleting.');
+  throw new HTTPError(403,'Only the active group creator can delete this group.');
 }
 
 export async function socialRoute(request:Request,env:Env,userID:string):Promise<Response|undefined> {

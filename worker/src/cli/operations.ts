@@ -1,7 +1,8 @@
 import {settlementEntry} from '../exchange';
 import { breakdown, grossItems, itemSplit, type Bill } from '../items';
 import { exportGroup } from './export';
-import { importGroupID, parseSplitwise } from '../splitwiseCsv';
+import { deleteGroup } from '../social';
+import { importGroupID, parseSplitwise, type SplitwiseGroup } from '../splitwiseCsv';
 import { tools } from '../../../cli/lib/catalog.mjs';
 import { CfWorkerJsonSchemaValidator } from '@modelcontextprotocol/sdk/validation/cfworker';
 import type { JsonSchemaType } from '@modelcontextprotocol/sdk/validation/types';
@@ -21,10 +22,11 @@ interface Args {
   csv?: string; file?: string; me?: string; mapping?: Record<string,string>;
   photos?: string[];
   from: string; to: string; category?:string; item:string; photo:string; action?:string; mode?: 'equal'|'exact'|'percent'|'shares'|'archive'|'restore'|'delete'; participants?: string[]; values?: string[];
-  yes?: boolean; revision?: string;
+  yes?: boolean; revision?: string; preview?: boolean; settlement?: string; state?: 'handled'|'unhandled'; reset?: boolean;
+  methods?: { platform: string; handle: string; preferred?: boolean }[]; paypal?: string; venmo?: string; mercado?: string; alias?: string;
 }
 interface Member { id: string; userID: string|null; name: string; removed?: boolean }
-interface Group { defaultWeights?:Record<string,number>; id: string; name: string; currency: string; members: Member[] }
+interface Group { defaultWeights?:Record<string,number>; id: string; name: string; currency: string; members: Member[]; canDelete?: boolean }
 export type LedgerHandler = (r: Request, env: Env, user: string) => Promise<Response>;
 const provider = new CfWorkerJsonSchemaValidator();
 const validators = new Map(tools.map(tool => [tool.name, provider.getValidator<Args>(tool.inputSchema as JsonSchemaType)]));
@@ -42,6 +44,11 @@ function shareMap(ids: string[], shares?: number[]) {
 }
 const multipliers = (shares?: Record<string,number>) => shares ? Object.fromEntries(Object.entries(shares).map(([id, w]) => [id, w / 100])) : undefined;
 const clearable = (v?: string) => v === undefined ? undefined : v === 'none' ? null : v;
+async function fingerprint(value: unknown) {
+  const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(value)));
+  return Array.from(new Uint8Array(bytes), b => b.toString(16).padStart(2,'0')).join('');
+}
+const nameKey = (s: string) => s.trim().toLowerCase();
 const timestamp = () => new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
 function minor(value: string) {
   const [whole, fraction = ''] = value.split('.');
@@ -122,6 +129,48 @@ export async function operate(name: string, input: unknown, env: Env, user: stri
     });
     return (await handle(req, env, user)).json<T>();
   }
+  async function importPlan(a: Args, parsed: SplitwiseGroup, people: { name: string; me?: boolean; memberID?: string }[],
+    currencies: Record<string, number>, currency: string) {
+    const days = parsed.rows.map(r => r.day).sort();
+    const base = {
+      preview: true, group: parsed.name, members: parsed.members, rows: parsed.rows.length, skipped: parsed.skipped,
+      expenses: parsed.rows.filter(r => !r.payment).length, payments: parsed.rows.filter(r => r.payment).length,
+      currencies, dates: days.length ? { from: days[0], to: days[days.length - 1] } : undefined
+    };
+    let target: { id: string; name: string; currency: string; members: Member[] } | undefined;
+    if (a.group) {
+      const snap = await ledger<{ groups: Group[] }>('/v1/snapshot');
+      target = snap.groups.find(g => g.id === a.group);
+      if (!target) throw new HTTPError(404, 'Group not found.');
+    }
+    const roster = target?.members ?? [];
+    const mine = roster.find(m => m.userID === user);
+    for (const p of people) if (p.memberID && !roster.some(m => m.id === p.memberID))
+      throw new InputError(target ? 'Map ' + p.name + ' to a member ID from members list for ' + target.name + '.' : 'Mapping needs an existing group. Add group, or omit mapping to create placeholders.');
+    if (!a.me) return { ...base, target: target ? { id: target.id, name: target.name } : 'new group',
+      next: 'Tell Split which name is you: run this again with me set to one of ' + parsed.members.join(', ') + '.' };
+    // Suggestions are exact, unique name matches against members nobody else maps to. They are never applied for you.
+    const taken = new Set(people.flatMap(p => p.memberID ? [p.memberID] : []));
+    const suggestions: Record<string, string> = {}, ambiguous: Record<string, string[]> = {};
+    for (const p of people) {
+      if (p.me || p.memberID || !target) continue;
+      const matches = roster.filter(m => !m.removed && m.id !== mine?.id && !taken.has(m.id) && nameKey(m.name) === nameKey(p.name));
+      if (matches.length === 1) suggestions[p.name] = matches[0].id;
+      else if (matches.length > 1) ambiguous[p.name] = matches.map(m => m.id);
+    }
+    const nameOf = (id: string) => roster.find(m => m.id === id)?.name ?? id;
+    const plan = people.map(p => p.me ? { name: p.name, becomes: target ? 'you (' + (mine?.name ?? 'your seat') + ')' : 'you' }
+      : p.memberID ? { name: p.name, becomes: 'existing member ' + nameOf(p.memberID), memberID: p.memberID }
+      : { name: p.name, becomes: 'new placeholder' + (suggestions[p.name] ? ' (possible match: ' + nameOf(suggestions[p.name]) + ')' : ambiguous[p.name] ? ' (several members share this name)' : '') });
+    const mismatch = target && Object.keys(currencies).some(c => c !== target!.currency);
+    return { ...base, target: target ? { id: target.id, name: target.name } : { name: (a.name ?? parsed.name).slice(0, 80), kind: a.kind ?? 'trip', currency },
+      people: plan,
+      ...(Object.keys(suggestions).length ? { suggestedMapping: { ...a.mapping, ...suggestions } } : {}),
+      ...(Object.keys(ambiguous).length ? { ambiguous } : {}),
+      ...(mismatch ? { note: 'Some entries are not in ' + target!.currency + '. They keep their own currency.' } : {}),
+      next: 'Nothing is saved yet. To import, run the same request without preview.' +
+        (Object.keys(suggestions).length ? ' To link possible matches instead of creating placeholders, pass suggestedMapping as mapping.' : '') };
+  }
   if (name === 'groups_create') {
     const groupID = crypto.randomUUID();
     const members = [a.self, ...(a.placeholders ?? [])].map((label,i) => ({
@@ -146,13 +195,15 @@ export async function operate(name: string, input: unknown, env: Env, user: stri
     let parsed;
     try { parsed = await parseSplitwise(a.csv!, a.file ?? 'splitwise.csv'); } catch (e) { throw new InputError(e instanceof Error ? e.message : 'Could not read this Splitwise file.'); }
     const names = parsed.members;
-    if (!a.me && !a.group) return { preview: true, group: parsed.name, members: names, rows: parsed.rows.length, skipped: parsed.skipped, next: 'Run again with me set to your name in this file.' };
     if (a.me && !names.includes(a.me)) throw new InputError('Choose your name from: ' + names.join(', ') + '.');
     for (const n of Object.keys(a.mapping ?? {})) if (!names.includes(n)) throw new InputError(n + ' is not in this file.');
+    // The plan and the import share this list, so the preview shows exactly what will be saved.
     const people = names.map(n => n === a.me ? { name: n, me: true } : a.mapping?.[n] ? { name: n, memberID: a.mapping[n] } : { name: n });
     const counts = new Map<string, number>();
     for (const r of parsed.rows) counts.set(r.currency, (counts.get(r.currency) ?? 0) + 1);
     const currency = [...counts].sort((x, y) => y[1] - x[1])[0]?.[0] ?? 'USD';
+    // Released clients import as soon as they name themselves or a group; keep that, and plan on request.
+    if (a.preview || (!a.me && !a.group)) return importPlan(a, parsed, people, Object.fromEntries(counts), currency);
     const body = a.group ? { groupID: a.group, people, rows: parsed.rows }
       : { group: { id: await importGroupID(parsed.fingerprint, user), name: (a.name ?? parsed.name).slice(0, 80), kind: a.kind ?? 'trip', currency }, people, rows: parsed.rows };
     return ledger('/v1/import/splitwise', body);
@@ -162,8 +213,13 @@ export async function operate(name: string, input: unknown, env: Env, user: stri
     return (await env.DB.prepare(`SELECT g.id,g.name,g.kind,g.currency,g.created_at AS createdAt FROM groups g
       JOIN members m ON g.id=m.group_id WHERE m.user_id=? ORDER BY g.created_at DESC`).bind(user).all()).results;
   }
-  const snapshot = await ledger<{groups: Group[]; entries: (Entry & {editable: boolean})[]}>('/v1/snapshot');
+  const snapshot = await ledger<{groups: Group[]; entries: (Entry & {editable: boolean})[]; settlementRequests?: Entry[]; paymentMethods?: unknown[]}>('/v1/snapshot');
   if (name === 'activity' && !a.group) return snapshot.entries;
+  if (name === 'profile_payment') {
+    if (a.methods === undefined) return { methods: snapshot.paymentMethods ?? [] };
+    await ledger('/v1/profile/payment-methods', { methods: a.methods });
+    return { methods: a.methods };
+  }
   const group = snapshot.groups.find(g => g.id === a.group);
   if (!group) throw new HTTPError(404, 'Group not found.');
   const { members } = group;
@@ -171,13 +227,63 @@ export async function operate(name: string, input: unknown, env: Env, user: stri
     if(a.weights.length!==a.participants?.length) throw new InputError('Supply one weight per member.');
     return ledger('/v1/groups/'+group.id+'/default-split',{weights:Object.fromEntries(a.participants.map((id,i)=>[id,a.weights[i]]))});
   }
-  if(name==='members_payment') return ledger('/v1/groups/'+group.id+'/payment-profile',a);
+  if(name==='members_payment') {
+    if(a.reset && (a.methods || a.paypal || a.venmo || a.mercado || a.alias)) throw new InputError('Use reset on its own to go back to your account payment methods.');
+    return ledger('/v1/groups/'+group.id+'/payment-profile',a.reset ? {methods:null} : a);
+  }
+  if(name==='groups_rate') {
+    let rateE8: number|null = null;
+    if(a.rate!=='none') {
+      const [whole, fraction=''] = a.rate!.split('.');
+      rateE8 = Number(whole)*1e8 + Number(fraction.padEnd(8,'0'));
+    }
+    await ledger('/v1/groups/'+group.id+'/trip-rate',{currency:a.currency,target:group.currency,rateE8});
+    return { group: group.id, currency: a.currency, target: group.currency, rate: rateE8 === null ? null : a.rate };
+  }
+  if(name==='expenses_handled') {
+    const e = snapshot.entries.find(x => x.groupID === group.id && x.id === a.expense);
+    if(!e) throw new HTTPError(404,'Expense not found.');
+    const handled = a.state !== 'unhandled';
+    await ledger('/v1/entries/'+e.id+'/handled',{handled});
+    return { id: e.id, handled };
+  }
   if(name==='expenses_repeat') return ledger('/v1/groups/'+group.id+'/repeat',{entryID:a.expense,cadence:a.cadence});
   if (name === 'groups_show') return group;
   if (name === 'groups_update') return ledger('/v1/groups/'+group.id+'/update', {
     name: a.name, description: clearable(a.description), startDate: clearable(a.start), endDate: clearable(a.end),
     simplify: a.simplify === undefined ? undefined : a.simplify === 'on', currency: a.currency });
   if (name === 'groups_archive') return ledger('/v1/groups/'+group.id+'/archive', { archived: a.action !== 'restore' });
+  if (name === 'groups_delete') {
+    // Preview and confirm with the same creator rule the delete route enforces.
+    if (!group.canDelete) throw new HTTPError(403, 'Only the active group creator can delete this group.');
+    const history = snapshot.entries.filter(e => e.groupID === group.id)
+      .map(e => { const { likeCount, likedByMe, commentCount, ...rest } = e as Entry & { editable: boolean; likeCount?: number; likedByMe?: boolean; commentCount?: number }; return rest; });
+    const revision = await fingerprint(['groups_delete', group, history]);
+    const preview = { preview: true, action: 'Delete ' + group.name + ' and its history for every member. This cannot be undone.',
+      group: group.id, name: group.name, members: members.filter(m => !m.removed).map(m => m.name),
+      expenses: history.filter(e => e.kind === 'expense').length, settlements: history.filter(e => e.kind === 'settlement').length,
+      receipts: history.reduce((n, e) => n + (e.receiptIDs?.length ?? 0), 0), revision,
+      next: 'Export the group first if you want a copy. Confirm with yes and this revision.' };
+    if (!a.yes) return preview;
+    if (a.revision !== revision) throw new HTTPError(409, 'This group changed or the preview is missing. Review a fresh preview before deleting.');
+    await deleteGroup(env, group.id, user, { name: group.name, members: members.filter(m => !m.removed).map(m => ({ id: m.id, name: m.name })),
+      expenses: preview.expenses, settlements: preview.settlements, receipts: preview.receipts });
+    return { deleted: true, id: group.id, name: group.name };
+  }
+  if (name === 'settlements_pending' || name === 'settlements_respond') {
+    const seat = members.find(m => m.userID === user)?.id;
+    const nameOf = (id: string) => members.find(m => m.id === id)?.name ?? id;
+    const pending = (snapshot.settlementRequests ?? []).filter(e => e.groupID === group.id).map(e => ({
+      id: e.id, amount: e.amount, currency: e.currency, createdAt: e.createdAt,
+      from: { id: e.paidBy, name: nameOf(e.paidBy) }, to: { id: e.splits[0]?.memberID, name: nameOf(e.splits[0]?.memberID) },
+      youAre: e.paidBy === seat ? 'payer' : 'recipient', canDo: e.paidBy === seat ? ['cancel'] : ['approve', 'decline']
+    }));
+    if (name === 'settlements_pending') return pending;
+    const request = pending.find(p => p.id === a.settlement);
+    if (!request) throw new HTTPError(404, 'Pending payment not found. Run settlements pending.');
+    if (!request.canDo.includes(a.action!)) throw new InputError(request.youAre === 'payer' ? 'You made this payment. You can cancel it.' : 'Approve or decline this payment.');
+    return ledger('/v1/settlements/' + request.id + '/' + a.action, {});
+  }
   if (name === 'groups_leave') {
     if (!a.yes) return { preview: true, action: 'Leave ' + group.name, deletesGroup: members.filter(m => m.userID).length <= 1 };
     return ledger('/v1/groups/'+group.id+'/leave', {});

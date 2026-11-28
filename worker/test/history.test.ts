@@ -102,7 +102,7 @@ it('audits group type changes and trip phase overrides with their actor and opti
   await call('/v1/entries', entry);
 
   const changePhase = async (phase: string, reason?: string) => {
-    const args = { group: groupID, expense: entry.id, phase, reason };
+    const args = { group: groupID, expense: entry.id, phase, ...(reason === undefined ? {} : { reason }) };
     const preview = await operate('expenses_edit', args, env, actor, handle) as { revision: string };
     await operate('expenses_edit', { ...args, yes: true, revision: preview.revision }, env, actor, handle);
   };

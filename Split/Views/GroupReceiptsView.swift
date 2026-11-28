@@ -42,16 +42,18 @@ struct GroupReceiptsView: View {
                     }
                 }
             } else {
-                TextField("Find a receipt", text: $query)
-                    .padding(.leading, 34)
-                    .padding(.trailing, 12)
-                    .overlay(alignment: .leading) {
-                        Image(systemName: "magnifyingglass").foregroundStyle(.secondary).padding(.leading, 12).accessibilityHidden(true)
-                    }
-                    .frame(minHeight: HitTarget.minimum)
-                    .background(Palette.card, in: RoundedRectangle(cornerRadius: Radius.badge))
-                    .overlay(RoundedRectangle(cornerRadius: Radius.badge).strokeBorder(Palette.line))
-                    .accessibilityLabel("Find a receipt")
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundStyle(.secondary)
+                        .accessibilityHidden(true)
+                    TextField("Find a receipt", text: $query)
+                        .accessibilityLabel("Find a receipt")
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 4)
+                .frame(minHeight: HitTarget.minimum)
+                .background(Palette.card, in: RoundedRectangle(cornerRadius: Radius.badge))
+                .overlay(RoundedRectangle(cornerRadius: Radius.badge).strokeBorder(Palette.line))
 
                 let matchingDrafts = drafts.filter { matches($0.title) }
                 let matchingReceipts = receipts.filter { matches($0.title) }

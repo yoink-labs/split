@@ -9,6 +9,7 @@ struct GroupReceiptsView: View {
 
     @EnvironmentObject private var store: ExpenseStore
     @EnvironmentObject private var fx: FXStore
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @EnvironmentObject private var session: SessionStore
     @State private var editingPeople: LedgerEntry?
     @State private var reopening: String?
@@ -122,13 +123,7 @@ struct GroupReceiptsView: View {
                 ForEach(items) { entry in
                     VStack(alignment: .leading, spacing: 4) {
                         Button { openExpense(entry) } label: {
-                            LedgerRow(title: entry.title, detail: receiptDetail(entry),
-                                      value: fx.entryText(entry, amount: entry.amount)) {
-                                Image(systemName: entry.openPurchaseCount > 0 ? "circle.dashed" : "receipt")
-                                    .foregroundStyle(entry.openPurchaseCount > 0 ? Palette.amber : Palette.evergreen)
-                                    .frame(width: 34)
-                                    .accessibilityHidden(true)
-                            }
+                            receiptRow(entry)
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
@@ -154,14 +149,51 @@ struct GroupReceiptsView: View {
         }
     }
 
-    private var canManage: Bool {
-        store.isDemo || group.members.contains { $0.userID != nil && $0.userID == session.userID && $0.removed != true }
+    private func receiptRow(_ entry: LedgerEntry) -> some View {
+        let amountLayout = dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
+            : AnyLayout(HStackLayout(alignment: .firstTextBaseline, spacing: 8))
+        return HStack(alignment: .top, spacing: 10) {
+            Image(systemName: entry.openPurchaseCount > 0 ? "circle.dashed" : "receipt")
+                .foregroundStyle(entry.openPurchaseCount > 0 ? Palette.amber : Palette.evergreen)
+                .frame(width: 26)
+                .padding(.top, 3)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 4) {
+                amountLayout {
+                    Text(entry.title)
+                        .font(.body.weight(.semibold))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Text(fx.entryText(entry, amount: entry.amount))
+                        .font(.splitAmount(16))
+                        .fixedSize(horizontal: true, vertical: false)
+                }
+                if entry.openPurchaseCount > 0 {
+                    Text("\(entry.openPurchaseCount) unassigned")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Palette.amber)
+                }
+                Text(entry.splits.compactMap { split in
+                    group.members.first { $0.id == split.memberID }?.name
+                }.joined(separator: ", "))
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+            Image(systemName: "chevron.right")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.tertiary)
+                .padding(.top, 4)
+                .accessibilityHidden(true)
+        }
+        .foregroundStyle(Palette.ink)
+        .padding(.vertical, 4)
+        .frame(minHeight: HitTarget.minimum)
+        .accessibilityElement(children: .combine)
     }
 
-    private func receiptDetail(_ entry: LedgerEntry) -> String {
-        let people = entry.splits.compactMap { split in group.members.first { $0.id == split.memberID }?.name }
-        let status = entry.openPurchaseCount > 0 ? "\(entry.openPurchaseCount) unassigned" : nil
-        return ([status].compactMap { $0 } + people).joined(separator: ", ")
+    private var canManage: Bool {
+        store.isDemo || group.members.contains { $0.userID != nil && $0.userID == session.userID && $0.removed != true }
     }
 
     private func reopen(_ entry: LedgerEntry) async {

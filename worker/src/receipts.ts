@@ -10,6 +10,7 @@ export function attachments(db:D1Database,entry:Entry,user:string,payload:string
     if(!photo || !validID(photo.id) || typeof photo.data!=='string' || photo.data.length>327680) throw new InputError('Choose a JPEG up to 240 KiB.');
     let binary:string;
     try {binary=atob(photo.data);} catch {throw new InputError('Invalid receipt image.');}
+    if(binary.startsWith('%PDF-')) throw new InputError('PDF receipts are unsupported. Convert the PDF to a JPEG and try again.');
     const bytes=Uint8Array.from(binary,c=>c.charCodeAt(0));
     if(bytes.length<4 || bytes[0]!==255 || bytes[1]!==216 || bytes[2]!==255 || bytes.at(-2)!==255 || bytes.at(-1)!==217) throw new InputError('Choose a JPEG receipt.');
     return db.prepare(`INSERT INTO receipts(entry_id,id,image) SELECT id,?,? FROM entries

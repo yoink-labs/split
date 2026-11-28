@@ -12,7 +12,7 @@ import { financeRoute } from './finance';
 import { createRemoteJWKSet, jwtVerify } from 'jose';
 import { currencies, entryPayers, InputError, validID, validateEntry } from './ledger';
 import { importSplitwise } from './splitwiseImport';
-import { pendingSettlements, proposeSettlement, respondToSettlement } from './settlements';
+import { pendingSettlements, recordSettlement, respondToSettlement } from './settlements';
 const jwks = createRemoteJWKSet(new URL('https://clerk.yoinklabs.dev/.well-known/jwks.json'));
 interface Member {id:string; groupID:string; userID:string|null; name:string; email?:string; phone?:string; payment?:string; accountPayment?:string; viewerRemoved?:string|null; removedAt?:string|null; avatarURL?:string|null}
 export function validParty(azp: unknown, webOrigin: string) {
@@ -183,7 +183,7 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
     if(e.exchange && e.exchange.target!==await env.DB.prepare('SELECT currency FROM groups WHERE id=?').bind(e.groupID).first('currency')) throw new InputError('Use the group settlement currency.');
     if(e.kind==='settlement') {
       if(b.photos!==undefined) throw new InputError('Attach receipt photos to an expense.');
-      return proposeSettlement(env.DB,e,userID);
+      return recordSettlement(env.DB,e,userID);
     }
     // Reserve pending payment IDs so approval can never collide with an expense.
     await env.DB.batch([env.DB.prepare('INSERT INTO entries SELECT ?,?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM settlement_requests WHERE id=?) ON CONFLICT(id) DO NOTHING').bind(e.id,e.groupID,userID,payload,new Date().toISOString(),e.id), ...attachments(env.DB,e,userID,payload,b.photos)]);

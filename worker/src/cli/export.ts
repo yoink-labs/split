@@ -47,7 +47,7 @@ export function exportGroup(group: Group, entries: Entry[], format: 'ledger'|'su
       se.splits.map(p => nameOf(p.memberID) + ' ' + decimal(p.amount)).join('; '),
       e.bill ? grossItems(e.bill).map(i => i.title + ' ' + decimal(i.gross) + ' [' + (i.memberIDs.map(nameOf).join('+') || 'open') + ']').join('; ') : '',
       e.handled ? 'Handled' : '',
-      ...group.members.map(m => e.handled ? 0 : payers.filter(p => p.memberID === m.id).reduce((s, p) => s + p.amount, 0) - (se.splits.find(p => p.memberID === m.id)?.amount ?? 0))];
+      ...group.members.map(m => payers.filter(p => p.memberID === m.id).reduce((s, p) => s + p.amount, 0) - (se.splits.find(p => p.memberID === m.id)?.amount ?? 0))];
   });
   return { filename: slug + '.csv', mimeType: 'text/csv', content: table([header, ...rows]) };
 }

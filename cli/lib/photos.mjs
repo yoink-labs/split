@@ -1,7 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { extname, join } from 'node:path';
 
 const PHOTO_LIMIT = 240 * 1024;
 const isJPEG = b => b.length > 4 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff && b.at(-2) === 0xff && b.at(-1) === 0xd9;
@@ -9,6 +9,9 @@ const isJPEG = b => b.length > 4 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0
 export async function photoData(path) {
   path = expand(path);
   const original = await readFile(path);
+  if (extname(path).toLowerCase() === '.pdf' || original.subarray(0, 5).toString() === '%PDF-') {
+    throw new Error('PDF receipts are unsupported. Convert the PDF to a JPEG and try again.');
+  }
   if (isJPEG(original) && original.length <= PHOTO_LIMIT) return original.toString('base64');
   if (process.platform !== 'darwin') throw new Error(path + ' must be a JPEG up to 240 KiB.');
   const dir = await mkdtemp(join(tmpdir(), 'split-photo-'));
@@ -31,7 +34,7 @@ export async function resolvePhotos(photos) {
   if (!Array.isArray(photos)) return photos;
   return Promise.all(photos.map(async value => {
     if (typeof value !== 'string' || value.length > 4096) return value;
-    try { if ((await stat(expand(value))).isFile()) return await photoData(value); } catch {}
-    return value;
+    const info = await stat(expand(value)).catch(() => null);
+    return info?.isFile() ? photoData(value) : value;
   }));
 }

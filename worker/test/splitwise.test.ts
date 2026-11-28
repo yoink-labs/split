@@ -168,12 +168,12 @@ describe('Splitwise import route', () => {
     const groupID = 'existing-fx-group';
     await call('/v1/groups', { id: groupID, name: 'Trip', kind: 'trip', currency: 'EUR', members: [{ id: 'seat-harris', userID: user, name: 'Harris' }] });
     const { g } = await request(trip.replaceAll('2026-', '2024-'), 'trip.csv', tripPeople);
-    const row = { ...g.rows[0], exchange: { target: 'USD', rateE8: 125_000, date: '2024-11-11', source: 'BCRA' } };
+    const row = { ...g.rows[0], day: '2026-11-21', exchange: { target: 'USD', rateE8: 125_000, date: '2026-11-20', source: 'BCRA' } };
     await call('/v1/import/splitwise', { groupID, settlementCurrency: 'USD', people: tripPeople, rows: [row] });
     const snap = await snapshot();
     expect(snap.groups[0].currency).toBe('EUR');
     const entry = snap.entries[0];
-    expect(entry.exchange).toEqual(row.exchange);
+    expect(entry).toMatchObject({ createdAt: '2026-11-21T12:00:00Z', exchange: row.exchange });
     await call(`/v1/entries/${entry.id}/edit`, { entry: { ...entry, title: 'Airport taxi' }, original: entry });
     expect((await snapshot()).entries[0]).toMatchObject({ title: 'Airport taxi', exchange: row.exchange });
   });

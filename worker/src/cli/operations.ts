@@ -1,4 +1,5 @@
 import {settlementEntry} from '../exchange';
+import {rateE8 as parseRate} from '../fx';
 import { breakdown, grossItems, itemSplit, type Bill } from '../items';
 import { exportGroup } from './export';
 import { deleteGroup } from '../social';
@@ -7,7 +8,7 @@ import { tools } from '../../../cli/lib/catalog.mjs';
 import { CfWorkerJsonSchemaValidator } from '@modelcontextprotocol/sdk/validation/cfworker';
 import type { JsonSchemaType } from '@modelcontextprotocol/sdk/validation/types';
 import { HTTPError, optionalDay } from '../http';
-import { allocate, balances, Entry, InputError, simplify, validateEntry } from '../ledger';
+import { allocate, balances, Entry, entryPayers, InputError, simplify, validateEntry } from '../ledger';
 
 interface Args {
   cadence:string; weights:number[];rate?:string; group: string; expense: string; member: string; name: string; self: string; placeholders?: string[];
@@ -26,7 +27,7 @@ interface Args {
   methods?: { platform: string; handle: string; preferred?: boolean }[]; paypal?: string; venmo?: string; mercado?: string; alias?: string;
 }
 interface Member { id: string; userID: string|null; name: string; removed?: boolean }
-interface Group { defaultWeights?:Record<string,number>; id: string; name: string; currency: string; members: Member[]; canDelete?: boolean }
+interface Group { defaultWeights?:Record<string,number>; tripRates?:Record<string,number>; id: string; name: string; currency: string; members: Member[]; canDelete?: boolean }
 export type LedgerHandler = (r: Request, env: Env, user: string) => Promise<Response>;
 const provider = new CfWorkerJsonSchemaValidator();
 const validators = new Map(tools.map(tool => [tool.name, provider.getValidator<Args>(tool.inputSchema as JsonSchemaType)]));
@@ -102,8 +103,11 @@ function makeExpense(a: Args, group: Group, old?: Entry): Entry {
   }
   const date = optionalDay(a.date, 'expense date');
   const createdAt = old?.createdAt ?? (date ? date + 'T12:00:00Z' : timestamp());
+  const currency = a.currency ?? old?.currency ?? group.currency;
   if(old?.exchange && a.currency && a.currency!==old.currency && !a.rate) throw new InputError('Supply a new rate when changing a converted currency.');
-  const exchange=a.rate ? {target:group.currency,rateE8:Math.round(Number(a.rate)*1e8),source:'Manual' as const,date:createdAt.slice(0,10)} : old?.exchange;
+  const rate = a.rate ? parseRate(a.rate) : !old && currency !== group.currency ? group.tripRates?.[currency] : undefined;
+  if (a.rate && !rate) throw new InputError('Enter a positive exchange rate.');
+  const exchange = rate ? {target:group.currency,rateE8:rate,source:a.rate ? 'Manual' as const : 'Trip' as const,date:createdAt.slice(0,10)} : old?.exchange;
   let payers=old?.payers?.length ? (amount===old.amount ? old.payers
     : allocate(amount,old.payers.map(p=>p.amount)).map((value,i)=>({memberID:old.payers![i].memberID,amount:value}))) : undefined;
   if (a.payers) {
@@ -112,7 +116,7 @@ function makeExpense(a: Args, group: Group, old?: Entry): Entry {
     if (payers.length === 1) payers = undefined;
   }
   return validateEntry({ id: old?.id ?? crypto.randomUUID(), groupID: group.id, title: a.title ?? old?.title,
-    amount, currency: a.currency ?? old?.currency ?? group.currency, paidBy: a.payers && !a.payer ? a.payers[0].member : payer,
+    amount, currency, paidBy: a.payers && !a.payer ? a.payers[0].member : payer,
     exchange, bill, category:a.category??old?.category, splits, kind: 'expense', splitMode: mode, createdAt,
     payers, notes: a.notes ?? old?.notes, handled: old?.handled }, ids,old?.bill);
 }
@@ -214,15 +218,26 @@ export async function operate(name: string, input: unknown, env: Env, user: stri
       JOIN members m ON g.id=m.group_id WHERE m.user_id=? ORDER BY g.created_at DESC`).bind(user).all()).results;
   }
   const snapshot = await ledger<{groups: Group[]; entries: (Entry & {editable: boolean})[]; settlementRequests?: Entry[]; paymentMethods?: unknown[]}>('/v1/snapshot');
-  if (name === 'activity' && !a.group) return snapshot.entries;
   if (name === 'profile_payment') {
     if (a.methods === undefined) return { methods: snapshot.paymentMethods ?? [] };
     await ledger('/v1/profile/payment-methods', { methods: a.methods });
     return { methods: a.methods };
   }
+  if (name === 'activity') {
+    if (a.group && !snapshot.groups.some(g => g.id === a.group)) throw new HTTPError(404, 'Group not found.');
+    const pending = (snapshot.settlementRequests ?? []).map(e => ({...e, status:'pending'}));
+    return [...snapshot.entries, ...pending].filter(e => !a.group || e.groupID === a.group)
+      .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+  }
   const group = snapshot.groups.find(g => g.id === a.group);
   if (!group) throw new HTTPError(404, 'Group not found.');
   const { members } = group;
+  const nameOf = (id: string) => members.find(m => m.id === id)?.name ?? id;
+  const expenseDetails = (entry: Entry) => ({
+    date: new Date(entry.createdAt).toISOString().slice(0,10),
+    payerNames: entryPayers(entry).map(p => ({...p, name: nameOf(p.memberID)})),
+    ...(entry.exchange ? { settlementAmount: settlementEntry(entry).amount } : {})
+  });
   if(name==='groups_default_split') {
     if(a.weights.length!==a.participants?.length) throw new InputError('Supply one weight per member.');
     return ledger('/v1/groups/'+group.id+'/default-split',{weights:Object.fromEntries(a.participants.map((id,i)=>[id,a.weights[i]]))});
@@ -272,7 +287,6 @@ export async function operate(name: string, input: unknown, env: Env, user: stri
   }
   if (name === 'settlements_pending' || name === 'settlements_respond') {
     const seat = members.find(m => m.userID === user)?.id;
-    const nameOf = (id: string) => members.find(m => m.id === id)?.name ?? id;
     const pending = (snapshot.settlementRequests ?? []).filter(e => e.groupID === group.id).map(e => ({
       id: e.id, amount: e.amount, currency: e.currency, createdAt: e.createdAt,
       from: { id: e.paidBy, name: nameOf(e.paidBy) }, to: { id: e.splits[0]?.memberID, name: nameOf(e.splits[0]?.memberID) },
@@ -309,7 +323,11 @@ export async function operate(name: string, input: unknown, env: Env, user: stri
       : undefined;
     const result = await ledger<{status?: string}>(name === 'settle_up' ? '/v1/settlements' : '/v1/entries', photos ? { ...entry, photos } : entry);
     if (name === 'settle_up') return { ...entry, status: result.status };
-    return photos ? { ...entry, receiptIDs: photos.map(p => p.id) } : entry;
+    const warning = !entry.exchange && entry.currency !== group.currency
+      ? `Saved in ${entry.currency} with a separate balance. Use --rate to convert to ${group.currency}.`
+      : undefined;
+    return { ...entry, exchange: entry.exchange ?? null, ...expenseDetails(entry), warning,
+      ...(photos ? { receiptIDs: photos.map(p => p.id) } : {}) };
   }
   if (name === 'expenses_edit' || name === 'expenses_delete') {
     const before = snapshot.entries.find(e => e.groupID === group.id && e.id === a.expense && e.editable);
@@ -331,12 +349,16 @@ export async function operate(name: string, input: unknown, env: Env, user: stri
     return exportGroup(group, entries, a.format ?? 'ledger', comments);
   }
   if (['expenses_show','expenses_like','comments_list','comments_add','comments_delete','receipts_add'].includes(name)) {
-    const e = entries.find(e => e.id === a.expense);
+    let e = entries.find(e => e.id === a.expense);
+    if (!e && name === 'expenses_show') {
+      const matches = entries.filter(entry => entry.kind === 'expense' && entry.id.startsWith(a.expense));
+      if (matches.length > 1) throw new InputError('This expense ID prefix matches multiple expenses. Use a longer prefix or the full ID.');
+      [e] = matches;
+    }
     if (!e) throw new HTTPError(404, 'Expense not found.');
     const path = '/v1/entries/' + e.id;
     if (name === 'expenses_show') {
-      const nameOf = (id: string) => members.find(m => m.id === id)?.name ?? id;
-      return { ...e, payerNames: (e.payers?.length ? e.payers : [{ memberID: e.paidBy, amount: e.amount }]).map(p => ({ ...p, name: nameOf(p.memberID) })),
+      return { ...e, ...expenseDetails(e),
         splitNames: e.splits.map(p => ({ ...p, name: nameOf(p.memberID) })),
         items: e.bill ? grossItems(e.bill).map(i => ({ id: i.id, title: i.title, gross: i.gross, members: i.memberIDs.map(nameOf), shares: multipliers(i.shares), open: !i.memberIDs.length })) : undefined,
         comments: (await ledger<{comments:unknown[]}>(path + '/comments')).comments };
@@ -392,8 +414,18 @@ export async function operate(name: string, input: unknown, env: Env, user: stri
     const shares=a.action!=='remove' && a.share!==undefined ? {[claimant]:weight(a.share)} : undefined;
     return ledger(path+'/claim',{itemID:item.id,original:item.memberIDs,memberIDs:ids,mergeEdits:true,...(shares?{shares}:{})});
   }
-  if (name === 'expenses_list') return entries.filter(e => e.kind === 'expense');
-  if (name === 'activity') return entries;
+  if (name === 'expenses_list') {
+    const expenses = entries.filter(e => e.kind === 'expense');
+    const prefixes = new Map<string,number>();
+    for (const e of expenses) {
+      const prefix = e.id.slice(0,8);
+      prefixes.set(prefix, (prefixes.get(prefix) ?? 0) + 1);
+    }
+    return expenses.map(e => {
+      const prefix = e.id.slice(0,8);
+      return { ...e, ...expenseDetails(e), shortID: prefixes.get(prefix) === 1 ? prefix : e.id };
+    });
+  }
   if (name === 'balances') return [...new Set([group.currency, ...entries.map(e=>e.exchange?.target??e.currency)])].map(currency => {
     const net = balances(entries,currency);
     return { currency, net, settlements: simplify(net) };

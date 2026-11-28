@@ -21,6 +21,9 @@ is noted next to each release. The CLI is versioned separately with
 - Find people on Split by full email or a 3+ letter name prefix and invite them to a group. Results show names and avatars only. A “Let people find me” setting, on by default, hides you from search.
 - An invitation inbox on web and iOS, with a badge, lets you accept or decline pending invitations. Accepting claims matching placeholder history.
 - Open the new Analytics tab on iOS for the same charts and totals as the web, to the cent: spending over time by day, week or month, by category, by person and by currency. Filter by group, date range and member, and tap any bar or row to list its expenses. On the iPhone Duo inner display and iPad, the charts and the transaction list sit side by side. Activity moves to Home → See all on a phone.
+- Set, edit or clear a trip's fixed exchange rates from group settings on iOS, as on the web.
+- Filter an iOS group ledger to expenses you're involved in or that you owe on, with a count of matching entries.
+- Connected computers on iOS show whether each token is Finance (read-only), a remote MCP token, or CLI and local MCP.
 - Manage group members, claim addresses, and invitations from the Members tab on web and iOS. Email or resend invitations and send sign-in reminders.
 - Open the Transactions tab on web and iOS to see each expense or settlement and its payment split.
 - Customize group PDFs with spending breakdowns by category, month, and person.

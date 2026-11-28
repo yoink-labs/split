@@ -211,7 +211,7 @@ describe('Payment preferences and group deletion', () => {
       env.DB.prepare('INSERT INTO member_contacts(member_id,email) VALUES (?,?)').bind(guest, 'guest@example.com'),
       env.DB.prepare('INSERT INTO members(id,group_id,name) VALUES (?,?,?)').bind('alias-seat', group, 'Alias'),
       env.DB.prepare('INSERT INTO member_aliases VALUES (?,?)').bind('alias-seat', guest),
-      env.DB.prepare('INSERT INTO invites VALUES (?,?,?,?)').bind('member-token', group, 'alias-seat', Date.now() + 60000),
+      env.DB.prepare('INSERT INTO invites(token_hash,group_id,member_id,expires_at) VALUES (?,?,?,?)').bind('member-token', group, 'alias-seat', Date.now() + 60000),
       env.DB.prepare('INSERT INTO group_invites VALUES (?,?,?)').bind('group-token', group, Date.now() + 60000),
       env.DB.prepare('INSERT INTO settlement_requests(id,group_id,author,payer_id,recipient_id,payload,created_at) VALUES (?,?,?,?,?,?,?)')
         .bind('request', group, 'owner', owner, guest, JSON.stringify(entry), entry.createdAt),

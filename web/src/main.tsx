@@ -83,6 +83,7 @@ function DemoLedger({ onExit }: { onExit: () => void }) {
   const latestImportData = useRef(data);
   useEffect(() => { latestImportData.current = data; }, [data]);
   const commentsRef = useRef<Record<string, ExpenseComment[]>>(initial.comments);
+  const claimEmails = useRef<Record<string, Record<string, string>>>({});
   const invitesRef = useRef<Record<string, ActiveInvite[]>>(initial.invites);
   const photosRef = useRef<Record<string, Blob>>(initial.photos);
   const connections = useRef<Connection[]>([{
@@ -181,7 +182,7 @@ function DemoLedger({ onExit }: { onExit: () => void }) {
           inv,
           ...(invitesRef.current[gid] ?? []).filter((old) => !target || old.memberID !== target.id),
         ];
-        return { url, code } as T;
+        return { url, code, id: inv.id } as T;
       }
 
       const revMatch = path.match(/^\/v1\/groups\/([\w-]+)\/invites\/([^/]+)\/revoke$/);
@@ -346,9 +347,30 @@ function DemoLedger({ onExit }: { onExit: () => void }) {
         return [...matches.values()] as T;
       }
       const addMem = path.match(/^\/v1\/groups\/([\w-]+)\/members$/);
+      if (addMem && body === undefined) {
+        const group = data.groups.find((item) => item.id === addMem[1]);
+        return { claimEmails: group?.members.flatMap((member) => {
+          const email = claimEmails.current[addMem[1]]?.[member.id];
+          return email && !member.removed && !member.userID ? [{ memberID: member.id, email }] : [];
+        }) ?? [] } as T;
+      }
+      const editEmail = path.match(/^\/v1\/groups\/([\w-]+)\/members\/([\w-]+)\/email$/);
+      if (editEmail && body) {
+        const [, gid, mid] = editEmail;
+        const { email } = body as { email: string | null };
+        const emails = claimEmails.current[gid] ??= {};
+        const normalized = email?.toLowerCase();
+        if (emails[mid] !== normalized) {
+          if (normalized) emails[mid] = normalized;
+          else delete emails[mid];
+          invitesRef.current[gid] = (invitesRef.current[gid] ?? []).filter((invite) => invite.memberID !== mid);
+        }
+        return { id: mid, email } as T;
+      }
       if (addMem && body) {
         const gid = addMem[1];
-        const b = body as { id: string; name: string; userID?: string };
+        const b = body as { id: string; name: string; userID?: string; email?: string };
+        if (b.email) (claimEmails.current[gid] ??= {})[b.id] = b.email.toLowerCase();
         setData((prev) => ({
           ...prev,
           groups: prev.groups.map((g) =>

@@ -105,7 +105,7 @@ struct JoinGroupView: View {
                 Section {
                     TextField("Invite code or link", text:$input, axis:.vertical)
                         .textInputAutocapitalization(.never).autocorrectionDisabled()
-                } footer: { Text("Ask someone in the group to share an invitation from People.") }
+                } footer: { Text("Ask someone in the group to share an invitation from the Members tab.") }
                 if let error { ErrorText(text:error) }
                 if working { ProgressView("Joining…") }
             }.navigationTitle("Join group").navigationBarTitleDisplayMode(.inline)

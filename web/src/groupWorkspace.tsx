@@ -33,10 +33,11 @@ import { ReceiptsHub } from "./receiptsHub";
 import { Avatar, AvatarStack, CategoryIcon } from "./ui";
 
 import { GroupLedger } from "./groupLedger";
+import { GroupMembers } from "./groupMembers";
 import { GroupSettings } from "./groupSettings";
 import "./groupWorkspace.css";
 
-const tabs = ["overview", "ledger", "transactions", "receipts", "settle", "settings"] as const;
+const tabs = ["overview", "ledger", "transactions", "receipts", "settle", "members", "settings"] as const;
 type Tab = typeof tabs[number];
 
 function ExpenseDrawer({
@@ -452,8 +453,8 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
   const selectedTab = query.get("tab") ?? "";
   const legacyTransactions = selectedTab === "ledger"
     && (query.get("view") === "transactions" || (!query.has("view") && query.has("cat")));
-  const tab = expenseID || legacyTransactions ? "transactions" : selectedTab === "people" || selectedTab === "rates"
-    ? "settings" : tabs.find((item) => item === selectedTab) ?? "overview";
+  const tab = expenseID || legacyTransactions ? "transactions" : selectedTab === "people" ? "members"
+    : selectedTab === "rates" ? "settings" : tabs.find((item) => item === selectedTab) ?? "overview";
   const homeMoney = useHomeMoney();
 
   const [inspectID, setInspectID] = useState<string | null>(null);
@@ -579,6 +580,9 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
             {suggestions.length > 0 && (
               <span className="ws-tab-badge">{suggestions.length}</span>
             )}
+          </button>
+          <button className="ws-tab" role="tab" aria-selected={tab === "members"} onClick={() => setTab("members")}>
+            Members
           </button>
           <button className="ws-tab" role="tab" aria-selected={tab === "settings"} onClick={() => setTab("settings")}>
             Settings
@@ -792,7 +796,8 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
         </div>
       )}
 
-      {tab === "settings" && <GroupSettings g={g} entries={entries} showRates={selectedTab === "rates"} />}
+      {tab === "members" && <GroupMembers key={g.id} group={g} entries={entries} />}
+      {tab === "settings" && <GroupSettings g={g} showRates={selectedTab === "rates"} />}
 
       {/* Slide-over Expense Inspector */}
       {inspected && (

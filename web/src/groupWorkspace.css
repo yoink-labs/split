@@ -279,8 +279,8 @@
 }
 .settings-card .field { min-width: 0; }
 .settings-card .field :is(input, select, textarea) { min-width: 0; width: 100%; }
-#group-members { grid-column: 1 / -1; }
-#group-members .settings-card-body { padding-block: 4px; }
+#group-roster { grid-column: 1 / -1; }
+#group-roster .settings-card-body { padding-block: 4px; }
 
 .settings-member {
   display: flex;
@@ -314,4 +314,15 @@
 @media (max-width: 720px) {
   .settings-grid { grid-template-columns: minmax(0, 1fr); }
   .transaction-table td:first-child { width: 200px; }
+}
+
+.member-identity { min-width: 0; overflow-wrap: anywhere; }
+.member-identity small { display: block; }
+.member-identity .num { font-size: 12px; }
+.member-name { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.member-invite { padding-inline: 12px; }
+
+@media (max-width: 720px) {
+  .ws-tab-list { flex-wrap: wrap; overflow-x: visible; }
+  .ws-tab { padding-inline: 10px; }
 }

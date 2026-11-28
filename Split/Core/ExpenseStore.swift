@@ -6,9 +6,18 @@ struct ActiveInvite: Decodable, Identifiable {
     let id: String
     let memberID: String?
     let memberName: String?
+    let recipientEmail: String?
     let expiresAt: Double
 
     var expirationDate: Date { Date(timeIntervalSince1970: expiresAt / 1000) }
+}
+
+private struct MemberClaimEmails: Decodable {
+    struct Contact: Decodable {
+        let memberID: String
+        let email: String
+    }
+    let claimEmails: [Contact]
 }
 
 private struct ActiveInviteResponse: Decodable {
@@ -352,7 +361,7 @@ private struct ActiveInviteResponse: Decodable {
         guard let index = groups.firstIndex(where: { $0.id == groupID }) else { throw LedgerError.invalid("Group unavailable.") }
         if demo {
             var next = state
-            next.snapshot.groups[index].members.append(Person(id:draft.id,groupID:groupID,userID:draft.userID,name:draft.name))
+            next.snapshot.groups[index].members.append(Person(id:draft.id,groupID:groupID,userID:draft.userID,name:draft.name,email:draft.email,phone:draft.phone))
             try persist(next)
             return draft.id
         }
@@ -586,6 +595,33 @@ private struct ActiveInviteResponse: Decodable {
             try await waitForSync()
             await sync()
         }
+    }
+
+    func memberClaimEmails(groupID: String) async throws -> [String: String] {
+        if demo {
+            return Dictionary(uniqueKeysWithValues: (group(groupID)?.members ?? []).compactMap { member in
+                guard let email = member.email, member.userID == nil, member.removed != true else { return nil }
+                return (member.id, email)
+            })
+        }
+        let data = try await request(path: "/v1/groups/\(groupID)/members")
+        let contacts = try JSONDecoder().decode(MemberClaimEmails.self, from: data).claimEmails
+        return Dictionary(uniqueKeysWithValues: contacts.map { ($0.memberID, $0.email) })
+    }
+
+    func updateClaimEmail(groupID: String, memberID: String, email: String) async throws {
+        _ = try await post("/v1/groups/\(groupID)/members/\(memberID)/email",
+                           JSONSerialization.data(withJSONObject: ["email": email.isEmpty ? NSNull() : email as Any]))
+    }
+
+    func sendMemberEmail(groupID: String, memberID: String, email: String? = nil) async throws {
+        let action = email == nil ? "sign-in-email" : "invite-email"
+        _ = try await post("/v1/groups/\(groupID)/members/\(memberID)/\(action)",
+                           JSONEncoder().encode(email.map { ["email": $0] } ?? [:]))
+    }
+
+    func resendInvite(_ invite: ActiveInvite, groupID: String) async throws {
+        _ = try await post("/v1/groups/\(groupID)/invites/\(invite.id)/resend", Data("{}".utf8))
     }
 
     func activeInvites(groupID: String) async throws -> [ActiveInvite] {

@@ -80,6 +80,7 @@ export interface ActiveInvite {
   kind: "group" | "member";
   memberID: string | null;
   memberName: string | null;
+  recipientEmail?: string;
   expiresAt: number;
   url?: string;
   code?: string;

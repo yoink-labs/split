@@ -12,6 +12,7 @@ is noted next to each release. The CLI is versioned separately with
 
 ### Added
 
+- Manage group members, claim addresses, and invitations from the Members tab on web and iOS. Email or resend invitations and send sign-in reminders.
 - Open the Transactions tab on web and iOS to see each expense or settlement and its payment split.
 - Customize group PDFs with spending breakdowns by category, month, and person.
 - Group creators can permanently delete groups on iOS and the web.

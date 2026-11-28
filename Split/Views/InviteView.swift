@@ -6,9 +6,12 @@ struct InviteView: View {
     var group: ExpenseGroup
     @EnvironmentObject private var store: ExpenseStore
     @EnvironmentObject private var session: SessionStore
-    @Environment(\.dismiss) private var dismiss
     @Environment(\.horizontalSizeClass) private var sizeClass
     @State private var adding = false
+    @State private var managing: Person?
+    @State private var claimEmails: [String: String] = [:]
+    @State private var notice: String?
+    @State private var sending = false
     @State private var links: [String: URL] = [:]
     @State private var copied: String?
     @State private var busy: String?
@@ -21,45 +24,39 @@ struct InviteView: View {
     private var placeholders: [Person] { current.members.filter { $0.userID == nil && $0.removed != true } }
     private var joined: [Person] { current.members.filter { $0.userID != nil && $0.removed != true } }
 
+    private var canManage: Bool {
+        current.members.contains { $0.userID == session.userID && $0.userID != nil && $0.removed != true }
+    }
+
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                Group {
-                    if sizeClass == .regular {
-                        HStack(alignment: .top, spacing: 20) {
-                            inviteColumn.frame(maxWidth: 380)
-                            peopleColumn
-                        }
-                    } else {
-                        VStack(spacing: 18) {
-                            inviteColumn
-                            peopleColumn
-                        }
-                    }
+        VStack(alignment: .leading, spacing: 16) {
+            if sizeClass == .regular && canManage {
+                HStack(alignment: .top, spacing: 20) {
+                    peopleColumn
+                    inviteColumn.frame(maxWidth: 380)
                 }
-                .padding(16)
-                .frame(maxWidth: 860)
-                .frame(maxWidth: .infinity)
+            } else {
+                peopleColumn
+                if canManage { inviteColumn }
             }
-            .background(AppBackground())
-            .ledgerDestinations()
-            .navigationTitle(Text(verbatim: "People & invites"))
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
-            .task { await loadInvites() }
-            .refreshable { await store.sync(); await loadInvites() }
-            .alert("Revoke this invitation?", isPresented: Binding(
-                get: { inviteToRevoke != nil },
-                set: { if !$0 { inviteToRevoke = nil } }
-            ), presenting: inviteToRevoke) { invite in
-                Button("Revoke invite", role: .destructive) { Task { await revoke(invite) } }
-                Button("Cancel", role: .cancel) {}
-            } message: { _ in
-                Text("The link and code will stop working immediately.")
-            }
-            .sheet(isPresented: $adding) {
-                MemberEditor { draft in _ = try await store.addMember(groupID: group.id, draft: draft) }
-            }
+        }
+        .task(id: canManage) { await loadInvites() }
+        .alert("Revoke this invitation?", isPresented: Binding(
+            get: { inviteToRevoke != nil },
+            set: { if !$0 { inviteToRevoke = nil } }
+        ), presenting: inviteToRevoke) { invite in
+            Button("Revoke invite", role: .destructive) { Task { await revoke(invite) } }
+            Button("Cancel", role: .cancel) {}
+        } message: { _ in
+            Text("The link and code will stop working immediately.")
+        }
+        .sheet(isPresented: $adding, onDismiss: { Task { await loadInvites() } }) {
+            MemberEditor { draft in _ = try await store.addMember(groupID: group.id, draft: draft) }
+        }
+        .sheet(item: $managing) { member in
+            GroupMemberEditor(groupID: group.id, member: member, isMe: member.userID == session.userID,
+                              onChange: { await loadInvites() }, claimEmail: claimEmails[member.id] ?? "",
+                              inviteEmail: claimEmails[member.id] ?? "")
         }
     }
 
@@ -68,25 +65,37 @@ struct InviteView: View {
     private var inviteColumn: some View {
         VStack(alignment: .leading, spacing: 12) {
             groupInvite
+            if let notice { Label(notice, systemImage: "checkmark.circle").font(.subheadline) }
             if !active.isEmpty {
                 SectionHeader(title: "Active invites")
                 Card {
                     ForEach(active) { invite in
-                        HStack {
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(invite.memberName.map { "For " + $0 } ?? "General group invite")
-                                    .font(.subheadline.weight(.semibold))
-                                Text("Expires \(invite.expirationDate.formatted(date: .abbreviated, time: .omitted))")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
+                        VStack(alignment: .leading, spacing: 0) {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(invite.memberName.map { "For " + $0 } ?? "General group invite")
+                                        .font(.subheadline.weight(.semibold))
+                                    if let email = invite.recipientEmail {
+                                        Text(email).font(.subheadline)
+                                    }
+                                    Text("Expires \(invite.expirationDate.formatted(date: .abbreviated, time: .omitted))")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Button(role: .destructive) { inviteToRevoke = invite } label: {
+                                    Image(systemName: "trash")
+                                        .frame(minWidth: HitTarget.minimum, minHeight: HitTarget.minimum)
+                                }
+                                .accessibilityLabel(invite.memberName.map { "Revoke invite for " + $0 } ?? "Revoke group invite")
+                                .disabled(revoking || sending)
                             }
-                            Spacer()
-                            Button(role: .destructive) { inviteToRevoke = invite } label: {
-                                Image(systemName: "trash")
-                                    .frame(minWidth: HitTarget.minimum, minHeight: HitTarget.minimum)
+                            if let email = invite.recipientEmail {
+                                Button("Resend email") { Task { await resend(invite, email: email) } }
+                                    .buttonStyle(GhostButton())
+                                    .accessibilityLabel("Resend invitation to " + email)
+                                    .disabled(sending || revoking)
                             }
-                            .accessibilityLabel(invite.memberName.map { "Revoke invite for " + $0 } ?? "Revoke group invite")
-                            .disabled(revoking)
                         }
                         if invite.id != active.last?.id { Divider() }
                     }
@@ -102,11 +111,40 @@ struct InviteView: View {
 
     private func loadInvites() async {
         do {
-            active = try await store.activeInvites(groupID: current.id)
+            guard canManage else {
+                claimEmails = [:]
+                active = []
+                return
+            }
+            async let invitations = store.activeInvites(groupID: current.id)
+            async let contacts = store.memberClaimEmails(groupID: current.id)
+            let (newInvites, newContacts) = try await (invitations, contacts)
+            active = newInvites
+            claimEmails = newContacts
+            let activeIDs = Set(newInvites.map(\.id))
+            links = links.filter { activeIDs.contains(digest($0.value)) }
             inviteError = nil
         } catch where !SyncFailure.isCancellation(error) {
             inviteError = error.localizedDescription
         } catch {}
+    }
+
+    private func digest(_ url: URL) -> String {
+        SHA256.hash(data: Data(url.lastPathComponent.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    private func resend(_ invite: ActiveInvite, email: String) async {
+        guard !sending else { return }
+        sending = true
+        notice = nil
+        defer { sending = false }
+        do {
+            try await store.resendInvite(invite, groupID: current.id)
+            notice = "Invitation resent to " + email
+            await loadInvites()
+        } catch {
+            inviteError = error.localizedDescription
+        }
     }
 
     private func revoke(_ invite: ActiveInvite) async {
@@ -117,8 +155,7 @@ struct InviteView: View {
             try await store.revokeInvite(invite, groupID: current.id)
             let key = invite.memberID ?? "group"
             if let url = links[key] {
-                let digest = SHA256.hash(data: Data(url.lastPathComponent.utf8)).map { String(format: "%02x", $0) }.joined()
-                if digest == invite.id { links[key] = nil }
+                if digest(url) == invite.id { links[key] = nil }
             }
             active.removeAll { $0.id == invite.id }
             inviteError = nil
@@ -199,70 +236,80 @@ struct InviteView: View {
 
     private var peopleColumn: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .firstTextBaseline) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("People · \(joined.count + placeholders.count)").font(.headline).foregroundStyle(Palette.ink)
-                    Text(placeholders.isEmpty ? "Everyone has joined." : "Send a personal link so a placeholder can claim their history.")
-                        .font(.caption).foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                Spacer(minLength: 8)
-                Button { adding = true } label: {
-                    Label("Add", systemImage: "person.badge.plus")
-                }
-                .buttonStyle(GhostButton())
-                .accessibilityLabel("Add person")
-            }
-            if !placeholders.isEmpty {
-                VStack(spacing: 10) {
-                    ForEach(placeholders) { member in placeholderRow(member) }
+            HStack {
+                SectionHeader(title: "Members")
+                Spacer()
+                if canManage {
+                    Button { adding = true } label: { Label("Add person", systemImage: "person.badge.plus") }
+                        .buttonStyle(GhostButton())
                 }
             }
             if !joined.isEmpty {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Joined").font(.splitEyebrow).foregroundStyle(.secondary)
-                    FlowLayout(spacing: 6) {
-                        ForEach(joined) { member in
-                            NavigationLink(value: LedgerRoute.member(group: current.id, seat: member.id)) {
-                                PersonChip(
-                                    name: member.name,
-                                    label: member.userID == session.userID ? "You" : member.name,
-                                    compact: true
-                                )
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityHint("Opens \(member.name)'s charges")
-                        }
+                SectionHeader(title: "Joined")
+                Card {
+                    ForEach(joined) { member in
+                        memberRow(member)
+                        if member.id != joined.last?.id { Divider() }
                     }
                 }
-                .padding(14)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .glassSurface(cornerRadius: 16, tint: Palette.card.opacity(0.45))
+            }
+            if !placeholders.isEmpty {
+                SectionHeader(title: "Placeholders")
+                ForEach(placeholders) { member in placeholderRow(member) }
+            }
+            let archived = current.members.filter { $0.removed == true }
+            if !archived.isEmpty {
+                SectionHeader(title: "Archived")
+                Card {
+                    ForEach(archived) { member in
+                        memberRow(member)
+                        if member.id != archived.last?.id { Divider() }
+                    }
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func placeholderRow(_ member: Person) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 10) {
-                Avatar(name: member.name, size: 34)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(member.name).font(.subheadline.weight(.semibold)).foregroundStyle(Palette.ink)
-                    Text("Placeholder · not joined yet").font(.caption).foregroundStyle(.secondary)
+    private func memberRow(_ member: Person) -> some View {
+        HStack {
+            NavigationLink(value: LedgerRoute.member(group: current.id, seat: member.id)) {
+                HStack(spacing: 10) {
+                    Avatar(name: member.name, size: 34)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(member.userID == session.userID ? "You" : member.name)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(Palette.ink)
+                        if let email = claimEmails[member.id] {
+                            Text("Claim email \(email)").font(.caption).foregroundStyle(.secondary)
+                        }
+                        let addresses = Set(active.filter { $0.memberID == member.id }.compactMap(\.recipientEmail))
+                        ForEach(addresses.sorted(), id: \.self) { email in
+                            Text("Invited \(email)").font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
                 }
-                Spacer(minLength: 8)
-                NavigationLink(value: LedgerRoute.member(group: current.id, seat: member.id)) {
-                    Image(systemName: "clock.arrow.circlepath")
-                        .font(.system(size: 15, weight: .semibold))
-                        .frame(width: 44, height: 44)
-                        .foregroundStyle(Palette.ink)
+                .frame(maxWidth: .infinity, minHeight: HitTarget.minimum, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Opens \(member.name)’s charges")
+            if canManage && !store.isDemo {
+                Button { managing = member } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .frame(minWidth: HitTarget.minimum, minHeight: HitTarget.minimum)
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("View \(member.name)'s charges")
-                if links[member.id] == nil {
-                    createButton(key: member.id, member: member, title: "Invite", onHero: false)
-                }
+                .accessibilityLabel("Manage \(member.name)")
+            }
+        }
+    }
+
+    private func placeholderRow(_ member: Person) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            memberRow(member)
+            if canManage && links[member.id] == nil {
+                createButton(key: member.id, member: member, title: "Create personal link", onHero: false)
             }
             if let link = links[member.id] {
                 HStack(spacing: 8) {

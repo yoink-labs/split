@@ -500,7 +500,8 @@ export async function operate(name: string, input: unknown, env: Env, user: stri
       throw new HTTPError(404,'Your expense was not found.');
     if (!before) throw new HTTPError(404,'Your expense was not found.');
     if (before.kind === 'settlement' || (before.kind === 'refund' && name === 'expenses_edit')) throw new InputError(before.kind === 'refund' ? 'Delete the refund and record it again to change it.' : 'Select an expense.');
-    const after = name === 'expenses_edit' ? makeExpense(a, group, before) : null;
+    const resolving = snapshot.disputes?.some(d => d.entryID === before.id);
+    const after = name === 'expenses_edit' ? makeExpense(resolving ? {...a,pending:false} : a, group, before) : null;
     const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify([name,before,after,...(a.disputeReply !== undefined ? [a.disputeReply] : [])])));
     const revision = Array.from(new Uint8Array(bytes), b => b.toString(16).padStart(2,'0')).join('');
     if (!a.yes) {

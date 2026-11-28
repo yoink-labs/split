@@ -279,7 +279,7 @@ describe('expense disputes', () => {
 
   it('lets a payer who did not record the expense edit with a reply and clears pending atomically', async () => {
     await prepare();
-    const payerEntry = await addEntry({id:'payer-edit',paidBy:seatB});
+    const payerEntry = await addEntry({id:'payer-edit',paidBy:seatB,category:'Dining',notes:'Dinner for the group'});
     const editPath = '/v1/entries/payer-edit/edit';
     await call(userA,'/v1/entries/payer-edit/dispute',{comment:'Only $8'});
     const original = {...payerEntry,pending:true};

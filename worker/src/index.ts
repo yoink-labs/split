@@ -1,4 +1,4 @@
-import { activeDisputeResolver, disputeAccess, disputeComment, disputeEvent, disputeRoute, openDisputes } from './disputes';
+import { activeDisputeResolver, disputeAccess, disputeComment, disputeEvent, disputeRoute, noOpenDispute, openDisputes } from './disputes';
 import { normalizeName } from './names';
 import { knownPerson, knownAccount } from './relationships';
 import { legacyPayment, paymentMethods, saveAccountPayments } from './paymentProfiles';
@@ -289,7 +289,7 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
     // Keep the stored entry in canonical key order so normal edit retries still match.
     const updated=validateEntry({...entry,handled:b.handled},(await members(env,row.groupID)).map(m=>m.id),entry.bill);
     const saved=await env.DB.prepare(`UPDATE entries SET payload=? WHERE id=? AND payload=?
-      AND id NOT IN (SELECT entry_id FROM deleted_entries)`).bind(JSON.stringify(updated),handled[1],row.payload).run();
+      AND id NOT IN (SELECT entry_id FROM deleted_entries) AND ${noOpenDispute}`).bind(JSON.stringify(updated),handled[1],row.payload).run();
     if(!saved.meta.changes) throw new HTTPError(409,'This expense changed. Refresh and try again.');
     return json({ok:true});
   }
@@ -310,6 +310,10 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
     if(disputeID && saved.author!==userID && b.photos!==undefined)
       throw new HTTPError(403,'Only the recorder can attach photos while editing this expense.');
     const reply=disputeID ? disputeComment(b.disputeReply) : '';
+    // The dispute controls pending status. Normalize both copies before comparing
+    // them because SQLite can append the pending key after existing fields.
+    const withoutDisputePending = (value: unknown) => disputeID && value && typeof value==='object'
+      ? {...value, pending:undefined, pendingNote:undefined} : value;
     if (deleted) {
       if(await env.DB.prepare('SELECT 1 FROM active_expense_combination_sources WHERE source_id=?').bind(revise[1]).first())
         throw new HTTPError(409,'Restore the original expenses before changing this expense.');
@@ -328,15 +332,13 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
     if (!deleting) {
       if (old.kind==='settlement') throw new InputError('Payments cannot be edited.');
       const legacyOriginal=preserveStatementAmount(b.original,canonical);
-      const updated=validateEntry(legacyOriginal!==b.original ? preserveStatementAmount(b.entry,canonical) : b.entry,ids,canonical.bill,{reconcileBill:true});
+      const updated=validateEntry(withoutDisputePending(legacyOriginal!==b.original ? preserveStatementAmount(b.entry,canonical) : b.entry),ids,canonical.bill,{reconcileBill:true});
       if (updated.bill || old.bill) await requireActiveMember(env,saved.group_id,userID);
       if(disputeID) {
         const ordered = (splits: Entry['splits']) => [...splits].sort((a,b) => a.memberID.localeCompare(b.memberID));
         if(updated.amount===canonical.amount && updated.splitMode===canonical.splitMode &&
           JSON.stringify(ordered(updated.splits))===JSON.stringify(ordered(canonical.splits)))
           throw new InputError('Change the amount, split or participants to resolve by editing.');
-        delete updated.pending;
-        delete updated.pendingNote;
       }
       replacement=updated;
       if(updated.id!==revise[1] || updated.groupID!==saved.group_id || updated.createdAt!==old.createdAt || updated.kind!==old.kind || updated.refundOf!==old.refundOf)
@@ -357,8 +359,9 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
     }
     const conditional=!deleting || b.original!==undefined;
     if (conditional) {
-      const original=validateEntry(preserveStatementAmount(b.original,canonical),ids,canonical.bill);
-      if (JSON.stringify(original)!==JSON.stringify(canonical)) throw new HTTPError(409,'This entry changed. Refresh and try again.');
+      const original=validateEntry(withoutDisputePending(preserveStatementAmount(b.original,canonical)),ids,canonical.bill);
+      const expected=disputeID ? validateEntry(withoutDisputePending(canonical),ids,canonical.bill) : canonical;
+      if (JSON.stringify(original)!==JSON.stringify(expected)) throw new HTTPError(409,'This entry changed. Refresh and try again.');
     }
     const disputeGuard=disputeID
       ? ' AND EXISTS (SELECT 1 FROM expense_disputes WHERE id=? AND entry_id=entries.id AND closed_at IS NULL)' +

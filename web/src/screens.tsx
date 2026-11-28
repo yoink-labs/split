@@ -1,4 +1,5 @@
 import { balanceLine } from "../../worker/src/ledger";
+import { GroupTypePicker } from "./tripFields";
 import { DiscoverySetting } from "./people";
 import { PaymentEditor, PaymentOptions, personPaymentMethods } from "./paymentMethods";
 import { PendingPayments } from "./settlements";
@@ -61,7 +62,7 @@ export function HomeOverview() {
     (e) => e.bill && !e.bill.closed && e.bill.items.some((i) => !i.memberIDs.length),
   );
   const trips = activeGroups.filter((g) => g.kind === "trip");
-  const longTerm = activeGroups.filter((g) => g.kind !== "trip");
+  const longTerm = activeGroups.filter((g) => g.kind !== "trip" && g.kind !== "friend");
 
   const renderGroupCard = (g: Group) => {
     const entries = data.entries.filter((e) => e.groupID === g.id);
@@ -69,7 +70,7 @@ export function HomeOverview() {
     const amounts = me ? memberBalances(entries, me.id) : {};
     const bal = homeMoney.total(amounts);
     const openCount = entries.filter((e) => e.bill && !e.bill.closed && e.bill.items.some((i) => !i.memberIDs.length)).length;
-    const range = tripRangeText(g.startDate, g.endDate);
+    const range = g.kind === "trip" ? tripRangeText(g.startDate, g.endDate) : "";
     const activeMembers = g.members.filter((m) => !m.removed);
 
     return (
@@ -201,7 +202,7 @@ export function NewGroup() {
   const [query] = useSearchParams();
   const [id] = useState(() => crypto.randomUUID());
   const [seat] = useState(() => crypto.randomUUID());
-  const [kind, setKind] = useState(query.get("kind") || "trip");
+  const [kind, setKind] = useState(query.get("kind") === "home" ? "home" : "trip");
   const [placeholders, setPlaceholders] = useState("");
 
   return (
@@ -220,6 +221,7 @@ export function NewGroup() {
               .split(",")
               .map((s) => s.trim())
               .filter(Boolean);
+            if (kind === "trip" && value(f, "endDate") < value(f, "startDate")) throw new Error("End date must be on or after the start date.");
             await save("/v1/groups", {
               id,
               name: value(f, "name"),
@@ -241,14 +243,7 @@ export function NewGroup() {
               Name
               <input type="text" name="name" maxLength={80} required autoFocus placeholder={kind === "trip" ? "Patagonia Trip" : "Apt 4B Rent"} />
             </label>
-            <label className="field">
-              Type
-              <select value={kind} onChange={(e) => setKind(e.target.value)}>
-                <option value="trip">Trip (day-by-day)</option>
-                <option value="home">Long-term / Home (monthly)</option>
-                <option value="friend">Friends tab</option>
-              </select>
-            </label>
+            <GroupTypePicker value={kind} onChange={setKind} />
           </div>
           <label className="field">
             Description (optional)
@@ -276,12 +271,12 @@ export function NewGroup() {
           {kind === "trip" && (
             <div className="form-row">
               <label className="field">
-                Start date (optional)
-                <input type="date" name="startDate" />
+                Start date
+                <input type="date" name="startDate" required />
               </label>
               <label className="field">
-                End date (optional)
-                <input type="date" name="endDate" />
+                End date
+                <input type="date" name="endDate" required />
               </label>
             </div>
           )}

@@ -16,6 +16,7 @@ struct GroupTools: View {
     @EnvironmentObject var session: SessionStore
     @Environment(\.dismiss) var dismiss
     @State private var name = ""
+    @State private var kind = ""
     @State private var currency = ""
     @State private var simplify = true
     @State private var description = ""
@@ -49,11 +50,17 @@ struct GroupTools: View {
                         ForEach(Money.currencies, id: \.self) { Text($0).tag($0) }
                     }
                     .disabled(!entries.isEmpty)
-                    GroupMetadataFields(description: $description, start: $start, end: $end, isTrip: current.kind == "trip")
+                    if !current.isFriend {
+                        Picker("Group type", selection: $kind) {
+                            Text("Trip").tag("trip")
+                            Text("Long-term / Home").tag("home")
+                        }
+                    }
+                    GroupMetadataFields(description: $description, start: $start, end: $end, isTrip: kind == "trip")
                     Toggle("Simplify payments", isOn: $simplify)
                     Button {
                         run {
-                            try await store.updateGroup(current, name: name, currency: currency, simplify: simplify, description: description, start: start, end: end)
+                            try await store.updateGroup(current, name: name, kind: kind, currency: currency, simplify: simplify, description: description, start: start, end: end)
                             message = "Group details saved."
                         }
                     } label: {
@@ -242,6 +249,7 @@ struct GroupTools: View {
     private func load() {
         guard !initialized else { return }
         initialized = true
+        kind = current.kind
         name = current.name
         description = current.description ?? ""
         start = current.startDate.flatMap(Exchange.date(fromDay:))

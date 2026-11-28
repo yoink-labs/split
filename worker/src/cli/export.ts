@@ -4,7 +4,7 @@ import { breakdown, entryItems, grossItems } from '../items';
 import { Entry, entryPayers, entrySign } from '../ledger';
 
 interface Member { id: string; name: string; userID: string|null; removed?: boolean; payment?: Record<string,string> }
-interface Group { id: string; name: string; currency: string; kind?: string; description?: string; startDate?: string; endDate?: string; members: Member[] }
+interface Group { id: string; name: string; currency: string; kind?: string; description?: string; startDate?: string | null; endDate?: string | null; members: Member[] }
 
 const decimal = (minor: number) => (minor < 0 ? '-' : '') + (Math.abs(minor) / 100).toFixed(2);
 // RFC 4180 quoting, and a leading apostrophe so spreadsheets never evaluate text as a formula.

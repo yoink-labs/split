@@ -284,6 +284,9 @@ struct EntryDetails: View {
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
+                if let phase = liveGroup.phase(for: entry) {
+                    Text(phase.title).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                }
                 Rectangle().fill(Palette.line).frame(height: 1)
                 HStack(spacing: 10) {
                     Avatar(name: personName(entry.paidBy), size: 32)

@@ -183,3 +183,28 @@ it('supports fractional claim updates via /claim and MCP itemized receipt upload
   }), env, 'user-a')).rejects.toThrow(/share weights/);
   expect((await handle(req(`/v1/entries/${created.id}/close`, {memberIDs:[]}), env, 'user-a')).status).toBe(200);
 });
+
+it('validates phase writes and preserves overrides on older expense edits', async () => {
+  const groupID = await seedGroup();
+  const paidBy = 'mem-harris-1';
+  const expense = {
+    id: 'entry-trip-phase', groupID, paidBy, title: 'Flights', currency: 'USD', amount: 1000,
+    kind: 'expense', splitMode: 'equal', splits: [{ memberID: paidBy, amount: 1000 }],
+    createdAt: '2026-11-12T12:00:00Z',
+  };
+  const add = (entry: object, user = 'user-a') => handle(req('/v1/entries', entry), env, user);
+  await expect(add({ ...expense, phase: 'invalid' })).rejects.toThrow('valid trip phase');
+  await expect(add({ ...expense, phase: 'pre' }, 'outsider')).rejects.toMatchObject({ status: 403 });
+  expect((await add({ ...expense, phase: 'pre' })).ok).toBe(true);
+  const edit = (original: object, entry: object) =>
+    handle(req('/v1/entries/entry-trip-phase/edit', { original, entry }), env, 'user-a');
+  const changed = { ...expense, title: 'Airport flights' };
+  expect((await edit(expense, changed)).ok).toBe(true);
+  const snapshot = async () => (await (await handle(req('/v1/snapshot'), env, 'user-a')).json<{entries: Entry[]}>()).entries[0];
+  expect((await snapshot()).phase).toBe('pre');
+  await expect(edit({ ...changed, phase: null }, { ...changed, phase: 'post' })).rejects.toMatchObject({ status: 409 });
+  expect((await edit({ ...changed, phase: 'pre' }, { ...changed, phase: null })).ok).toBe(true);
+  expect((await snapshot()).phase).toBeUndefined();
+  expect((await handle(req(`/v1/groups/${groupID}/update`, { kind: 'home' }), env, 'user-a')).ok).toBe(true);
+  await expect(add({ ...expense, id: 'entry-home-phase', phase: 'post' })).rejects.toThrow('only in trip groups');
+});

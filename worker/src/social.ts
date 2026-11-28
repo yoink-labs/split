@@ -1,3 +1,4 @@
+import { groupKind } from './tripPhases';
 import { HTTPError, body, json, optionalDay } from './http';
 import { requireActiveMember } from './memberEmail';
 import { currencies, InputError } from './ledger';
@@ -71,8 +72,12 @@ export function optionalDescription(value: unknown): string | null | undefined {
 
 async function updateGroup(request:Request,env:Env,groupID:string) {
   const b=await body(request);
-  const group=await env.DB.prepare('SELECT name,currency,simplify,description,start_date AS startDate,end_date AS endDate FROM groups WHERE id=?').bind(groupID).first<{name:string;currency:string;simplify:number;description:string|null;startDate:string|null;endDate:string|null}>();
+  const group=await env.DB.prepare('SELECT name,kind,currency,simplify,description,start_date AS startDate,end_date AS endDate FROM groups WHERE id=?').bind(groupID).first<{name:string;kind:string;currency:string;simplify:number;description:string|null;startDate:string|null;endDate:string|null}>();
   if(!group) throw new HTTPError(404,'Group not found.');
+  const currentKind=groupKind(group);
+  const kind=b.kind ?? currentKind;
+  if(kind!==currentKind && (currentKind==='friend' || (kind!=='trip' && kind!=='home')))
+    throw new InputError('Choose Trip or Long-term / Home.');
   let name=group.name,currency=group.currency,simplify=Number(group.simplify);
   let description=group.description, startDate=group.startDate, endDate=group.endDate;
   if(b.name!==undefined) {
@@ -99,8 +104,9 @@ async function updateGroup(request:Request,env:Env,groupID:string) {
   if(nextStart!==undefined) startDate=nextStart;
   const nextEnd=optionalDay(b.endDate,'end date');
   if(nextEnd!==undefined) endDate=nextEnd;
+  if(kind==='trip' && currentKind!=='trip' && (!startDate || !endDate)) throw new InputError('Choose a start and end date for the trip.');
   if(startDate && endDate && endDate < startDate) throw new InputError('End date must be on or after the start date.');
-  await env.DB.prepare('UPDATE groups SET name=?,currency=?,simplify=?,description=?,start_date=?,end_date=? WHERE id=?').bind(name,currency,simplify,description,startDate,endDate,groupID).run();
+  await env.DB.prepare('UPDATE groups SET name=?,kind=?,currency=?,simplify=?,description=?,start_date=?,end_date=? WHERE id=?').bind(name,kind,currency,simplify,description,startDate,endDate,groupID).run();
   return json({ok:true});
 }
 

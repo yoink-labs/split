@@ -1,3 +1,4 @@
+import { expenseTripPhase, tripPhaseLabels } from "../../worker/src/tripPhases";
 import { useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { categoryMeta } from "./categories";
@@ -75,6 +76,7 @@ export function TransactionTable({
           </thead>
           <tbody>
             {visible.map((entry) => {
+              const phase = expenseTripPhase(g, entry);
               const payment = entry.kind === "settlement";
               const refund = entry.kind === "refund";
               const original = refund && entry.refundOf ? all.find((e) => e.id === entry.refundOf) : undefined;
@@ -93,6 +95,7 @@ export function TransactionTable({
                         <div className="ledger-entry-meta muted">
                           <span className="txn-inline-date">{shortDate(entry.createdAt)} ·</span>
                           {payment ? "Settlement" : categoryMeta(entry.category).label}
+                          {phase && <span className="tag">{tripPhaseLabels[phase]}</span>}
                           {refund && <span className="tag tag-refund">{entry.refundOf ? "Refund" : "Credit"}</span>}
                           {original && (
                             <button type="button" className="ledger-refund-of" onClick={() => onInspect(original.id)}>

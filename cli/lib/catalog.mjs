@@ -120,12 +120,12 @@ export const tools = [
   op('groups_show','Show one group and its members.', { group }, ['group'], true),
   op('groups_create','Create a group with you and optional placeholder members.', {
     name: text('Group name.',80), self: text('Your display name in this group.',60),
-    kind: enumeration('Group type, defaults to trip.', ['trip','home','friend']), currency,
+    kind: enumeration('Group type, inferred from dates when omitted.', ['trip','home','friend']), currency,
     description: text('Optional description.', 500), start: day('Trip start date'), end: day('Trip end date'),
     placeholders: list('Names of unclaimed members.', text('Name.',60))
   }, ['name','self']),
-  op('groups_update','Change a group’s name, description, trip dates, debt simplification or currency (currency only before any expenses).', {
-    group, name: text('Group name.',80), description: text('Description, or "none" to clear.', 500),
+  op('groups_update','Change a group’s type, name, description, trip dates, debt simplification or currency (currency only before any expenses).', {
+    group, kind: enumeration('Group type.', ['trip','home']), name: text('Group name.',80), description: text('Description, or "none" to clear.', 500),
     start: day('Trip start date'), end: day('Trip end date'),
     simplify: enumeration('Simplify debts into the fewest transfers.', ['on','off']), currency
   }, ['group']),
@@ -182,9 +182,9 @@ export const tools = [
     email: text('Optional email for verified matching. Use with --member or --name.',254)
   }, ['group']),
   op('join','Claim an invited member slot with a Split invite link or code.', { invite: text('Invite link or code.',512) }, ['invite']),
-  op('expenses_list','List expenses and refunds with dates, payers, pending status and IDs. Amounts in results are integer minor units.', { group }, ['group'], true),
+  op('expenses_list','List expenses and refunds with dates, payers, pending status and IDs. Amounts in results are integer minor units.', { group, phase: enumeration('Filter by trip phase.', ['pre','during','post']) }, ['group'], true),
   op('expenses_add','Record a standard or itemized expense. Supply an amount for standard expenses. Itemized expenses use the sum of the bill, and any supplied amount must match it.', {
-    group, ...allocation,
+    group, ...allocation, phase: enumeration('Override the date-based trip phase.', ['pre','during','post']),
     date: { ...text('Optional expense date YYYY-MM-DD.', 10), pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
     bill: receiptBill,
     photos: receiptPhotos
@@ -204,7 +204,7 @@ export const tools = [
   op('comments_add','Comment on an expense.', { group, expense, text: text('Comment.', 2000) }, ['group','expense','text']),
   op('comments_delete','Delete one of your comments.', { group, expense, comment: id('Comment ID.') }, ['group','expense','comment'], false, true),
   op('receipts_add','Attach up to four receipt photos to an expense you recorded.', { group, expense, photos: receiptPhotos }, ['group','expense','photos']),
-  op('expenses_edit','Preview changes to your expense, or supply a bill to break a whole expense into items. Review the preview before confirming with yes and revision.', { group, expense, ...allocation, bill: receiptBill, ...confirmation }, ['group','expense'], false, true),
+  op('expenses_edit','Preview changes to your expense, or supply a bill to break a whole expense into items. Review the preview before confirming with yes and revision.', { group, expense, ...allocation, phase: enumeration('Override the trip phase, or use auto to follow the expense date.', ['pre','during','post','auto']), bill: receiptBill, ...confirmation }, ['group','expense'], false, true),
   op('expenses_delete','Preview deletion of your expense. Review the preview before confirming with yes and revision.', { group, expense, ...confirmation }, ['group','expense'], false, true),
   op('balances','Show each member’s net balance and suggested settlements, separately by currency, in minor units. Pending expenses count; confirmedNet and pending show the balance without them. Provide a member ID for signed expense, payment and refund lines that add up to their balance.', { group, member }, ['group'], true),
   op('settlements_pending','List payments waiting for approval in a group, who made them and what you can do.', { group }, ['group'], true),

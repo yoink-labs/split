@@ -20,6 +20,7 @@ struct AddExpenseView: View {
     @State private var currency = ""
     @State private var purchaseDate = Date()
     @State private var category = ""
+    @State private var phase: TripPhase?
     /// Set while the category came from a recognised merchant rather than the user.
     @State private var autoCategory = false
     @State private var notes = ""
@@ -395,6 +396,14 @@ struct AddExpenseView: View {
                         .foregroundStyle(.secondary)
                 }
                 Divider()
+                if current.kind == "trip" {
+                    let automatic = current.defaultPhase(on: original?.createdAt ?? quoteDate)
+                    Picker("Trip phase", selection: $phase) {
+                        Text("Automatic · " + automatic.title).tag(nil as TripPhase?)
+                        ForEach(TripPhase.allCases) { phase in Text(phase.title).tag(Optional(phase)) }
+                    }
+                    Divider()
+                }
                 Toggle(isOn: $handled.animation(.snappy)) {
                     VStack(alignment: .leading, spacing: 3) {
                         Text("Already handled").font(.subheadline.weight(.semibold))
@@ -1206,7 +1215,7 @@ struct AddExpenseView: View {
         let created: String
         if let original {
             created = original.createdAt
-        } else if currency != settlementCurrency {
+        } else if currency != settlementCurrency || current.kind == "trip" {
             created = quoteDate + "T12:00:00Z"
         } else {
             created = ISO8601DateFormatter().string(from: purchaseDate)
@@ -1229,6 +1238,7 @@ struct AddExpenseView: View {
             splitMode: itemized ? .exact : mode,
             createdAt: created
         )
+        entry.phase = current.kind == "trip" ? phase : original?.phase
         if payerList.count > 1 { entry.payers = payerList }
         let cleanNotes = notes.trimmingCharacters(in: .whitespacesAndNewlines)
         entry.notes = cleanNotes.isEmpty ? nil : cleanNotes
@@ -1343,6 +1353,7 @@ struct AddExpenseView: View {
             title = UserDefaults.standard.string(forKey: "splitComposerTitle") ?? title
         }
         #endif
+        phase = original?.phase
         category = original?.category ?? ""
         chargedText = original?.exchange?.statementAmount.map(Money.input) ?? ""
         notes = original?.notes ?? ""

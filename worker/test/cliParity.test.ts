@@ -211,9 +211,52 @@ describe('CLI parity', () => {
     await expect(outsider.run('expenses_handled', { group, expense: expense.id })).rejects.toMatchObject({ status: 404 });
   });
 
+  it('infers group types and filters trip expenses by automatic and overridden phase', async () => {
+    const alex = runner(await authorize('phase-alex'));
+    const outsider = runner(await authorize('phase-outsider'));
+    const { id: group, members: [me] } = await alex.run('groups_create', {
+      name: 'Trip', self: 'Alex', start: '2026-11-12', end: '2026-11-21',
+    });
+    const { id: home } = await alex.run('groups_create', { name: 'Flat', self: 'Alex' });
+    expect(await alex.run('groups_list', {})).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: group, kind: 'trip' }),
+      expect.objectContaining({ id: home, kind: 'home' }),
+    ]));
+    await expect(outsider.run('groups_update', { group, kind: 'home' })).rejects.toMatchObject({ status: 404 });
+
+    const add = (date: string, phase?: string) => alex.run('expenses_add', {
+      group, payer: me.id, amount: '10.01', title: 'Trip expense', date, phase,
+    });
+    const beforeTrip = await add('2026-11-11');
+    const start = await add('2026-11-12');
+    const end = await add('2026-11-21');
+    const afterTrip = await add('2026-11-22');
+    expect([beforeTrip.phase, start.phase, end.phase, afterTrip.phase]).toEqual(['pre','during','during','post']);
+    const override = await add('2026-11-13','pre');
+    const list = (phase: string) => alex.run('expenses_list', { group, phase });
+    expect((await list('pre')).map((e: {id:string}) => e.id)).toEqual(expect.arrayContaining([beforeTrip.id,override.id]));
+    expect(await list('pre')).toHaveLength(2);
+    expect((await alex.run('groups_breakdown', { group }))[0].phases.pre).toEqual({ count: 2, amount: 2002 });
+
+    const edit = { group, expense: override.id, phase: 'auto' };
+    const preview = await alex.run('expenses_edit', edit);
+    expect(preview.after.phase).toBe('during');
+    await alex.run('expenses_edit', { ...edit, yes: true, revision: preview.revision });
+    expect(await list('pre')).toHaveLength(1);
+    expect(await list('during')).toHaveLength(3);
+
+    await alex.run('groups_update', { group, start: '2026-11-14' });
+    expect(await list('pre')).toHaveLength(3);
+    await alex.run('groups_update', { group, kind: 'home' });
+    expect(await list('pre')).toEqual([]);
+    expect((await alex.run('expenses_list', { group })).every((entry: object) => !('phase' in entry))).toBe(true);
+    await expect(add('2026-11-13','pre')).rejects.toMatchObject({ status: 422 });
+    await expect(outsider.run('expenses_list', { group, phase: 'pre' })).rejects.toMatchObject({ status: 404 });
+  });
+
   it('sets and clears trip exchange rates for active trip members only', async () => {
     const alex = runner(await authorize('rate-alex')), maya = runner(await authorize('rate-maya'));
-    const { id: trip } = await alex.run('groups_create', { name: 'Rio', self: 'Alex', currency: 'USD', placeholders: ['Maya'] });
+    const { id: trip } = await alex.run('groups_create', { name: 'Rio', self: 'Alex', kind: 'trip', start: '2026-11-20', end: '2026-11-25', currency: 'USD', placeholders: ['Maya'] });
     const rates = async () => (await alex.run('groups_show', { group: trip })).tripRates;
     const payer = (await alex.run('members_list', { group: trip })).find((m: any) => m.name === 'Alex').id;
     const args = { group: trip, title: 'Lunch', payer, amount: '50.00', currency: 'BRL', date: '2026-11-21' };

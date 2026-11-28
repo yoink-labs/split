@@ -46,6 +46,29 @@ struct GroupsView: View {
         }
     }
 
+    @ViewBuilder
+    private func groupSection(_ title: String, _ groups: [GroupSummary]) -> some View {
+        if !groups.isEmpty {
+            Section(title) {
+                ForEach(groups) { summary in
+                    Button { selection = summary.group.id } label: {
+                        GroupSidebarRow(summary: summary)
+                    }
+                    .buttonStyle(.plain)
+                    .listRowInsets(EdgeInsets(top: 6, leading: 14, bottom: 6, trailing: 14))
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .fill(selection == summary.group.id && size == .regular ? Palette.lime.opacity(0.28) : Color.clear)
+                            .padding(.horizontal, 6)
+                    )
+                    .tag(summary.group.id)
+                    .accessibilityLabel(accessibility(summary))
+                }
+            }
+        }
+    }
+
     private var sidebar: some View {
         List(selection: $selection) {
             Section {
@@ -81,23 +104,8 @@ struct GroupsView: View {
                     }
                 }
             }
-            Section {
-                ForEach(summaries) { summary in
-                    Button { selection = summary.group.id } label: {
-                        GroupSidebarRow(summary: summary)
-                    }
-                    .buttonStyle(.plain)
-                    .listRowInsets(EdgeInsets(top: 6, leading: 14, bottom: 6, trailing: 14))
-                    .listRowSeparator(.hidden)
-                    .listRowBackground(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .fill(selection == summary.group.id && size == .regular ? Palette.lime.opacity(0.28) : Color.clear)
-                            .padding(.horizontal, 6)
-                    )
-                    .tag(summary.group.id)
-                    .accessibilityLabel(accessibility(summary))
-                }
-            }
+            groupSection("Trips", summaries.filter { $0.group.kind == "trip" })
+            groupSection("Long-term & Home", summaries.filter { $0.group.kind != "trip" })
             if !archived.isEmpty {
                 Section {
                     Button {

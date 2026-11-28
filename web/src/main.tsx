@@ -698,6 +698,7 @@ function DemoLedger({ onExit }: { onExit: () => void }) {
             ...prev,
             entries: prev.entries.map((e) => e.id === eid ? {
               ...entry,
+              phase: entry.phase === null ? undefined : entry.phase ?? e.phase,
               ...(entry.bill ? { bill: { ...entry.bill, closed: entry.bill.items.every((item) => item.memberIDs.length > 0) } } : {}),
               editable: e.editable,
               recurrence: e.recurrence,

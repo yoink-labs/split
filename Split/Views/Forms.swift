@@ -38,7 +38,7 @@ struct CreateGroupView: View {
                             if !friend {
                                 Picker("Type", selection: $kind) {
                                     Text("Trip").tag("trip")
-                                    Text("Home").tag("home")
+                                    Text("Long-term / Home").tag("home")
                                 }
                                 .pickerStyle(.segmented)
                                 GroupMetadataFields(description: $description, start: $start, end: $end, isTrip: kind == "trip")
@@ -137,6 +137,10 @@ struct CreateGroupView: View {
         let participants = friend && people.isEmpty ? [MemberDraft(name: clean)] : people
         guard !clean.isEmpty, clean.count <= 80, participants.count <= 49, participants.allSatisfy({ $0.name.count <= 60 }), let id = session.userID else {
             error = "Use a shorter name and up to 49 other people."; return
+        }
+        if !friend && kind == "trip" && (start == nil || end == nil) {
+            error = "Choose a start and end date for the trip."
+            return
         }
         saving = true; error = nil
         do {

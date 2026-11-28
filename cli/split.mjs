@@ -90,6 +90,7 @@ function describeExpense(entry, names = {}, receipts = entry.receiptIDs?.join(',
     `  Receipt photos: ${receipts}`,
     `  Recurrence: ${entry.recurrence ?? 'off'}`
   ];
+  if (entry.phase) lines.push('  Trip phase: ' + ({ pre: 'Pre-trip', during: 'During trip', post: 'Post-trip' }[entry.phase] ?? entry.phase));
   if (entry.notes) lines.push(`  Notes: ${entry.notes}`);
   if (entry.handled) lines.push('  Handled outside Split');
   if (entry.exchange) {

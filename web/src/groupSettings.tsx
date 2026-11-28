@@ -1,3 +1,4 @@
+import { GroupTypePicker } from "./tripFields";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { Form, useLedger, value } from "./context";
@@ -76,6 +77,7 @@ export function GroupSettings({ g, showRates }: { g: Group; showRates: boolean }
   const navigate = useNavigate();
   const deleteDialog = useRef<HTMLDialogElement>(null);
   const me = g.members.find((m) => m.userID === user);
+  const [kind, setKind] = useState(g.kind === "trip" ? "trip" : "home");
   const [settingsSaved, setSettingsSaved] = useState(false);
 
   useEffect(() => {
@@ -95,15 +97,18 @@ export function GroupSettings({ g, showRates }: { g: Group; showRates: boolean }
         {g.canDelete && <a href="#delete-group">Delete group</a>}
       </nav>
       <div className="settings-grid">
-        <SettingsCard id="group-details" title="Group details" description="Edit the name, description, and dates.">
+        <SettingsCard id="group-details" title="Group details" description="Edit the name, type, description, and dates.">
           <Form
             label="Save group details"
             submit={async (f) => {
+              if (kind === "trip" && value(f, "endDate") && value(f, "endDate") < value(f, "startDate"))
+                throw new Error("End date must be on or after the start date.");
               await save(`/v1/groups/${g.id}/update`, {
+                kind: g.kind === "friend" ? undefined : kind,
                 name: value(f, "name"),
                 description: value(f, "description"),
-                startDate: value(f, "startDate") || null,
-                endDate: value(f, "endDate") || null,
+                startDate: kind === "trip" ? value(f, "startDate") || null : undefined,
+                endDate: kind === "trip" ? value(f, "endDate") || null : undefined,
               });
               setSettingsSaved(true);
               setTimeout(() => setSettingsSaved(false), 2000);
@@ -117,16 +122,17 @@ export function GroupSettings({ g, showRates }: { g: Group; showRates: boolean }
               Description
               <textarea name="description" defaultValue={g.description ?? ""} maxLength={400} placeholder="Notes about this trip or household…" />
             </label>
-            <div className="form-row">
+            {g.kind !== "friend" && <GroupTypePicker value={kind} onChange={setKind} />}
+            {kind === "trip" && <div className="form-row">
               <label className="field">
                 Start date
-                <input type="date" name="startDate" defaultValue={g.startDate ?? ""} />
+                <input type="date" name="startDate" required={g.kind !== "trip"} defaultValue={g.startDate ?? ""} />
               </label>
               <label className="field">
                 End date
-                <input type="date" name="endDate" defaultValue={g.endDate ?? ""} />
+                <input type="date" name="endDate" required={g.kind !== "trip"} defaultValue={g.endDate ?? ""} />
               </label>
-            </div>
+            </div>}
             {settingsSaved && <p className="ok-banner">Saved group details</p>}
           </Form>
         </SettingsCard>

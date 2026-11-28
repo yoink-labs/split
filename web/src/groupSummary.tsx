@@ -308,7 +308,7 @@ export function GroupSummary() {
   });
 
   const transfers = codes.flatMap((c) => groupTransfers(g, balances(entries, c)).map((t) => ({ ...t, currency: c })));
-  const range = tripRangeText(g.startDate, g.endDate);
+  const range = g.kind === "trip" ? tripRangeText(g.startDate, g.endDate) : "";
   const generated = new Date().toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
   const person: PersonLabel = (id) => {
     const name = g.members.find((member) => member.id === id)?.name ?? "Former member";

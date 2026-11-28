@@ -1,3 +1,4 @@
+import { groupKind } from './tripPhases';
 import { knownPerson, knownAccount } from './relationships';
 import { legacyPayment, paymentMethods, saveAccountPayments } from './paymentProfiles';
 import { preserveStatementAmount } from './exchange';
@@ -41,6 +42,11 @@ function saveMemberEmail(db:D1Database,groupID:string,memberID:string,userID:str
     SELECT id,? FROM (${activePlaceholder}) WHERE true
     ON CONFLICT(member_id) DO UPDATE SET email=excluded.email`)
     .bind(email,groupID,memberID,groupID,userID);
+}
+async function requireTripPhaseGroup(env:Env, entry:Entry) {
+  const group=await env.DB.prepare('SELECT kind,start_date AS startDate,end_date AS endDate FROM groups WHERE id=?')
+    .bind(entry.groupID).first<{kind:string;startDate:string|null;endDate:string|null}>();
+  if(!group || groupKind(group)!=='trip') throw new InputError('Trip phases are available only in trip groups.');
 }
 async function member(env:Env,groupID:string,userID:string) {
   const row=await env.DB.prepare('SELECT id FROM members WHERE group_id=? AND user_id=?').bind(groupID,userID).first();
@@ -116,7 +122,7 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
     const avatarURL = visible.find(m => m.userID===userID)?.avatarURL
       ?? (groups.length ? null : await env.DB.prepare('SELECT avatar_url FROM user_avatars WHERE user_id=?').bind(userID).first<string>('avatar_url'));
     const tripRates=new Map<string,Record<string,number>>();
-    if(groups.some(g=>g.kind==='trip')) {
+    if(groups.some(g=>groupKind(g)==='trip')) {
       try {
         const rows=(await env.DB.prepare(`SELECT r.group_id,r.currency,r.rate_e8 FROM trip_exchange_rates r
           JOIN members m ON m.group_id=r.group_id WHERE m.user_id=?`).bind(userID)
@@ -139,7 +145,7 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
         const key=aliases.get(id)??id;
         if(active.has(key)) defaults[key]=(defaults[key]??0)+w;
       }
-      return {...g,canDelete:creator===userID && roster.some(m=>m.userID===userID && !m.removedAt),simplify:Boolean(simplify),archived:Boolean(archivedAt),
+      return {...g,kind:groupKind({...g,startDate,endDate}),canDelete:creator===userID && roster.some(m=>m.userID===userID && !m.removedAt),simplify:Boolean(simplify),archived:Boolean(archivedAt),
         ...(description?{description}:{}),...(startDate?{startDate}:{}),...(endDate?{endDate}:{}),
         defaultWeights:defaults,
         ...(tripRates.has(g.id)?{tripRates:tripRates.get(g.id)}:{}),
@@ -186,7 +192,7 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
   if(path==='/v1/groups' && request.method==='POST') {
     const b=await body(request);
     const m=b.members as Member[];
-    if(!validID(b.id)||typeof b.name!=='string'||!b.name.trim()||b.name.length>80||!['trip','home','friend'].includes(String(b.kind))||!currencies.includes(b.currency as typeof currencies[number])||!Array.isArray(m)||m.length<1||m.length>50||m.some(x=>!x || typeof x!=='object')||new Set(m.map(x=>x.id)).size!==m.length||m.some(x=>!validID(x.id)||typeof x.name!=='string'||!x.name.trim()||x.name.length>60)||m.filter(x=>x.userID===userID).length!==1) throw new InputError('Check the group and its members.');
+    if(!validID(b.id)||typeof b.name!=='string'||!b.name.trim()||b.name.length>80||(b.kind!=null && !['trip','home','friend'].includes(String(b.kind)))||!currencies.includes(b.currency as typeof currencies[number])||!Array.isArray(m)||m.length<1||m.length>50||m.some(x=>!x || typeof x!=='object')||new Set(m.map(x=>x.id)).size!==m.length||m.some(x=>!validID(x.id)||typeof x.name!=='string'||!x.name.trim()||x.name.length>60)||m.filter(x=>x.userID===userID).length!==1) throw new InputError('Check the group and its members.');
     const existing=await env.DB.prepare('SELECT creator FROM groups WHERE id=?').bind(b.id).first<{creator:string}>();
     if(existing){ if(existing.creator!==userID)throw new HTTPError(409,'Group ID already used.'); return json({ok:true}); }
     const count=await env.DB.prepare('SELECT count(*) AS n FROM members WHERE user_id=?').bind(userID).first<{n:number}>();if((count?.n??0)>=100)throw new HTTPError(409,'Group limit reached.');
@@ -194,7 +200,7 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
     const startDate=optionalDay(b.startDate,'start date') ?? null;
     const endDate=optionalDay(b.endDate,'end date') ?? null;
     if(startDate && endDate && endDate < startDate) throw new InputError('End date must be on or after the start date.');
-    const fields=[b.id,b.name.trim(),b.kind,b.currency,userID,new Date().toISOString()];
+    const fields=[b.id,b.name.trim(),groupKind({kind:b.kind as string|undefined,startDate,endDate}),b.currency,userID,new Date().toISOString()];
     const inserts=[desc || startDate || endDate
       ? env.DB.prepare('INSERT INTO groups(id,name,kind,currency,creator,created_at,description,start_date,end_date) VALUES (?,?,?,?,?,?,?,?,?)').bind(...fields,desc,startDate,endDate)
       : env.DB.prepare('INSERT INTO groups(id,name,kind,currency,creator,created_at) VALUES (?,?,?,?,?,?)').bind(...fields)];
@@ -233,6 +239,7 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
     const b=await body(request,1_650_000); if(!validID(b.groupID)) throw new InputError('Invalid group.');
     await member(env,b.groupID,userID);
     const e=validateEntry(b,(await members(env,b.groupID)).map(m=>m.id),undefined,{reconcileBill:true});
+    if (e.phase) await requireTripPhaseGroup(env,e);
     if (e.bill) await requireActiveMember(env,b.groupID,userID);
     if(path==='/v1/settlements' && e.kind!=='settlement') throw new InputError('Choose a payment to confirm.');
     const payload=JSON.stringify(e);
@@ -317,11 +324,17 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
     if (!deleting) {
       if (old.kind==='settlement') throw new InputError('Payments cannot be edited.');
       const legacyOriginal=preserveStatementAmount(b.original,canonical);
-      const updated=validateEntry(legacyOriginal!==b.original ? preserveStatementAmount(b.entry,canonical) : b.entry,ids,canonical.bill,{reconcileBill:true});
+      let updated=validateEntry(legacyOriginal!==b.original ? preserveStatementAmount(b.entry,canonical) : b.entry,ids,canonical.bill,{reconcileBill:true});
       if (updated.bill || old.bill) await requireActiveMember(env,saved.group_id,userID);
       replacement=updated;
       if(updated.id!==revise[1] || updated.groupID!==saved.group_id || updated.createdAt!==old.createdAt || updated.kind!==old.kind || updated.refundOf!==old.refundOf)
         throw new InputError('Invalid edit.');
+      const requestedPhase=(b.entry as {phase?:unknown}).phase;
+      if(requestedPhase!==undefined && updated.phase!==canonical.phase) await requireTripPhaseGroup(env,updated);
+      if(requestedPhase===undefined && canonical.phase) {
+        // Older clients omit the override. Retain it in the canonical payload order.
+        updated=validateEntry({...updated,phase:canonical.phase},ids,canonical.bill);
+      }
       guard=updated.kind==='refund' ? await refundGuard(env.DB,updated,aliases) : await refundedExpenseGuard(env.DB,updated,aliases);
       if(Boolean(updated.handled)!==Boolean(canonical.handled)) {
         const viewer=(await env.DB.prepare('SELECT id FROM members WHERE group_id=? AND user_id=? AND removed_at IS NULL')
@@ -338,7 +351,9 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
     }
     const conditional=!deleting || b.original!==undefined;
     if (conditional) {
-      const original=validateEntry(preserveStatementAmount(b.original,canonical),ids,canonical.bill);
+      const submitted=preserveStatementAmount(b.original,canonical);
+      const original=validateEntry(canonical.phase && submitted && typeof submitted==='object' && !('phase' in submitted)
+        ? {...submitted,phase:canonical.phase} : submitted,ids,canonical.bill);
       if (JSON.stringify(original)!==JSON.stringify(canonical)) throw new HTTPError(409,'This entry changed. Refresh and try again.');
     }
     const statement=deleting

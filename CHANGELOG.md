@@ -20,6 +20,7 @@ is noted next to each release. The CLI is versioned separately with
 - Mark any expense pending with an optional note while its cost may still change. Pending expenses count toward balances, balances also show the confirmed-only amount, and settle up warns while anything is pending. Resolve one by confirming it, adjusting its amount, or turning it into a refund.
 - Find people on Split by full email or a 3+ letter name prefix and invite them to a group. Results show names and avatars only. A “Let people find me” setting, on by default, hides you from search.
 - An invitation inbox on web and iOS, with a badge, lets you accept or decline pending invitations. Accepting claims matching placeholder history.
+- Open the new Analytics tab on iOS for the same charts and totals as the web, to the cent: spending over time by day, week or month, by category, by person and by currency. Filter by group, date range and member, and tap any bar or row to list its expenses. On the iPhone Duo inner display and iPad, the charts and the transaction list sit side by side. Activity moves to Home → See all on a phone.
 - Manage group members, claim addresses, and invitations from the Members tab on web and iOS. Email or resend invitations and send sign-in reminders.
 - Open the Transactions tab on web and iOS to see each expense or settlement and its payment split.
 - Customize group PDFs with spending breakdowns by category, month, and person.
@@ -36,6 +37,8 @@ is noted next to each release. The CLI is versioned separately with
 ### Changed
 
 - The totals at the top of web Analytics now show every figure in full at any width or zoom, moving to two columns on narrower screens.
+- Long transaction lists on iOS load in pages: analytics drill-downs show 25 at a time, and friend history and member statements show 50 with Show more.
+
 - Transaction lists on the web Overview, Transactions tab and Analytics stay inside a scrolling frame with a fixed header and pages of rows, with a link to the full ledger. Large groups no longer make the page grow without limit.
 - Enter web expenses with searchable pickers and a live split preview, and explore daily or monthly spending by category, person, and housing.
 - Redesigned Splitwise import on the web with drag-and-drop CSV selection, clearer balance checks, and a mobile layout for matching people and reviewing entries.

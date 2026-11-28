@@ -1,5 +1,5 @@
 import { body, HTTPError, json } from './http';
-import { Entry, entryPayers, InputError, validID } from './ledger';
+import { allocate, Entry, entryPayers, InputError, validID } from './ledger';
 import { itemSplit, reconcileBill } from './items';
 import { resolveEntry } from './people';
 import { notifyActivity } from './notifications';
@@ -43,7 +43,7 @@ export async function receiptActivity(env:Env,entry:Entry,user:string,wasClosed:
 }
 
 export async function purchaseRoute(req:Request,env:Env,user:string,ownExpensesOnly=false):Promise<Response|undefined> {
-  const match=new URL(req.url).pathname.match(/^\/v1\/entries\/([\w-]+)\/(claim|close|receipts)(?:\/([\w-]+))?$/);
+  const match=new URL(req.url).pathname.match(/^\/v1\/entries\/([\w-]+)\/(claim|close|reopen|receipt-people|receipts)(?:\/([\w-]+))?$/);
   if(!match) return;
   const [,id,action,photo]=match;
   const row=await env.DB.prepare(`SELECT e.payload,m.id AS viewer,e.author FROM entries e JOIN members m ON m.group_id=e.group_id
@@ -68,67 +68,111 @@ export async function purchaseRoute(req:Request,env:Env,user:string,ownExpensesO
   const aliases=new Map(seats.filter(s=>s.canonical_id).map(s=>[s.id,s.canonical_id!]));
   const entry=resolveEntry(raw,aliases);
   const bill=entry.bill;
-  if(!bill) throw new HTTPError(409,'This receipt has no items.');
-  const wasClosed=bill.closed;
+  if(!bill && action!=='receipt-people') throw new HTTPError(409,'This receipt has no items.');
+  const wasClosed=bill?.closed ?? false;
+  if(action==='reopen' && !wasClosed) return json({ok:true,closed:false});
   const refunded=new Set((await env.DB.prepare(`SELECT j.value FROM entries r, json_each(json_extract(r.payload,'$.refundItems')) j
     WHERE r.group_id=? AND json_extract(r.payload,'$.refundOf')=? AND r.id NOT IN (SELECT entry_id FROM deleted_entries)`)
     .bind(raw.groupID,id).all<{value:string}>()).results.map(r=>r.value));
   const b=await body(req);
-  const ids=b.memberIDs;
-  if(!Array.isArray(ids) || ids.length>50 || new Set(ids).size!==ids.length || ids.some(id=>!seats.some(s=>s.id===id && !s.canonical_id))) throw new InputError('Choose group members.');
-  if(action==='close') {
-    const payer=seats.find(s=>s.id===entry.paidBy);
-    if(row.viewer!==entry.paidBy && !(payer?.user_id===null && row.author===user)) throw new HTTPError(403,'Only the payer can close this receipt.');
-    if(wasClosed) return json({ok:true,closed:true});
-    if(ids.some(id=>seats.some(s=>s.id===id && s.removed_at!==null))) throw new InputError('Choose active group members.');
-    if(!ids.length && bill.items.some(i=>!i.memberIDs.length)) throw new InputError('Choose who will cover the open items.');
-    if(bill.items.some(i=>!i.memberIDs.length && refunded.has(i.id))) throw new HTTPError(409,'An open item was refunded. Delete its refund before closing this receipt.');
-    for(const i of bill.items) if(!i.memberIDs.length) i.memberIDs=ids;
-  } else {
-    const item=bill.items.find(i=>i.id===b.itemID);
-    if(!item) throw new HTTPError(404,'Item not found.');
-    if(refunded.has(item.id)) throw new HTTPError(409,'This item was refunded. Delete its refund before changing who had it.');
-    if(!Array.isArray(b.original) || b.original.length>50 || new Set(b.original).size!==b.original.length || b.original.some(id=>!validID(id))) throw new InputError('Include the original claimants.');
-    if(b.mergeEdits!==undefined && typeof b.mergeEdits!=='boolean') throw new InputError('Choose whether to merge edits.');
-    let next=ids;
-    if(b.mergeEdits===true) {
-      const original=b.original;
-      if(original.some(id=>!seats.some(s=>s.id===id && !s.canonical_id))) throw new InputError('Refresh the group members.');
-      const removed=new Set(original.filter(id=>!ids.includes(id)));
-      next=[...new Set([...item.memberIDs.filter(id=>!removed.has(id)),...ids.filter(id=>!original.includes(id))])];
-    } else if(JSON.stringify(item.memberIDs)!==JSON.stringify(b.original)) throw new HTTPError(409,'The claims changed. Refresh and try again.');
-    if(next.some(id=>!item.memberIDs.includes(id) && seats.some(s=>s.id===id && s.removed_at!==null))) throw new InputError('Choose active group members.');
-    if(next.length>50) throw new InputError('Choose up to fifty claimants.');
-    const changed=JSON.stringify(item.memberIDs)!==JSON.stringify(next);
-    item.memberIDs=next;
-    if(b.shares!==undefined) {
-      if(!b.shares || typeof b.shares!=='object' || Array.isArray(b.shares)) throw new InputError('Check share weights.');
-      const nextShares:Record<string,number>=Object.assign(Object.create(null),item.shares);
-      for(const [mid,w] of Object.entries(b.shares as Record<string,unknown>)) {
-        if(!ids.includes(mid) || typeof w!=='number' || !Number.isSafeInteger(w) || w<1 || w>100_000) throw new InputError('Use positive share weights for selected claimants.');
-        if(!next.includes(mid)) continue;
-        nextShares[mid]=w;
+  const beforeItems=JSON.stringify(bill?.items);
+  if(action==='reopen') {
+    bill!.closed=false;
+  } else if(action==='receipt-people') {
+    const {add,remove}=b;
+    if(!Array.isArray(add) || !Array.isArray(remove) || add.length+remove.length>50 ||
+       new Set([...add,...remove]).size!==add.length+remove.length ||
+       add.some(id=>!seats.some(s=>s.id===id && !s.canonical_id && s.removed_at===null)) ||
+       remove.some(id=>!seats.some(s=>s.id===id && !s.canonical_id))) throw new InputError('Choose group members to add or remove.');
+    const change=(ids:string[])=>[...new Set([...ids.filter(id=>!remove.includes(id)),...add])];
+    if(bill) {
+      for(const item of bill.items) {
+        const next=change(item.memberIDs);
+        if(JSON.stringify(next)===JSON.stringify(item.memberIDs)) continue;
+        if(refunded.has(item.id)) throw new HTTPError(409,'An item was refunded. Delete its refund before changing who had it.');
+        if(next.length>50) throw new InputError('Choose up to fifty claimants per item.');
+        item.memberIDs=next;
+        if(item.shares) {
+          for(const id of Object.keys(item.shares)) if(!next.includes(id)) delete item.shares[id];
+          if(!Object.keys(item.shares).length) delete item.shares;
+        }
+        delete item.roundingSeats;
+        delete item.roundingWeights;
       }
-      for(const mid of Object.keys(nextShares)) if(!next.includes(mid)) delete nextShares[mid];
-      if(Object.keys(nextShares).length && Object.values(nextShares).some(w=>w!==100)) item.shares=nextShares;
-      else delete item.shares;
-    } else if(item.shares) {
-      for(const mid of Object.keys(item.shares)) if(!next.includes(mid)) delete item.shares[mid];
-      if(!Object.keys(item.shares).length) delete item.shares;
+    } else {
+      if(entry.kind!=='expense' || entry.combinedCount ||
+         !await env.DB.prepare('SELECT 1 FROM expense_receipts WHERE entry_id=? LIMIT 1').bind(id).first())
+        throw new HTTPError(409,'Choose an expense with a receipt photo.');
+      if(row.author!==user) throw new HTTPError(403,'Only the person who recorded this expense can change its direct split.');
+      const current=entry.splits.map(s=>s.memberID);
+      const next=change(current);
+      if(JSON.stringify(next)===JSON.stringify(current)) return json({ok:true,closed:null});
+      if(!next.length || next.length>50) throw new InputError('Choose between one and fifty people.');
+      const amounts=allocate(entry.amount,next.map(()=>1));
+      entry.splits=next.map((memberID,i)=>({memberID,amount:amounts[i]}));
+      entry.splitMode='equal';
     }
-    if(changed || Object.keys(item.shares??{}).length) {
-      delete item.roundingSeats;
-      delete item.roundingWeights;
+  } else if(bill) {
+    const ids=b.memberIDs;
+    if(!Array.isArray(ids) || ids.length>50 || new Set(ids).size!==ids.length || ids.some(id=>!seats.some(s=>s.id===id && !s.canonical_id))) throw new InputError('Choose group members.');
+    if(action==='close') {
+      const payer=seats.find(s=>s.id===entry.paidBy);
+      if(row.viewer!==entry.paidBy && !(payer?.user_id===null && row.author===user)) throw new HTTPError(403,'Only the payer can close this receipt.');
+      if(wasClosed) return json({ok:true,closed:true});
+      if(ids.some(id=>seats.some(s=>s.id===id && s.removed_at!==null))) throw new InputError('Choose active group members.');
+      if(!ids.length && bill.items.some(i=>!i.memberIDs.length)) throw new InputError('Choose who will cover the open items.');
+      if(bill.items.some(i=>!i.memberIDs.length && refunded.has(i.id))) throw new HTTPError(409,'An open item was refunded. Delete its refund before closing this receipt.');
+      for(const i of bill.items) if(!i.memberIDs.length) i.memberIDs=ids;
+    } else {
+      const item=bill.items.find(i=>i.id===b.itemID);
+      if(!item) throw new HTTPError(404,'Item not found.');
+      if(refunded.has(item.id)) throw new HTTPError(409,'This item was refunded. Delete its refund before changing who had it.');
+      if(!Array.isArray(b.original) || b.original.length>50 || new Set(b.original).size!==b.original.length || b.original.some(id=>!validID(id))) throw new InputError('Include the original claimants.');
+      if(b.mergeEdits!==undefined && typeof b.mergeEdits!=='boolean') throw new InputError('Choose whether to merge edits.');
+      let next=ids;
+      if(b.mergeEdits===true) {
+        const original=b.original;
+        if(original.some(id=>!seats.some(s=>s.id===id && !s.canonical_id))) throw new InputError('Refresh the group members.');
+        const removed=new Set(original.filter(id=>!ids.includes(id)));
+        next=[...new Set([...item.memberIDs.filter(id=>!removed.has(id)),...ids.filter(id=>!original.includes(id))])];
+      } else if(JSON.stringify(item.memberIDs)!==JSON.stringify(b.original)) throw new HTTPError(409,'The claims changed. Refresh and try again.');
+      if(next.some(id=>!item.memberIDs.includes(id) && seats.some(s=>s.id===id && s.removed_at!==null))) throw new InputError('Choose active group members.');
+      if(next.length>50) throw new InputError('Choose up to fifty claimants.');
+      const changed=JSON.stringify(item.memberIDs)!==JSON.stringify(next);
+      const weightsBefore=JSON.stringify(item.shares);
+      item.memberIDs=next;
+      if(b.shares!==undefined) {
+        if(!b.shares || typeof b.shares!=='object' || Array.isArray(b.shares)) throw new InputError('Check share weights.');
+        const nextShares:Record<string,number>=Object.assign(Object.create(null),item.shares);
+        for(const [mid,w] of Object.entries(b.shares as Record<string,unknown>)) {
+          if(!ids.includes(mid) || typeof w!=='number' || !Number.isSafeInteger(w) || w<1 || w>100_000) throw new InputError('Use positive share weights for selected claimants.');
+          if(!next.includes(mid)) continue;
+          nextShares[mid]=w;
+        }
+        for(const mid of Object.keys(nextShares)) if(!next.includes(mid)) delete nextShares[mid];
+        if(Object.keys(nextShares).length && Object.values(nextShares).some(w=>w!==100)) item.shares=nextShares;
+        else delete item.shares;
+      } else if(item.shares) {
+        for(const mid of Object.keys(item.shares)) if(!next.includes(mid)) delete item.shares[mid];
+        if(!Object.keys(item.shares).length) delete item.shares;
+      }
+      if(changed || JSON.stringify(item.shares)!==weightsBefore) {
+        delete item.roundingSeats;
+        delete item.roundingWeights;
+      }
     }
   }
-  entry.splits=itemSplit(bill,entry.paidBy);
-  reconcileBill(entry);
-  if(action==='close' && !bill.closed) throw new InputError('Receipt items, tax and tip must match the expense total.');
+  if(bill && action!=='reopen') {
+    if(action!=='close' && beforeItems===JSON.stringify(bill.items)) return json({ok:true,closed:wasClosed});
+    entry.splits=itemSplit(bill,entry.paidBy);
+    reconcileBill(entry);
+    if(action==='close' && !bill.closed) throw new InputError('Receipt items, tax and tip must match the expense total.');
+  }
   const guard=await refundedExpenseGuard(env.DB,entry,aliases);
   const saved=await env.DB.prepare(`UPDATE entries SET payload=? WHERE id=? AND payload=? AND id NOT IN (SELECT entry_id FROM deleted_entries)
     AND EXISTS (SELECT 1 FROM members WHERE group_id=entries.group_id AND user_id=? AND removed_at IS NULL)${guard?' AND '+guard.sql:''}`)
     .bind(JSON.stringify(entry),id,row.payload,user,...(guard?.binds??[])).run();
   if(!saved.meta.changes) throw new HTTPError(409,'This receipt changed. Refresh and try again.');
   await receiptActivity(env,entry,user,wasClosed,raw);
-  return json({ok:true,closed:bill.closed});
+  return json({ok:true,closed:bill?.closed ?? null});
 }

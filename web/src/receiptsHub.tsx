@@ -416,18 +416,20 @@ export function ReceiptsHub({
     void reloadInbox();
   }, [reloadInbox]);
   const receiptEntries = entries.filter((e) => e.bill || (e.receiptIDs && e.receiptIDs.length > 0));
-  const [selectedID, setSelectedID] = useState<string>(
-    () => initialEntryID || receiptEntries[0]?.id || "",
-  );
+  const [selectedID, setSelectedID] = useState(initialEntryID ?? "");
   const [busyKey, setBusyKey] = useState("");
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
+  const [editingPeople, setEditingPeople] = useState(false);
+  const [peopleChanges, setPeopleChanges] = useState<Record<string, string>>({});
   const [closingOpen, setClosingOpen] = useState(false);
   const [closeMembers, setCloseMembers] = useState<string[]>(() =>
     g.members.filter((m) => !m.removed).map((m) => m.id),
   );
 
-  const selected = receiptEntries.find((e) => e.id === selectedID) ?? receiptEntries[0];
+  const selected = receiptEntries.find((e) => e.id === selectedID)
+    ?? receiptEntries.find((e) => e.bill && !e.bill.closed)
+    ?? receiptEntries[0];
 
   const inboxPanel = (
     <>
@@ -454,8 +456,12 @@ export function ReceiptsHub({
     );
   }
 
-  const openList = receiptEntries.filter((e) => e.bill && !e.bill.closed);
-  const closedList = receiptEntries.filter((e) => !e.bill || e.bill.closed);
+  const sections = [
+    { title: "Needs assignment", status: (e: Expense) => `${e.bill?.items.filter((i) => !i.memberIDs.length).length} unassigned`, entries: receiptEntries.filter((e) => e.bill && !e.bill.closed && e.bill.items.some((i) => !i.memberIDs.length)) },
+    { title: "Open", status: () => "All items assigned", entries: receiptEntries.filter((e) => e.bill && !e.bill.closed && e.bill.items.every((i) => i.memberIDs.length)) },
+    { title: "Closed", status: () => "Closed", entries: receiptEntries.filter((e) => e.bill?.closed) },
+    { title: "Paired photos", status: () => "Direct split", entries: receiptEntries.filter((e) => !e.bill) },
+  ];
 
   const bill = selected?.bill;
   const gross = bill ? grossItems(bill) : [];
@@ -473,6 +479,7 @@ export function ReceiptsHub({
     nextMemberIDs: string[],
     nextShares: Record<string, number>,
   ) {
+    setSelectedID(entry.id);
     setBusyKey(item.id);
     setError("");
     try {
@@ -521,7 +528,22 @@ export function ReceiptsHub({
     }
   }
 
+  async function manageReceipt(id: string, action: string, payload: unknown) {
+    setSelectedID(id);
+    setBusyKey(id);
+    setError("");
+    try {
+      await save(`/v1/entries/${id}/${action}`, payload);
+      setEditingPeople(false);
+    } catch (error) {
+      setError(errorText(error, "Could not update the receipt."));
+    } finally {
+      setBusyKey("");
+    }
+  }
+
   function selectReceipt(id: string) {
+    setEditingPeople(false);
     setSelectedID(id);
     setClosingOpen(false);
     setError("");
@@ -535,74 +557,31 @@ export function ReceiptsHub({
         {/* Left Pane: Receipts List */}
         <div className="card receipts-list-pane">
           <div className="receipts-list-scroll">
-            {openList.length > 0 && (
-              <div className="receipts-list-group">
+            {sections.filter((section) => section.entries.length).map((section) => (
+              <section className="receipts-list-group" key={section.title}>
                 <div className="receipts-list-subhead">
-                  <span className="warn">Needs claiming</span>
-                  <span className="tag tag-warn">{openList.length}</span>
+                  <h3>{section.title}</h3>
+                  <span className="tag">{section.entries.length}</span>
                 </div>
-                {openList.map((e) => {
-                  const openCount = e.bill?.items.filter((i) => !i.memberIDs.length).length ?? 0;
-                  return (
-                    <button
-                      key={e.id}
-                      type="button"
-                      className={"receipt-list-item" + (selected?.id === e.id ? " active" : "")}
-                      disabled={Boolean(busyKey)}
-                      onClick={() => selectReceipt(e.id)}
-                    >
-                      <div className="receipt-list-top">
-                        <strong>{e.title}</strong>
-                        <span className="num">{homeMoney.entry(e)}</span>
-                      </div>
-                      <div className="receipt-list-sub">
-                        <span className="muted">{shortDate(e.createdAt)} · {memberName(g, e.paidBy)}</span>
-                        {openCount > 0 ? (
-                          <span className="warn">{openCount} open</span>
-                        ) : (
-                          <span className="pos">All claimed</span>
-                        )}
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-
-            {closedList.length > 0 && (
-              <div className="receipts-list-group">
-                <div className="receipts-list-subhead">
-                  <span className="muted">Closed & photos</span>
-                  <span className="tag">{closedList.length}</span>
-                </div>
-                {closedList.map((e) => (
-                  <button
-                    key={e.id}
-                    type="button"
+                {section.entries.map((e) => (
+                  <button key={e.id} type="button"
                     className={"receipt-list-item" + (selected?.id === e.id ? " active" : "")}
-                    disabled={Boolean(busyKey)}
-                    onClick={() => selectReceipt(e.id)}
-                  >
-                    <div className="receipt-list-top">
+                    aria-pressed={selected?.id === e.id}
+                    disabled={Boolean(busyKey)} onClick={() => selectReceipt(e.id)}>
+                    <span className="receipt-list-top">
                       <strong>{e.title}</strong>
                       <span className="num">{homeMoney.entry(e)}</span>
-                    </div>
-                    <span className="muted receipt-list-sub">
-                      {shortDate(e.createdAt)} · {e.bill?.closed ? "Closed" : "Photo attached"}
                     </span>
+                    <span className="receipt-list-sub muted">{section.status(e)} · {shortDate(e.createdAt)}</span>
+                    <span className="receipt-list-people">{e.splits.map((split) => memberName(g, split.memberID)).join(", ")}</span>
                   </button>
                 ))}
-              </div>
-            )}
+              </section>
+            ))}
           </div>
         </div>
 
-        {/* Center Pane: Zoomable Receipt Photo */}
-        {selected && (
-          <ReceiptViewer key={selected.id} entry={selected} entries={entries} onMoved={() => void reloadInbox()} />
-        )}
 
-        {/* Right Pane: Interactive Fractional Claiming */}
         {selected && (
           <div className="card receipts-detail-pane">
             <div className="card-head">
@@ -621,6 +600,37 @@ export function ReceiptsHub({
                 <span className="tag">Standard split</span>
               )}
             </div>
+
+            {canClaim && (bill || (!selected.combinedCount && (demo || selected.editable))) && (
+              <div className="receipt-management-actions">
+                {bill?.closed && <button type="button" className="btn btn-sm" disabled={Boolean(busyKey)}
+                  onClick={() => void manageReceipt(selected.id, "reopen", {})}>Reopen receipt</button>}
+                <button type="button" className="btn btn-sm" disabled={Boolean(busyKey)} aria-expanded={editingPeople}
+                  onClick={() => { setEditingPeople(!editingPeople); setPeopleChanges({}); }}>Edit people</button>
+              </div>
+            )}
+            {editingPeople && (
+              <form className="receipts-close-bar receipt-edit-people" onSubmit={(event) => {
+                event.preventDefault();
+                const ids = (action: string) => Object.keys(peopleChanges).filter((id) => peopleChanges[id] === action);
+                void manageReceipt(selected.id, "receipt-people", { add: ids("add"), remove: ids("remove") });
+              }}>
+                <p className="muted">{bill ? "Apply changes to every item. Edit individual items below." : "Changing people gives everyone an equal share."}</p>
+                <div className="receipt-people-scroll">
+                {g.members.filter((m) => !m.removed || selected.splits.some((s) => s.memberID === m.id)).map((m) => (
+                  <label className="receipt-person-edit" key={m.id}>
+                    <span><Avatar name={m.name} avatarURL={m.avatarURL} size={22} /> {m.name}</span>
+                    <select aria-label={`Change ${m.name}’s assignment`} value={peopleChanges[m.id] ?? ""} onChange={(event) => setPeopleChanges({ ...peopleChanges, [m.id]: event.target.value })}>
+                      <option value="">Keep as is</option>
+                      {!m.removed && <option value="add">Add</option>}
+                      <option value="remove">Remove</option>
+                    </select>
+                  </label>
+                ))}
+                </div>
+                <button className="btn btn-sm btn-primary" disabled={Boolean(busyKey) || !Object.values(peopleChanges).some(Boolean)}>Save people</button>
+              </form>
+            )}
 
             {error && <p className="error-banner" role="alert" style={{ margin: "10px 14px 0" }}>{error}</p>}
 
@@ -742,6 +752,7 @@ export function ReceiptsHub({
                               >
                                 <button
                                   type="button"
+                                  aria-pressed={claimed}
                                   disabled={!canClaim || Boolean(busyKey)}
                                   onClick={() => toggleMember(selected, item, m.id)}
                                   style={{
@@ -825,6 +836,9 @@ export function ReceiptsHub({
               </div>
             )}
           </div>
+        )}
+        {selected && (
+          <ReceiptViewer key={selected.id} entry={selected} entries={entries} onMoved={() => void reloadInbox()} />
         )}
       </div>
     </div>

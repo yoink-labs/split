@@ -187,6 +187,8 @@ split items claim --group GROUP_ID --expense EXPENSE_ID --item ITEM_ID
 split items claim --group GROUP_ID --expense EXPENSE_ID --item ITEM_ID --member MEMBER_ID --share 0.5
 split items assign --group GROUP_ID --expense EXPENSE_ID --item ITEM_ID --participants '["A","B"]' --shares '[2,1]'
 split items claim --group GROUP_ID --expense EXPENSE_ID --item ITEM_ID --member MEMBER_ID --action remove
+split receipts reopen --group GROUP_ID --expense EXPENSE_ID
+split receipts people --group GROUP_ID --expense EXPENSE_ID --add '["MEMBER_ID"]'
 split items close --group GROUP_ID --expense EXPENSE_ID --participants '["MEMBER_ID"]'
 split receipts list --group GROUP_ID --expense EXPENSE_ID
 split receipts get --group GROUP_ID --expense EXPENSE_ID --photo PHOTO_ID

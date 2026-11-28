@@ -47,7 +47,7 @@ struct ExpenseGroup: Codable, Identifiable, Equatable {
         endDate = endDay
     }
 }
-struct Portion: Codable, Equatable { var memberID: String; var amount: Int64 }
+struct Portion: Codable, Equatable { var memberID: String; var amount: Int64; var nights: Int? = nil }
 struct Payer: Codable, Equatable, Identifiable {
     var memberID: String
     var amount: Int64
@@ -63,14 +63,15 @@ struct EntryComment: Codable, Identifiable, Equatable {
     var mine: Bool
 }
 enum SplitMode: String, Codable, CaseIterable {
-    case equal, exact, percent, shares, adjustment
-    var title: String { switch self { case .equal: "Equally"; case .exact: "Amounts"; case .percent: "Percent"; case .shares: "Shares"; case .adjustment: "Adjustment" } }
-    var shortTitle: String { switch self { case .equal: "Equally"; case .exact: "Unequally"; case .percent: "Percent"; case .shares: "Shares"; case .adjustment: "Adjust" } }
+    case equal, exact, percent, shares, adjustment, nights
+    var title: String { switch self { case .equal: "Equally"; case .exact: "Amounts"; case .percent: "Percent"; case .shares: "Shares"; case .nights: "Nights"; case .adjustment: "Adjustment" } }
+    var shortTitle: String { switch self { case .equal: "Equally"; case .exact: "Unequally"; case .percent: "Percent"; case .shares: "Shares"; case .nights: "Nights"; case .adjustment: "Adjust" } }
     var detail: String {
         switch self {
         case .equal: "Everyone in the split pays the same amount."
         case .exact: "Type each person’s exact share. The shares must add up to the total."
         case .percent: "Give each person a percentage. Percentages must add up to 100%."
+        case .nights: "Enter how many nights each person stayed."
         case .shares: "Use relative weights, like 2 shares for a couple and 1 for one person."
         case .adjustment: "Start from an equal split, then add or subtract an amount for each person."
         }
@@ -107,6 +108,12 @@ struct LedgerEntry: Codable, Identifiable, Equatable {
     var pending: Bool? = nil
     var pendingNote: String? = nil
     var combinedCount: Int? = nil
+    var spread: ExpenseSpread? = nil
+    var usesNights: Bool { splits.contains { $0.nights != nil } }
+    var nightRate: Int64 {
+        let nights = splits.reduce(Int64(0)) { $0 + Int64($1.nights ?? 0) }
+        return nights > 0 ? (amount + nights / 2) / nights : 0
+    }
     /// Payers in canonical form. Older entries paid by one person.
     var allPayers: [Payer] {
         if let payers, !payers.isEmpty { return payers }
@@ -250,6 +257,16 @@ enum Ledger {
     }
     static func split(total: Int64, people: [String], mode: SplitMode, values: [String: String]) throws -> [Portion] {
         guard !people.isEmpty, Set(people).count == people.count, total > 0, total <= Money.maxAmount else { throw LedgerError.invalid("Choose participants and a valid amount.") }
+        if mode == .nights {
+            let nights = try people.map { id in
+                guard let count = Int(values[id] ?? ""), (1...366).contains(count) else {
+                    throw LedgerError.invalid("Enter a whole number from 1 to 366 for each person’s nights.")
+                }
+                return count
+            }
+            let amounts = try allocate(total: total, weights: nights.map(Int64.init))
+            return people.indices.map { Portion(memberID: people[$0], amount: amounts[$0], nights: nights[$0]) }
+        }
         let amounts: [Int64]
         if mode == .equal { amounts = try allocate(total: total, weights: people.map { _ in 1 }) }
         else if mode == .adjustment {

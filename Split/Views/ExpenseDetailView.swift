@@ -74,7 +74,7 @@ struct EntryDetails: View {
     private var canEdit: Bool { editable && entry.kind == "expense" }
     private var repeatAllowed: Bool {
         guard editable, !store.isDemo else { return false }
-        return entry.kind == "expense" && entry.bill == nil && entry.exchange == nil
+        return entry.kind == "expense" && entry.bill == nil && entry.exchange == nil && entry.spread == nil
     }
     private var liked: Bool { optimisticLike ?? (entry.likedByMe == true) }
     private var likeCount: Int {
@@ -102,6 +102,7 @@ struct EntryDetails: View {
         return "\(first) and \(names.count - 1) others paid"
     }
     private var splitSubtitle: String? {
+        if entry.usesNights { return "Split by nights" }
         if entry.bill != nil { return "Receipt items · \(entry.splitMode.title)" }
         if entry.splitMode == .equal { return "Split equally" }
         return entry.splitMode.title
@@ -629,6 +630,11 @@ struct EntryDetails: View {
                     title: entry.isSettlement ? "Paid to" : entry.isRefund ? "Credited to" : "Split with",
                     subtitle: entry.isSettlement || entry.isRefund ? nil : splitSubtitle
                 )
+                if let spread = entry.spread {
+                    Text("First day \(spread.start) · End date \(spread.end) (excluded)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 ForEach(entry.splits, id: \.memberID) { portion in
                     NavigationLink(value: LedgerRoute.member(group: liveGroup.id, seat: portion.memberID)) {
                         HStack(spacing: 10) {
@@ -637,6 +643,11 @@ struct EntryDetails: View {
                                 Text(displayName(portion.memberID))
                                     .font(.subheadline.weight(.medium))
                                     .foregroundStyle(Palette.ink)
+                                if let nights = portion.nights {
+                                    Text("\(nights) × \(Money.text(entry.nightRate, entry.currency))/night")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
                                 if entry.kind == "expense",
                                    let payer = entry.allPayers.first(where: { $0.memberID == portion.memberID }) {
                                     Text("paid \(fx.portionText(entry, memberID: payer.memberID, paid: true))")

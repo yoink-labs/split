@@ -30,6 +30,7 @@ is noted next to each release. The CLI is versioned separately with
 
 ### Changed
 
+- The totals at the top of web Analytics now show every figure in full at any width or zoom, moving to two columns on narrower screens.
 - Transaction lists on the web Overview, Transactions tab and Analytics stay inside a scrolling frame with a fixed header and pages of rows, with a link to the full ledger. Large groups no longer make the page grow without limit.
 - Enter web expenses with searchable pickers and a live split preview, and explore daily or monthly spending by category, person, and housing.
 - Redesigned Splitwise import on the web with drag-and-drop CSV selection, clearer balance checks, and a mobile layout for matching people and reviewing entries.

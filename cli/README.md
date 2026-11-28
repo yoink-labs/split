@@ -54,7 +54,9 @@ split activity --group "$GROUP"
 
 Replace sample IDs with the IDs in your group. Enter money as decimal major units. Responses use integer minor units, so USD 24.50 appears as `2450`. Balances stay separate by currency. Equal splits default to every member. For exact and percent splits, supply values in participant order. Use `settle up` to request approval for a payment you made or to record a payment you received. Payments you received are confirmed when you record them. Pending requests appear in `activity` for the payer and recipient and enter the ledger once approved.
 
-Only the author can edit or delete an expense. Preview first. Pass the returned revision to commit that exact change. A stale revision fails. The CLI also fetches and prints the current preview before each confirmed write.
+The expense list includes the date, payer names and a `shortID` accepted by `expenses show`. Foreign expenses use a saved trip rate when available. To override it, pass the group currency per unit of expense currency, for example `--currency BRL --rate 0.18` in a USD group. Without either rate, the result warns that the expense uses a separate balance. The `exchange` object records the rate, source and rate date. Imported expenses keep their original transaction date. A rate provider can return an earlier published date on weekends or holidays.
+
+Only the author can edit or delete an expense. Preview first. Pass the returned revision to commit that exact change. A stale revision fails. A confirmed edit prints just the result. A confirmed deletion prints the preview to stderr.
 
 ```sh
 split expenses edit --group "$GROUP" --expense "$EXPENSE" --title "Dinner for two"

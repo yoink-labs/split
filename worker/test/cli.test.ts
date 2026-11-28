@@ -282,6 +282,7 @@ describe('CLI and MCP', () => {
     await expect(run('expenses_add',{group,title:'Bad',amount:'10.00',payer:a,payers:[{member:a,amount:'5.00'}]})).rejects.toMatchObject({status:422});
 
     const photo = btoa('\xff\xd8\xff' + '\x00'.repeat(64) + '\xff\xd9');
+    await expect(run('receipts_add',{group,expense:dinner.id,photos:[btoa('%PDF-1.7 test receipt')]})).rejects.toThrow('PDF receipts are unsupported');
     const attached = await run('receipts_add',{group,expense:dinner.id,photos:[photo]});
     expect(await run('receipts_list',{group,expense:dinner.id})).toEqual(attached.attached);
 

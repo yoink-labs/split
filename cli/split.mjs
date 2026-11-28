@@ -198,6 +198,8 @@ export async function main(argv = process.argv.slice(2), io = terminal()) {
       const typed = await io.ask('Type the group name to delete it for everyone: ');
       if (typed.trim() !== clean(preview.name)) throw new Error('The name did not match. Nothing was deleted.');
       values.revision = preview.revision;
+    } else if (tool.name === 'expenses_edit' && values.yes) {
+      if (!values.revision) values.revision = (await run({ ...values, yes:false })).revision;
     } else if (tool.annotations.destructiveHint && values.yes) {
       const preview = await run({ ...values, yes:false });
       console.error(JSON.stringify(preview));

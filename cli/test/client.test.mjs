@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFile, spawnSync } from 'node:child_process';
@@ -62,13 +62,14 @@ test('the release archive contains every CLI module and reports its automatic re
 });
 test('photo paths become receipt JPEGs and base64 passes through untouched', async () => {
   const { resolvePhotos } = await import('../lib/photos.mjs');
-  const { mkdtemp, writeFile } = await import('node:fs/promises');
   const dir = await mkdtemp(join(tmpdir(), 'split-photo-test-'));
   const jpeg = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff]), Buffer.alloc(32), Buffer.from([0xff, 0xd9])]);
   await writeFile(join(dir, 'r.jpg'), jpeg);
   const [fromPath, passthrough] = await resolvePhotos([join(dir, 'r.jpg'), '/9j/notAFile']);
   assert.equal(fromPath, jpeg.toString('base64'));
   assert.equal(passthrough, '/9j/notAFile');
+  await writeFile(join(dir, 'document.bin'), '%PDF-1.7');
+  await assert.rejects(resolvePhotos([join(dir, 'document.bin')]), /PDF receipts are unsupported/);
   await rm(dir, { recursive: true, force: true });
 });
 test('every web action has a CLI command with file flags where they help', () => {
@@ -84,7 +85,7 @@ test('every web action has a CLI command with file flags where they help', () =>
   assert.match(run(['groups','export','--help']).stdout, /--out PATH/);
 });
 
-test('receipt downloads send a photo ID and JSON mode writes both kinds of output files', async t => {
+test('CLI downloads write files and confirmed edits print one result', async t => {
   const launcher = fileURLToPath(new URL('../bin/split', import.meta.url));
   const dir = await mkdtemp(join(tmpdir(), 'split-cli-download-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
@@ -98,7 +99,7 @@ test('receipt downloads send a photo ID and JSON mode writes both kinds of outpu
     for await (const chunk of req) chunks.push(chunk);
     const payload = JSON.parse(Buffer.concat(chunks).toString('utf8'));
     requests.push(payload);
-    const result = payload.name === 'receipts_get'
+    const result = payload.name === 'expenses_edit' ? { applied: true } : payload.name === 'receipts_get'
       ? { data: jpeg.toString('base64') }
       : { content: payload.arguments.format === 'json' ? content : csv };
     res.end(JSON.stringify(result));
@@ -114,6 +115,9 @@ test('receipt downloads send a photo ID and JSON mode writes both kinds of outpu
   const receipt = await run(['receipts', 'get', '--group', group, '--expense', expense, '--photo', photo, '--out', receiptPath, '--json']);
   const exported = await run(['groups', 'export', '--group', group, '--format', 'json', '--out', exportPath, '--json']);
   const ledger = await run(['groups', 'export', '--group', group, '--out', ledgerPath, '--json']);
+  const edit = await run(['expenses', 'edit', '--group', group, '--expense', expense, '--yes', '--revision', 'revision', '--json']);
+  assert.equal(edit.stderr, '');
+  assert.deepEqual(JSON.parse(edit.stdout), { applied: true });
   assert.deepEqual(JSON.parse(receipt.stdout), { saved: receiptPath });
   assert.deepEqual(JSON.parse(exported.stdout), { saved: exportPath });
   assert.deepEqual(JSON.parse(ledger.stdout), { saved: ledgerPath });
@@ -123,7 +127,8 @@ test('receipt downloads send a photo ID and JSON mode writes both kinds of outpu
   assert.deepEqual(requests, [
     { name: 'receipts_get', arguments: { group, expense, photo } },
     { name: 'groups_export', arguments: { group, format: 'json' } },
-    { name: 'groups_export', arguments: { group } }
+    { name: 'groups_export', arguments: { group } },
+    { name: 'expenses_edit', arguments: { group, expense, yes: true, revision: 'revision' } }
   ]);
 });
 

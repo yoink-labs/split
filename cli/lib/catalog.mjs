@@ -34,7 +34,7 @@ const receiptBill = {
 };
 const receiptPhotos = {
   type: 'array',
-  description: 'Up to four base64-encoded JPEG receipt photos (<= 240 KiB each). On the command line pass --photo PATH; through the local split mcp server you may pass absolute file paths. Both convert HEIC/PNG and shrink images for you.',
+  description: 'Up to four JPEG receipt photos (240 KiB each), encoded as base64. Pass --photo PATH on the command line or absolute paths to local split mcp. On macOS these paths also support HEIC/PNG and image resizing. Convert PDFs to an image first.',
   items: { type: 'string', minLength: 16, maxLength: 327680 },
   minItems: 1,
   maxItems: 4
@@ -46,7 +46,7 @@ const payerSplit = {
   minItems: 1, maxItems: 50
 };
 const allocation = {
-  rate: { ...text('Manual rate, group currency units per one expense currency.'), pattern:'^[0-9]{1,8}([.][0-9]{1,8})?$' },
+  rate: { ...text('Group currency per 1 unit of expense currency. For a BRL expense in a USD group, --rate 0.18 means 1 BRL = 0.18 USD. On add, a saved trip rate is used when available.'), pattern:'^[0-9]{1,8}([.][0-9]{1,8})?$' },
   category: text('Spending category.',50), title: text('Expense description.'), amount: money, payer: member, currency,
   notes: text('Optional notes on this expense.', 2000),
   payers: payerSplit,
@@ -135,14 +135,14 @@ export const tools = [
     email: text('Optional email for verified matching. Use with --member or --name.',254)
   }, ['group']),
   op('join','Claim an invited member slot with a Split invite link or code.', { invite: text('Invite link or code.',512) }, ['invite']),
-  op('expenses_list','List expenses in a group. Amounts in results are integer minor units.', { group }, ['group'], true),
+  op('expenses_list','List expenses with dates, payers and IDs. Amounts in results are integer minor units.', { group }, ['group'], true),
   op('expenses_add','Record a standard or itemized expense. Supply an amount for standard expenses. Itemized expenses use the sum of the bill, and any supplied amount must match it.', {
     group, ...allocation,
     date: { ...text('Optional expense date YYYY-MM-DD.', 10), pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
     bill: receiptBill,
     photos: receiptPhotos
   }, ['group','title','payer']),
-  op('expenses_show','Show one expense in full: payers, splits, exchange rate, receipt items, photos, comments and likes.', { group, expense }, ['group','expense'], true),
+  op('expenses_show','Show one expense in full, including payers, splits, exchange, receipts, comments and likes.', { group, expense: id('Full expense ID or a unique prefix of at least eight characters from expenses list.') }, ['group','expense'], true),
   op('expenses_like','Like or unlike an expense.', { group, expense }, ['group','expense']),
   op('comments_list','List comments on an expense.', { group, expense }, ['group','expense'], true),
   op('comments_add','Comment on an expense.', { group, expense, text: text('Comment.', 2000) }, ['group','expense','text']),

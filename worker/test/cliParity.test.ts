@@ -215,8 +215,20 @@ describe('CLI parity', () => {
     const alex = runner(await authorize('rate-alex')), maya = runner(await authorize('rate-maya'));
     const { id: trip } = await alex.run('groups_create', { name: 'Rio', self: 'Alex', currency: 'USD', placeholders: ['Maya'] });
     const rates = async () => (await alex.run('groups_show', { group: trip })).tripRates;
+    const payer = (await alex.run('members_list', { group: trip })).find((m: any) => m.name === 'Alex').id;
+    const args = { group: trip, title: 'Lunch', payer, amount: '50.00', currency: 'BRL', date: '2026-11-21' };
+    const unconverted = await alex.run('expenses_add', args);
+    expect(unconverted).toMatchObject({ currency: 'BRL', exchange: null, warning: expect.stringContaining('separate balance') });
     expect(await alex.run('groups_rate', { group: trip, currency: 'BRL', rate: '0.18' })).toMatchObject({ target: 'USD', rate: '0.18' });
     expect(await rates()).toEqual({ BRL: 18_000_000 });
+    const converted = await alex.run('expenses_add', args);
+    expect(converted).toMatchObject({ amount: 5000, settlementAmount: 900,
+      exchange: { source: 'Trip', date: args.date, rateE8: 18_000_000, target: 'USD' } });
+    expect(await alex.run('expenses_add', { ...args, rate: '0.185' })).toMatchObject({
+      exchange: { source: 'Manual', rateE8: 18_500_000 }, settlementAmount: 925 });
+    const listing = (await alex.run('expenses_list', { group: trip })).find((e: any) => e.id === converted.id);
+    expect(listing).toMatchObject({ date: args.date, shortID: converted.id.slice(0,8), payerNames: [{ memberID: payer, name: 'Alex', amount: 5000 }] });
+    expect(await alex.run('expenses_show', { group: trip, expense: listing.shortID })).toMatchObject({ id: converted.id });
     await alex.run('groups_rate', { group: trip, currency: 'ARS', rate: '0.00105' });
     expect((await rates()).ARS).toBe(105_000);
     await alex.run('groups_rate', { group: trip, currency: 'BRL', rate: 'none' });

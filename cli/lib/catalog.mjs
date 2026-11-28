@@ -111,7 +111,7 @@ export const tools = [
     date:{ ...text('Optional date YYYY-MM-DD.', 10), pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
     pending:{type:'boolean',description:'Mark the refund pending until it arrives.'}, pendingNote:text('Optional reason it is pending.',500)},['group']),
   op('expenses_repeat','Set or cancel the schedule for your fixed-currency expense.',{group,expense,cadence:enumeration('Repeat cadence: off, daily, weekly, monthly, or yearly.',['off','daily','weekly','monthly','yearly'])},['group','expense','cadence']),
-  op('groups_daily','Daily costs per person with each expense and refund itemized. Set currency to your home currency to convert, or omit it for original currencies.',{group,member,currency},['group'],true),
+  op('groups_daily','Daily costs per person with each expense and refund itemized. Set currency to your home currency to convert, or omit it for original currencies.',{group,member,currency:{...currency,description:'Three-letter currency to convert daily costs into. Omit this flag to keep original currencies.'}},['group'],true),
   op('groups_breakdown','Spending, categories, months, paid, shares, ledger net and suggested transfers by currency. Ledger net includes handled expenses. Suggested transfers use outstanding balances. Provide a member ID for their expense detail.',{group,member},['group'],true),
   op('items_open','List open purchases with tax and tip included in each gross amount.',{group},['group'],true),
   op('items_list','List a transaction’s items, including the whole-amount item for transactions without a receipt bill, with exact portions and any share multipliers.',{group,expense},['group','expense'],true),

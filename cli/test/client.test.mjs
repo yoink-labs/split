@@ -36,6 +36,7 @@ test('offline version, help and per-command flags work through the installed lau
   assert.match(run(['expenses','edit','--help']).stdout,/--revision/);
   assert.match(run(['members','update','--help']).stdout,/--email/);
   assert.match(run(['invite','--help']).stdout,/--email/);
+  assert.match(run(['groups','daily','--help']).stdout,/--currency[^\n]+Omit this flag to keep original currencies/);
   assert.match(run(['groups','create','--placeholders','nonsense','--json']).stderr,/JSON array/);
   assert.equal(run(['groups','list','--unknown']).status,1);
 });

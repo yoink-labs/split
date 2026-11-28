@@ -12,6 +12,8 @@ is noted next to each release. The CLI is versioned separately with
 
 ### Added
 
+- Split stays by nights and spread expenses over a date range. See each person’s daily costs on web and iOS or with the CLI and MCP.
+
 - Open the Analytics tab on the web for spending over time, by category, by person (paid against share) and by currency in your home currency. Filter by date range and member, and select any bar or row to see its transactions.
 - Record refunds and credits on web, iOS and the CLI/MCP. Refund part or all of an expense to some or all of the people who shared it, or give a standalone credit. Refunds lower the right shares and balances to the cent, and can never exceed the original expense or one person's share. Splitwise rows with a negative cost import as refunds.
 - Keep receipts in a group Receipts inbox on web, iOS and the CLI/MCP. Upload a receipt before its expense exists, pair it later, or move a receipt to another expense or back to the inbox. Any expense can hold up to four receipts.

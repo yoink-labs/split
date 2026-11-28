@@ -17,7 +17,7 @@ export async function generateRecurring(db:D1Database,today:string) {
     WHERE due<=? ORDER BY due,entry_id LIMIT 20`).bind(today).all<{entry_id:string;cadence:string;due:string;anchor:number;payload:string;group_id:string;author:string}>()).results;
   for(const row of rows) {
     const original:Entry=JSON.parse(row.payload);
-    if(original.bill || original.exchange) continue;
+    if(original.bill || original.exchange || original.spread) continue;
     const id='repeat-'+row.due+'-'+row.entry_id;
     // Hash long client IDs to keep generated entries within the regular ID contract.
     const key=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(id))),b=>b.toString(16).padStart(2,'0')).join('');
@@ -71,7 +71,7 @@ export async function groupTools(req:Request,env:Env,user:string) {
     const entry:Entry=JSON.parse(e.payload), cadence=String(b.cadence);
     if(cadence==='off') await env.DB.prepare('DELETE FROM recurring WHERE entry_id=?').bind(entry.id).run();
     else {
-      if(!['daily','weekly','monthly','yearly'].includes(cadence) || entry.kind!=='expense' || entry.bill || entry.exchange || entry.combinedCount) throw new InputError('Choose an ordinary fixed-currency expense to repeat.');
+      if(!['daily','weekly','monthly','yearly'].includes(cadence) || entry.kind!=='expense' || entry.bill || entry.exchange || entry.spread || entry.combinedCount) throw new InputError('Choose an ordinary fixed-currency expense to repeat.');
       const today=new Date().toISOString().slice(0,10), start=entry.createdAt.slice(0,10), anchor=Number(start.slice(-2));
       let day=start;
       if(start<today) {

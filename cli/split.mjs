@@ -13,7 +13,8 @@ export { photoData };
 import version from './release/version.json' with { type: 'json' };
 export { version };
 const spelling = tool => tool.name.replaceAll('_',' ');
-const flagName = key => key === 'chargedAmount' ? 'charged-amount' : key;
+const flags = { chargedAmount: 'charged-amount', spreadStart: 'spread-start', spreadEnd: 'spread-end' };
+const flagName = key => flags[key] ?? key;
 function usage(tool) {
   const { properties, required } = tool.inputSchema;
   const args = Object.entries(properties).filter(([key]) => key !== 'file' || !properties.csv).map(([key, spec]) => {
@@ -77,8 +78,8 @@ export function describeGroupDelete(raw) {
 }
 function describeExpense(entry, names = {}, receipts = entry.receiptIDs?.join(', ') || 'none') {
   const money = (cents, currency = entry.currency) => {
-    const digits = String(cents).padStart(3, '0');
-    return `${currency} ${digits.slice(0, -2)}.${digits.slice(-2)}`;
+    const digits = String(Math.abs(cents)).padStart(3, '0');
+    return `${currency} ${cents < 0 ? "-" : ""}${digits.slice(0, -2)}.${digits.slice(-2)}`;
   };
   const portions = people => people.map(p => `${names[p.memberID] ?? p.memberID} (${money(p.amount)})`).join(', ');
   const lines = [
@@ -86,10 +87,16 @@ function describeExpense(entry, names = {}, receipts = entry.receiptIDs?.join(',
     `  Date: ${entry.createdAt.slice(0, 10)}`,
     `  Category: ${entry.category ?? 'General'}`,
     `  Paid by: ${portions(entry.payers ?? [{ memberID: entry.paidBy, amount: entry.amount }])}`,
-    `  Split (${entry.splitMode}): ${portions(entry.splits)}`,
+    `  Split (${entry.splits.some(part => part.nights !== undefined) ? "nights" : entry.splitMode}): ${portions(entry.splits)}`,
     `  Receipt photos: ${receipts}`,
     `  Recurrence: ${entry.recurrence ?? 'off'}`
   ];
+  if (entry.splits.some(part => part.nights !== undefined)) {
+    const count = entry.splits.reduce((sum, part) => sum + part.nights, 0);
+    const rate = entry.nightRate ?? Math.floor((entry.amount + Math.floor(count / 2)) / count);
+    lines.push(...entry.splits.map(part => `    ${names[part.memberID] ?? part.memberID}: ${part.nights} × ${money(rate)}/night → ${money(part.amount)}`));
+  }
+  if (entry.spread) lines.push(`  Spread: ${entry.spread.start} to ${entry.spread.end} (end excluded)`);
   if (entry.notes) lines.push(`  Notes: ${entry.notes}`);
   if (entry.handled) lines.push('  Handled outside Split');
   if (entry.exchange) {
@@ -208,8 +215,12 @@ export async function main(argv = process.argv.slice(2), io = terminal()) {
     const parsed = parseArgs({ args: words.slice(spelling(tool).split(' ').length), options });
     const paths = tool.inputSchema.properties.photos ? parsed.values.photo : undefined;
     if (paths) delete parsed.values.photo;
-    const { file: files, out, "dry-run": dryRun, "charged-amount": chargedAmount, ...values } = parsed.values;
-    if (chargedAmount !== undefined) values.chargedAmount = chargedAmount;
+    const { file: files, out, "dry-run": dryRun, ...values } = parsed.values;
+    for (const [key, flag] of Object.entries(flags)) {
+      if (values[flag] === undefined) continue;
+      values[key] = values[flag];
+      delete values[flag];
+    }
     const confirmed = tool.name === 'import_splitwise' && values.yes;
     if (tool.name === 'import_splitwise') delete values.yes;
     const guided = io.interactive && !compact;
@@ -328,6 +339,15 @@ export async function main(argv = process.argv.slice(2), io = terminal()) {
     if (tool.name === 'groups_export' && out) {
       await writeFile(out, result.content);
       return compact ? print({ saved: out }, true) : console.log('Wrote ' + out);
+    }
+    if (tool.name === 'groups_daily' && guided) {
+      const format = (amount, currency) => {
+        const digits = String(Math.abs(amount)).padStart(3, '0');
+        return `${currency} ${amount < 0 ? '-' : ''}${digits.slice(0, -2)}.${digits.slice(-2)}`;
+      };
+      return console.log(clean(result).map(person => [person.name, ...person.days.map(day =>
+        `  ${day.day}: ${day.items.map(item => item.title + ' ' + format(item.amount, day.currency)).join(' + ')} = ${format(day.amount, day.currency)}`
+      )].join('\n')).join('\n\n'));
     }
     if (tool.name === 'groups_export' && !compact) return process.stdout.write(result.content);
     if (tool.name === 'receipts_get' && out) {

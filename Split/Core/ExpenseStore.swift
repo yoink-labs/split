@@ -1081,7 +1081,18 @@ enum Fixtures {
         e.append(entry("demo-dinner",trip,"Guerrín dinner (pizza, empanadas, beer)",20845000,"ARS",people[3].id,[("demo-alex",5200000),("demo-maya",4200000),("demo-sam",5200000),("demo-harris",6245000)],category:"Dining",notes:"Split the provoleta three ways. Harris covered the tip in cash."))
         e.append(entry("demo-uber",trip,"Uber EZE to Palermo",7592500,"ARS",people[3].id,[("demo-alex",1898125),("demo-maya",1898125),("demo-sam",1898125),("demo-harris",1898125)],category:"Transport",day:"2026-11-17T09:10:00Z"))
         e.append(entry("demo-coffee",trip,"Coffee & medialunas",1850000,"ARS",people[1].id,[("demo-alex",616667),("demo-maya",616667),("demo-sam",616666)],category:"Dining",day:"2026-11-16T14:05:00Z"))
-        e.append(entry("demo-stay",trip,"A place for the weekend",18000,"USD",people[2].id,[("demo-alex",6000),("demo-maya",6000),("demo-sam",6000)],category:"Lodging",day:"2026-11-15T12:00:00Z"))
+        let stayNights = [3, 3, 4, 3]
+        let stay = LedgerEntry(
+            id: "demo-stay", groupID: trip, title: "Palermo Airbnb", amount: 109_460, currency: "USD",
+            paidBy: people[2].id, splits: zip(people, stayNights).map { person, nights in
+                Portion(memberID: person.id, amount: Int64(nights) * 8_420, nights: nights)
+            }, category: "Lodging", splitMode: .shares, createdAt: "2026-11-12T12:00:00Z",
+            notes: "Sam’s flight moved, so he stayed one extra night.",
+            spread: ExpenseSpread(start: "2026-11-12", end: "2026-11-16")
+        )
+        e.append(stay)
+        e.append(entry("demo-first-dinner", trip, "First-night dinner", 12_400, "USD", people[0].id,
+                       people.map { ($0.id, 3_100) }, category: "Dining", day: "2026-11-12T20:00:00Z"))
         e.append(entry("demo-wine",trip,"Wine tasting in San Telmo",4300000,"ARS",people[0].id,[("demo-alex",1433333),("demo-maya",1433333),("demo-sam",1433334)],category:"Entertainment",day:"2026-11-14T19:00:00Z"))
         e.append(entry("demo-ride",trip,"Uber to Av. Corrientes",884100,"ARS",people[3].id,[("demo-alex",221025),("demo-maya",221025),("demo-sam",221025),("demo-harris",221025)],category:"Transport",day:"2026-11-13T21:15:00Z"))
         e.append(entry("demo-rainforest",spain,"Rainforest dinner",62109,"EUR",spainMembers[1].id,[("demo-spain-alex",15527),("demo-spain-harris",15527),("demo-spain-sanjit",15527),("demo-spain-rock",15528)],category:"Dining",notes:"Table for four, set menu.",day:"2026-11-12T20:00:00Z"))

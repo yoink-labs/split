@@ -8,6 +8,8 @@ struct GroupsView: View {
     @State private var showCreate = false
     @State private var joining = false
     @State private var importing = false
+    @State private var inbox = false
+    @State private var findingPeople = false
     @State private var presentedSheet: GroupDetailSheet?
     @State private var query = ""
     @State private var showArchived = false
@@ -34,6 +36,8 @@ struct GroupsView: View {
         .sheet(isPresented: $showCreate) { CreateGroupView(friend: false) }
         .sheet(isPresented: $joining) { JoinGroupView { id in selection = id } }
         .sheet(isPresented: $importing) { SplitwiseImportView() }
+        .sheet(isPresented: $inbox) { InvitationsView { id in selection = id } }
+        .sheet(isPresented: $findingPeople) { PeopleSearchView() }
         // The split view can recreate its detail column as the device folds.
         .sheet(item: $presentedSheet) { $0.content }
         .onChange(of: store.joinedGroupID) { _, id in
@@ -55,6 +59,18 @@ struct GroupsView: View {
                 if store.pending > 0 || !store.online {
                     Label(store.online ? "\(store.pending) changes waiting to sync" : "Offline · new expenses are saved here", systemImage: store.online ? "arrow.triangle.2.circlepath" : "wifi.slash")
                         .font(.caption).foregroundStyle(Palette.evergreen)
+                }
+                if store.invitationCount > 0 {
+                    Button { inbox = true } label: {
+                        Label {
+                            Text(store.invitationCount == 1 ? "1 group invitation" : "\(store.invitationCount) group invitations")
+                                .font(.subheadline.weight(.semibold))
+                        } icon: { Image(systemName: "tray.and.arrow.down.fill") }
+                        .foregroundStyle(Palette.evergreen)
+                        .frame(minHeight: HitTarget.minimum)
+                    }
+                    .accessibilityIdentifier("groups-invitations-banner")
+                    .listRowBackground(Palette.lime.opacity(0.22))
                 }
                 if let error = store.error {
                     VStack(alignment: .leading, spacing: 6) {
@@ -131,6 +147,16 @@ struct GroupsView: View {
             }
         }
         .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button { findingPeople = true } label: { Image(systemName: "person.crop.circle.badge.plus") }
+                    .accessibilityLabel("Find people")
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                Button { inbox = true } label: { Image(systemName: store.invitationCount > 0 ? "tray.full" : "tray") }
+                    .badge(store.invitationCount)
+                    .accessibilityLabel(store.invitationCount > 0 ? "Invitations, \(store.invitationCount) pending" : "Invitations")
+                    .accessibilityIdentifier("groups-invitations")
+            }
             ToolbarItem(placement: .topBarTrailing) {
                 GroupAddMenu(create: { showCreate = true }, join: { joining = true }, importSplitwise: { importing = true })
             }

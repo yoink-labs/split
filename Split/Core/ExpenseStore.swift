@@ -7,6 +7,8 @@ struct ActiveInvite: Decodable, Identifiable {
     let memberID: String?
     let memberName: String?
     let recipientEmail: String?
+    /// Set for invitations sent to a Split account from people search.
+    let recipientName: String?
     let expiresAt: Double
 
     var expirationDate: Date { Date(timeIntervalSince1970: expiresAt / 1000) }
@@ -40,6 +42,7 @@ private struct ActiveInviteResponse: Decodable {
     private var demoPhotos: [String:Data] = [:]
     private var demoComments: [String:[EntryComment]] = [:]
     private var demoInbox: [InboxReceipt] = []
+    private var demoInvitations: [GroupInvitation] = Fixtures.invitations()
     private var demo = false
     private var monitor = NWPathMonitor()
     private var generation = UUID()
@@ -204,9 +207,82 @@ private struct ActiveInviteResponse: Decodable {
         return result
     }
     func search(_ query: String) async throws -> [SplitUser] {
-        if demo { return [] }
-        let result = try await post("/v1/people/search", JSONEncoder().encode(["query":query]))
+        let clean = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        if clean.contains("@") {
+            guard clean.range(of: #"^[^\s@]+@[^\s@]+\.[^\s@]+$"#, options: .regularExpression) != nil else {
+                throw LedgerError.invalid("Enter a full email address, like name@example.com.")
+            }
+        } else if clean.count < 3 {
+            throw LedgerError.invalid("Enter at least 3 letters of a name.")
+        }
+        if demo {
+            let needle = clean.lowercased()
+            return Fixtures.directory.filter { person in
+                person.name.lowercased().split(separator: " ").contains { $0.hasPrefix(needle) }
+                    || needle == person.name.split(separator: " ").first.map { $0.lowercased() + "@example.com" }
+            }
+        }
+        let result = try await post("/v1/people/search", JSONEncoder().encode(["query":clean]))
         return try JSONDecoder().decode([SplitUser].self, from:result)
+    }
+
+    // MARK: People and the invitation inbox
+
+    var invitationCount: Int { state.snapshot.invitationCount ?? 0 }
+    var discoverable: Bool { state.snapshot.discoverable ?? true }
+
+    func profile(_ userID: String) async throws -> PersonProfile {
+        if demo {
+            guard let person = Fixtures.directory.first(where: { $0.userID == userID }) else { throw LedgerError.invalid("Person not found.") }
+            let shared = groups.filter { $0.members.contains { $0.userID == userID } }.map { PersonProfile.SharedGroup(id: $0.id, name: $0.name) }
+            return PersonProfile(userID: person.userID, name: person.name, avatarURL: person.avatarURL, sharedGroups: shared)
+        }
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_"))
+        let id = userID.addingPercentEncoding(withAllowedCharacters: allowed) ?? userID
+        return try JSONDecoder().decode(PersonProfile.self, from: try await request(path: "/v1/people/" + id))
+    }
+
+    /// Sends an in-app invitation. The person accepts or declines it from their inbox.
+    func inviteUser(groupID: String, userID: String, memberID: String? = nil) async throws {
+        if demo { return }
+        let payload = ["userID": userID, "memberID": memberID].compactMapValues { $0 }
+        _ = try await post("/v1/groups/\(groupID)/invites/direct", JSONEncoder().encode(payload))
+    }
+
+    func invitations() async throws -> [GroupInvitation] {
+        if demo { return demoInvitations }
+        let result = try await request(path: "/v1/invitations")
+        let list = try JSONDecoder().decode(InvitationList.self, from: result).invitations
+        if state.snapshot.invitationCount != list.count {
+            var next = state
+            next.snapshot.invitationCount = list.count
+            try? persist(next)
+        }
+        return list
+    }
+
+    /// Accepting joins the group (claiming any placeholder history); declining removes the invitation.
+    @discardableResult
+    func answer(_ invitation: GroupInvitation, accept: Bool) async throws -> String? {
+        if demo {
+            demoInvitations.removeAll { $0.id == invitation.id }
+            var next = state
+            next.snapshot.invitationCount = demoInvitations.count
+            try persist(next)
+            return nil
+        }
+        let result = try await post("/v1/invitations/\(invitation.id)/\(accept ? "accept" : "decline")", Data("{}".utf8))
+        let groupID = try? JSONDecoder().decode(JoinResult.self, from: result).groupID
+        try await waitForSync()
+        await sync()
+        return accept ? groupID ?? invitation.groupID : nil
+    }
+
+    func setDiscoverable(_ value: Bool) async throws {
+        if !demo { _ = try await post("/v1/profile/discoverable", JSONEncoder().encode(["discoverable": value])) }
+        var next = state
+        next.snapshot.discoverable = value
+        try persist(next)
     }
 
     func updateGroup(_ group: ExpenseGroup, name: String, currency: String, simplify: Bool,
@@ -835,6 +911,21 @@ private struct InviteResponse: Decodable { var url: URL }
 private struct CommentList: Decodable { var comments: [EntryComment] }
 
 enum Fixtures {
+    static let directory = [
+        SplitUser(userID: "demo-priya-account", name: "Priya Shah"),
+        SplitUser(userID: "demo-priyanka-account", name: "Priyanka Rao"),
+        SplitUser(userID: "demo-carmen-account", name: "Carmen Ortiz"),
+        SplitUser(userID: "demo-maya-account", name: "Maya")
+    ]
+    static func invitations() -> [GroupInvitation] {
+        let now = Date().timeIntervalSince1970 * 1000
+        return [
+            GroupInvitation(id: String(repeating: "a", count: 64), kind: "direct", groupID: "demo-lisbon", groupName: "Lisbon Long Weekend",
+                            groupKind: "trip", memberCount: 4, inviterName: "Priya Shah", memberName: nil, expiresAt: now + 13 * 86_400_000),
+            GroupInvitation(id: String(repeating: "b", count: 64), kind: "email", groupID: "demo-climbing", groupName: "Climbing Club Dues",
+                            groupKind: "home", memberCount: 7, inviterName: nil, memberName: "Alex K.", expiresAt: now + 6 * 86_400_000)
+        ]
+    }
     static func snapshot() -> Snapshot {
         let trip = "demo-buenos-aires", home = "demo-home", spain = "demo-spain", sam = "demo-friend-sam", maya = "demo-friend-maya"
         let people = [
@@ -898,7 +989,7 @@ enum Fixtures {
         e[4].likeCount = 2
         e[4].commentCount = 1
         e[0].notes = "Split the provoleta three ways. Harris covered the tip in cash."
-        return Snapshot(groups:[group,house,spainGroup,samGroup,mayaGroup],entries:e)
+        return Snapshot(groups:[group,house,spainGroup,samGroup,mayaGroup],entries:e,invitationCount:2,discoverable:true)
     }
 
     /// Two demo receipts waiting in the Buenos Aires inbox, with rendered photos.
@@ -956,12 +1047,33 @@ enum Fixtures {
     }
 }
 
+/// A people search result. The server returns only these fields, never contact details.
 struct SplitUser: Decodable, Identifiable, Hashable {
     var userID: String
     var name: String
-    var username: String?
+    var avatarURL: String?
     var id: String { userID }
 }
+struct PersonProfile: Decodable, Hashable {
+    struct SharedGroup: Decodable, Hashable, Identifiable { var id: String; var name: String }
+    var userID: String
+    var name: String
+    var avatarURL: String?
+    var sharedGroups: [SharedGroup]
+}
+struct GroupInvitation: Decodable, Identifiable, Hashable {
+    var id: String
+    var kind: String
+    var groupID: String
+    var groupName: String
+    var groupKind: String
+    var memberCount: Int
+    var inviterName: String?
+    var memberName: String?
+    var expiresAt: Double
+    var expirationDate: Date { Date(timeIntervalSince1970: expiresAt / 1000) }
+}
+private struct InvitationList: Decodable { var invitations: [GroupInvitation] }
 struct MemberDraft: Codable {
     var id = UUID().uuidString
     var name: String

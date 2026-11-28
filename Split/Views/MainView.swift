@@ -17,6 +17,7 @@ struct MainView: View {
             Tab("Groups", systemImage: "person.3", value: AppTab.groups) {
                 GroupsView()
             }
+            .badge(store.invitationCount)
             Tab("Friends", systemImage: "person.2", value: AppTab.friends) {
                 FriendsView()
             }

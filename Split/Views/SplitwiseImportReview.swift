@@ -93,7 +93,7 @@ struct SplitwisePersonEditor: View {
             } footer: { Text("This account can access the group after import.") }
         } else {
             Section {
-                TextField("Email, username, or shared contact", text: $query)
+                TextField("Full email or first 3 letters of a name", text: $query)
                     .textInputAutocapitalization(.never).autocorrectionDisabled()
                     .submitLabel(.search).onSubmit(search)
                 Button("Search Split", action: search)
@@ -104,7 +104,7 @@ struct SplitwisePersonEditor: View {
                     Button {
                         account = user
                     } label: {
-                        LabeledContent(user.name, value: user.username.map { "@" + $0 } ?? "")
+                        Label(user.name, systemImage: "person.crop.circle")
                     }
                 }
             }

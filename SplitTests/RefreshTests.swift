@@ -102,4 +102,26 @@ import XCTest
         XCTAssertEqual(SnapshotMerge.merge(remote: merged, local: merged, pendingIDs: []), merged,
                        "a refresh that returns the same data must not republish")
     }
+
+    func testMergeKeepsInvitationCountAndDiscoverability() throws {
+        let json = Data(#"{"groups":[],"entries":[],"invitationCount":2,"discoverable":false}"#.utf8)
+        let remote = try JSONDecoder().decode(Snapshot.self, from: json)
+        let merged = SnapshotMerge.merge(remote: remote, local: Snapshot(), pendingIDs: [])
+        XCTAssertEqual(merged.invitationCount, 2)
+        XCTAssertEqual(merged.discoverable, false)
+        let older = try JSONDecoder().decode(Snapshot.self, from: Data(#"{"groups":[],"entries":[]}"#.utf8))
+        XCTAssertNil(older.invitationCount, "older servers omit the field and the app treats it as zero")
+    }
+
+    func testInvitationAndSearchResultsDecodeWithoutContactDetails() throws {
+        let invitation = try JSONDecoder().decode(GroupInvitation.self, from: Data(#"""
+        {"id":"\#(String(repeating: "a", count: 64))","kind":"direct","groupID":"g","groupName":"Lisbon","groupKind":"trip",
+         "memberCount":3,"inviterName":"Priya","expiresAt":1800000000000}
+        """#.utf8))
+        XCTAssertEqual(invitation.groupName, "Lisbon")
+        XCTAssertNil(invitation.memberName)
+        let people = try JSONDecoder().decode([SplitUser].self, from: Data(#"[{"userID":"u1","name":"Priya Shah"}]"#.utf8))
+        XCTAssertEqual(people.first?.name, "Priya Shah")
+        XCTAssertNil(people.first?.avatarURL)
+    }
 }

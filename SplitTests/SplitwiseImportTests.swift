@@ -65,7 +65,7 @@ final class SplitwiseImportTests: XCTestCase {
     func testRequestMappingAndStableGroupID() throws {
         let group = try SplitwiseCSV.parse(try fixture("buenos-aires-trip_2026-11-18_export.csv"), fileName: "trip.csv")
         XCTAssertThrowsError(try SplitwiseImportRequest.make(group, name: "Trip", currency: "ARS", kind: "trip", target: nil, mapping: [:], userID: "u"))
-        let account = SplitUser(userID: "user-maya", name: "Maya R", username: "maya")
+        let account = SplitUser(userID: "user-maya", name: "Maya R")
         let request = try SplitwiseImportRequest.make(group, name: "Trip", currency: "ARS", kind: "trip", target: nil,
                                                       mapping: ["Harris": .me, "Maya": .account(account)],
                                                       displayNames: ["Harris": "Harris K", "Sam": "Sam P"], userID: "u")

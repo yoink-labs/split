@@ -230,9 +230,10 @@ export async function directoryRoute(request: Request, env: Env, userID: string)
     const b = await body(request);
     if (typeof b.userID !== 'string' || !await knownPerson(env.DB,userID,b.userID))
       throw new HTTPError(404,'Choose a friend or someone from a shared group.');
-    if (!await claimSeat(env.DB,groupID,memberID,b.userID,await tokenHash(crypto.randomUUID()),{actor:userID}))
+    const summary = await claimSeat(env.DB,groupID,memberID,b.userID,await tokenHash(crypto.randomUUID()),{actor:userID});
+    if (!summary)
       throw new HTTPError(409,'This placeholder is no longer available to link.');
-    return json({ok:true});
+    return json({ok:true,...summary});
   }
   const activity = path.match(/^\/v1\/groups\/([\w-]+)\/member-links$/);
   if (activity && request.method === 'GET') {

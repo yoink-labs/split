@@ -1,7 +1,7 @@
 import { env } from 'cloudflare:test';
 import { describe, expect, it, vi } from 'vitest';
 import { handle } from '../src/index';
-import { saveProfile } from '../src/people';
+import { saveProfile, verifiedProfile } from '../src/people';
 import { InputError } from '../src/ledger';
 import { DIRECT_INVITES_PER_HOUR, FRIEND_REQUESTS_PER_HOUR } from '../src/directory';
 
@@ -19,11 +19,11 @@ const inbox = async (user: string) => (await read<{ invitations: any[] }>(user, 
 
 async function people() {
   await saveProfile(env.DB, { userID: owner, name: 'Olive Owner', username: 'olive', email: 'olive@example.test' });
-  await saveProfile(env.DB, { userID: casey, name: 'Casey Green', username: 'caseyg', email: 'casey@example.test' });
+  await saveProfile(env.DB, { userID: casey, name: '  Casey\t  Green  ', username: 'caseyg', email: 'casey@example.test' });
   await saveProfile(env.DB, { userID: mallory, name: 'Mallory Stone', username: 'mal', email: 'mallory@example.test' });
   await call(owner, '/v1/groups', { id: groupID, name: 'Lisbon', kind: 'trip', currency: 'EUR', members: [
     { id: 'dir-seat-owner', userID: owner, name: 'Olive' },
-    { id: 'dir-seat-casey', name: 'Casey (placeholder)' },
+    { id: 'dir-seat-casey', name: ' Casey  (placeholder) ' },
   ] });
 }
 function identity(userID: string, email: string) {
@@ -130,7 +130,12 @@ describe('direct placeholder linking', () => {
     await env.DB.prepare('UPDATE members SET removed_at=? WHERE id=?').bind('2026-01-01','dir-seat-owner').run();
     await expect(call(owner,path,{userID:casey})).rejects.toMatchObject({status:403});
     await env.DB.prepare('UPDATE members SET removed_at=NULL WHERE id=?').bind('dir-seat-owner').run();
-    expect(await read(owner,path,{userID:casey})).toEqual({ok:true});
+    expect(await read(owner,path,{userID:casey})).toEqual({
+      ok:true,
+      placeholder:{memberID:seat,name:'Casey (placeholder)'},
+      account:{userID:casey,name:'Casey Green',email:'casey@example.test'},
+      keptMemberID:seat,mergedMemberID:null,moved:{expenses:0,splits:0,receipts:0},
+    });
     await expect(call(owner,path,{userID:casey})).rejects.toMatchObject({status:409});
     const [notice] = await inbox(casey);
     expect(notice).toMatchObject({kind:'linked',groupID,memberName:'Casey (placeholder)',inviterName:'Olive Owner'});
@@ -142,6 +147,19 @@ describe('direct placeholder linking', () => {
     expect(await inbox(casey)).toEqual([]);
     expect(await read(casey,activity)).toEqual({links:[{id:notice.id,memberName:'Casey (placeholder)',actorName:'Olive Owner',userName:'Casey Green',createdAt:expect.any(Number)}]});
     expect(await env.DB.prepare('SELECT count(*) AS n FROM direct_invites').first('n')).toBe(0);
+  });
+
+  it('normalizes Clerk names before storage and returns normalized names to clients', async () => {
+    const profile = verifiedProfile({
+      id:casey, first_name:'  Casey ', last_name:' Green\u00a0  Smith ', username:null,
+      primary_email_address_id:null, email_addresses:[],
+    });
+    expect(profile.name).toBe('Casey Green Smith');
+    await people();
+    expect(await env.DB.prepare('SELECT name FROM split_profiles WHERE user_id=?').bind(casey).first('name')).toBe('Casey Green');
+    expect(await env.DB.prepare('SELECT name FROM members WHERE id=?').bind(seat).first('name')).toBe('Casey (placeholder)');
+    const snapshot = await read(owner,'/v1/snapshot');
+    expect(snapshot.groups[0].members).toContainEqual(expect.objectContaining({id:seat,name:'Casey (placeholder)'}));
   });
 
   it('expires a request and records only one concurrent link', async () => {
@@ -168,7 +186,10 @@ describe('direct placeholder linking', () => {
       .bind('dir-casey-account',groupID,casey,'Casey Green').run();
     await call(owner,'/v1/entries',{id:'dir-dinner',groupID,title:'Dinner',amount:1001,currency:'EUR',
       createdAt:'2026-05-15T00:00:00Z',splitMode:'exact',kind:'expense',paidBy:seat,splits:[{memberID:seat,amount:500},{memberID:'dir-casey-account',amount:501}]});
-    await call(owner,path,{userID:casey});
+    await env.DB.prepare("INSERT INTO receipts(entry_id,id,image) VALUES ('dir-dinner','photo',X'FFD8FFD9')").run();
+    expect(await read(owner,path,{userID:casey})).toMatchObject({
+      keptMemberID:'dir-casey-account',mergedMemberID:seat,moved:{expenses:1,splits:1,receipts:1},
+    });
     const snapshot = await read(casey,'/v1/snapshot');
     expect(snapshot.entries[0]).toMatchObject({paidBy:'dir-casey-account',splits:[{memberID:'dir-casey-account',amount:1001}]});
     expect(snapshot.groups[0].members.some((m: {id: string}) => m.id===seat)).toBe(false);

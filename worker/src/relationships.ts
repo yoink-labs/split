@@ -1,3 +1,4 @@
+import { normalizeName } from './names';
 import { paymentMethods } from './paymentProfiles';
 
 export const activeSharedGroup = `EXISTS (
@@ -20,7 +21,7 @@ export async function listPeople(db: D1Database, actor: string, kind: 'friends' 
   const {results} = await db.prepare(`SELECT ${card}${payments} FROM split_profiles p WHERE p.user_id<>? AND ${predicate}
     ORDER BY p.name COLLATE NOCASE,p.user_id`).bind(actor, ...args).all<{userID: string; name: string; avatarURL: string | null; sharedPayments?: string | null}>();
   return results.map(({avatarURL, sharedPayments, ...person}) => ({
-    ...person, ...(avatarURL ? {avatarURL} : {}), ...(sharedPayments ? {paymentMethods: paymentMethods(sharedPayments)} : {}),
+    ...person, name: normalizeName(person.name), ...(avatarURL ? {avatarURL} : {}), ...(sharedPayments ? {paymentMethods: paymentMethods(sharedPayments)} : {}),
   }));
 }
 

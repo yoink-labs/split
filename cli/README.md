@@ -269,5 +269,11 @@ split expenses combination activity --group GROUP
 
 The default is an equal split among active group members. Use `--participants`
 to choose who shares and `--mode` and `--values` for a custom allocation.
-MCP exposes the same operations as `expenses_combine`, `expenses_uncombine`,
+The CLI shows the combined expense and asks before saving. Use `--dry-run` to
+show the preview only, or `--yes` (`-y`) to save without a prompt. Use one of those
+flags when stdin is redirected. The saved summary includes the new ID, and
+`--json` returns the full expense.
+
+In MCP, call `expenses_combine` to preview, then repeat with `yes: true` and the
+preview's `revision` to save. MCP also exposes `expenses_uncombine`,
 `expenses_suggestions`, and `expenses_combination_activity`.

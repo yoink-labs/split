@@ -10,7 +10,7 @@ split auth status --json
 split groups list --json
 ```
 
-Approve the computer on the web at **Connect AI & CLI** (account menu, bottom of the sidebar) or in the iPhone app under **You → Connected computers**: enter the terminal code, review the computer name and approve. Both places list connected computers and revoke them. Codes expire after ten minutes. The browser page at `https://split-api.yoinklabs.dev/device` gives the same instructions. Use `split login --no-open --name "Office Mac"` for a headless terminal.
+Approve the computer on the web under **AI & CLI → Manage access** (account menu, bottom of the sidebar) or in the iPhone app under **You → Connected computers**: enter the terminal code, review the computer name and approve. Both places list connected computers and revoke them. Codes expire after ten minutes. The browser page at `https://split-api.yoinklabs.dev/device` gives the same instructions. Use `split login --no-open --name "Office Mac"` for a headless terminal.
 
 Split stores the server origin and device token in an owner-only `~/.config/split/credentials.json` (or `$XDG_CONFIG_HOME/split/credentials.json`). The Worker stores a hash and checks revocation on every request. Use the app’s Connected computers screen to see last use or revoke a lost computer. To disconnect the current credential run `split logout` for a preview, then `split logout --yes`.
 
@@ -52,7 +52,7 @@ split settle up --group "$GROUP" --from "$MAYA" --to "$ALEX" --amount 7.50
 split activity --group "$GROUP"
 ```
 
-Replace sample IDs with the IDs in your group. Enter money as decimal major units. Responses use integer minor units, so USD 24.50 appears as `2450`. Balances stay separate by currency. Equal splits default to every member. For exact and percent splits, supply values in participant order. Recording a settlement updates the ledger after a payment.
+Replace sample IDs with the IDs in your group. Enter money as decimal major units. Responses use integer minor units, so USD 24.50 appears as `2450`. Balances stay separate by currency. Equal splits default to every member. For exact and percent splits, supply values in participant order. `settle up` requests approval. The ledger records the payment after the recipient approves it.
 
 Only the author can edit or delete an expense. Preview first. Pass the returned revision to commit that exact change. A stale revision fails. The CLI also fetches and prints the current preview before each confirmed write.
 
@@ -63,15 +63,15 @@ split expenses delete --group "$GROUP" --expense "$EXPENSE"
 split expenses delete --group "$GROUP" --expense "$EXPENSE" --yes --revision "$REVISION"
 ```
 
-### Everything the web app does
-
-Every action in the web app has a command, so an assistant can run the whole group:
+### Group and expense management
 
 ```sh
 split groups create --name Lisbon --self Alex --start 2026-12-01 --end 2026-12-05 --description "Pastéis tour"
 split groups update --group "$GROUP" --name "Lisbon 2026" --end none --simplify off
 split groups archive --group "$GROUP"                       # --action restore
 split groups leave --group "$GROUP"                         # preview, then --yes
+split groups delete --group "$GROUP"                        # creator only, preview and revision
+split groups delete --group "$GROUP" --yes --revision "$REVISION"
 split members remove --group "$GROUP" --member "$JO"        # archive: keeps history, out of new splits
 split members remove --group "$GROUP" --member "$JO" --mode delete   # only with no expenses
 split members remove --group "$GROUP" --member "$JO" --mode restore
@@ -88,36 +88,47 @@ split receipts get --group "$GROUP" --expense "$EXPENSE" --photo "$PHOTO_ID" --o
 split groups export --group "$GROUP" --out lisbon.csv                     # one row per expense
 split groups export --group "$GROUP" --format summary --out summary.csv   # paid, share, net, transfers
 split groups export --group "$GROUP" --format json --out lisbon.json      # everything
-split import splitwise --file export.csv                    # shows the names in the file
-split import splitwise --file export.csv --me Harris        # new group; --group ID merges into one
+split settlements pending --group "$GROUP"
+split settlements respond --group "$GROUP" --settlement "$PAYMENT" --action approve
 split profile avatar --avatar preset:ocean
 ```
+
+To delete a group in a terminal, `--yes` prompts you to type its name. For scripts and MCP, pass the revision from the preview as well. A payment recipient can approve or decline it. The payer can cancel it while approval is pending.
 
 ### Importing Splitwise exports
 
 The CLI uses the same CSV parser as the web importer. It accepts localized exports, friend exports, and files with multiple supported currencies.
 
 ```sh
-split import splitwise --file trip.csv --file apartment.csv
-split import splitwise --file trip.csv --file apartment.csv --me Harris
+split import splitwise --file trip.csv
+split import splitwise --file trip.csv --me Harris --preview
+split import splitwise --file trip.csv --me Harris
 ```
 
-Omit both `--me` and `--group` to preview the member names in each file. When you repeat `--file`, the other options apply to every file. Run separate commands when names, mappings, or destinations differ. The batch reports a result or error for each file in input order and exits with status 1 if any file failed. Successful imports are saved independently.
+First find your name in the CSV. Use `--preview` to check the destination, dates, currencies, and how each person maps to a Split member. Pass `--group ID` to import into an existing group. Use `--mapping '{"Maya":"MEMBER_ID"}'` to link another person to a member in that group. Unmapped people become placeholders. If the preview suggests matches, review them and pass the ones you want in `--mapping`.
+
+A single-file import prompts for confirmation in an interactive terminal. Pass `--yes` to confirm ahead of time. For scripts and MCP, run a preview, review it, then send the import without `preview` after confirmation.
+
+Repeat `--file` to process several exports. The options apply to every file, so run separate commands if names, mappings, or destinations differ. Preview a batch with `--preview` before saving. Each file reports its own result and successful imports are saved independently.
 
 ## Shared group settings
 
 ```sh
 split groups default split --group GROUP_ID --participants '["MEMBER_A","MEMBER_B"]' --weights '[2,1]'
-split members payment --group GROUP_ID --alias your.bank.alias
+split groups rate --group GROUP_ID --currency USD --rate 1039.5
+split profile payment --methods '[{"platform":"Wise","handle":"@alex","preferred":true}]'
+split members payment --group GROUP_ID --methods '[{"platform":"Venmo","handle":"alex-a"}]'
+split members payment --group GROUP_ID --reset
 split expenses repeat --group GROUP_ID --expense EXPENSE_ID --cadence monthly
+split expenses handled --group GROUP_ID --expense EXPENSE_ID --state handled
 split expenses add --group GROUP_ID --title Lunch --amount 12.00 --payer MEMBER_ID --currency USD --rate 1039.5
 ```
 
-The rate is in group currency units per one expense currency unit. Omit it to keep the original currency in CLI records. The iOS composer also looks up historical rates. Setting your payment profile replaces its previous values for this group. The matching MCP tools use underscores in place of spaces.
+Exchange rates use group currency units per one unit of foreign currency. Pass `--rate none` to clear the trip rate. Account payment methods apply to groups without an override. `members payment --reset` restores the account methods for that group. `expenses handled` keeps an expense in spending reports and removes it from balances. The matching MCP tools use underscores in place of spaces.
 
 ## Receipts, claims and spending
 
-The current checkout includes the receipt commands below. Use `./cli/bin/split` from the repository root with Node 22.18+ to run the updated client. Connected MCP clients discover the same tools from the production Worker, including through an existing stdio bridge.
+Connected MCP clients discover the same receipt tools from the Worker, including through a local `split mcp` bridge.
 
 ```sh
 split groups breakdown --group GROUP_ID
@@ -174,9 +185,9 @@ args = ["mcp"]
 
 **Claude Code**: `claude mcp add split -- "$(command -v split)" mcp`.
 
-Restart the client and request `groups_list`. Through the local `split mcp` server, `photos` may be absolute file paths; the bridge converts HEIC/PNG and shrinks them before upload. Both transports expose the same tools and validate the same schemas. For `expenses_edit` and `expenses_delete`, show the user the preview, then send `yes: true` and its `revision` after confirmation.
+Restart the client and request `groups_list`. Through the local `split mcp` server, `photos` may be absolute file paths. The bridge converts HEIC/PNG and shrinks them before upload. For `expenses_edit`, `expenses_delete`, and `groups_delete`, show the user the preview, then send `yes: true` and its `revision` after confirmation.
 
-**Remote MCP** uses Streamable HTTP at `https://split-api.yoinklabs.dev/mcp`. Configure the client to send `Authorization: Bearer <device token>`. For example, Codex can read the token from its process environment.
+**Remote MCP** uses Streamable HTTP at `https://split-api.yoinklabs.dev/mcp`. Create a token in **AI & CLI → Manage access** in the Split web app. Configure the client to send `Authorization: Bearer <token>`. Revoke the token from the same page. For example, Codex can read the token from its process environment.
 
 ```toml
 [mcp_servers.split]

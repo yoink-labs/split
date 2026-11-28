@@ -11,7 +11,7 @@ const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 export async function deviceRoute(request: Request, env: Env) {
   const path = new URL(request.url).pathname;
   if (path === '/device' && request.method === 'GET') {
-    return new Response('<!doctype html><html lang="en"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Connect a computer · Split</title><main style="font:18px system-ui;max-width:32em;margin:10vh auto;padding:1em"><h1>Connect a computer</h1><p>Enter the code shown by <code>split login</code> on your own computer in one of these places, review its name and approve access:</p><ul><li>On the web: <a href="https://split.yoinklabs.dev/ai">split.yoinklabs.dev → Connect AI &amp; CLI</a></li><li>On iPhone: <strong>Split → You → Connected computers</strong></li></ul><p>Approval lets this computer read and change your Split groups and expenses. You can revoke access from the same screen.</p></main></html>', {
+    return new Response('<!doctype html><html lang="en"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Connect a computer · Split</title><main style="font:18px system-ui;max-width:32em;margin:10vh auto;padding:1em"><h1>Connect a computer</h1><p>Enter the code shown by <code>split login</code> on your own computer in one of these places, review its name and approve access:</p><ul><li>On the web: <a href="https://split.yoinklabs.dev/ai?tab=access&amp;action=pair">Split → AI &amp; CLI → Pair a computer</a></li><li>On iPhone: <strong>Split → You → Connected computers</strong></li></ul><p>Approval lets this computer read and change your Split groups and expenses. You can revoke access from the same screen.</p></main></html>', {
       headers: { 'Content-Type': 'text/html; charset=utf-8', 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'", 'Referrer-Policy': 'no-referrer' }
     });
   }
@@ -54,8 +54,8 @@ export async function deviceRoute(request: Request, env: Env) {
 
 export async function deviceIdentity(env: Env, token: string) {
   const key = await digest(token);
-  const row = await env.DB.prepare('SELECT id,user_id,last_used,scope FROM cli_tokens WHERE token_hash=? AND revoked_at IS NULL')
-    .bind(key).first<{ id: string; user_id: string; last_used: number | null; scope: 'cli' | 'finance' }>();
+  const row = await env.DB.prepare('SELECT id,user_id,last_used,scope,is_remote FROM cli_tokens WHERE token_hash=? AND revoked_at IS NULL')
+    .bind(key).first<{ id: string; user_id: string; last_used: number | null; scope: 'cli' | 'finance'; is_remote: 0 | 1 }>();
   if (!row) throw new HTTPError(401, 'Device access expired or was revoked. Run split login.');
   if (Date.now() - (row.last_used ?? 0) > 60_000) {
     await env.DB.prepare('UPDATE cli_tokens SET last_used=? WHERE id=? AND revoked_at IS NULL').bind(Date.now(), row.id).run();
@@ -70,15 +70,25 @@ export async function manageDevices(request: Request, env: Env, user: string, de
     await env.DB.prepare('UPDATE cli_tokens SET revoked_at=? WHERE id=? AND user_id=?').bind(Date.now(), deviceID, user).run();
     return json({ revoked: true });
   }
-  if (deviceID) throw new HTTPError(403, 'Sign in with Clerk to manage computers.');
+  if (deviceID) throw new HTTPError(403, 'Sign in to Split to manage connections.');
   if (path === '/v1/device/tokens' && request.method === 'GET') {
-    return json((await env.DB.prepare('SELECT id,name,created_at,last_used FROM cli_tokens WHERE user_id=? AND revoked_at IS NULL ORDER BY created_at DESC').bind(user).all()).results);
+    return json((await env.DB.prepare('SELECT id,name,created_at,last_used,scope,is_remote FROM cli_tokens WHERE user_id=? AND revoked_at IS NULL ORDER BY created_at DESC').bind(user).all()).results);
+  }
+  if (path === '/v1/device/tokens' && request.method === 'POST') {
+    const input = await body(request, 1024);
+    const name = typeof input.name === 'string' ? input.name.trim() : '';
+    if (!name || name.length > 80) throw new HTTPError(422, 'Enter a token name (1–80 characters).');
+    const connection = { id: crypto.randomUUID(), name, created_at: Date.now(), last_used: null, scope: 'cli', is_remote: 1 };
+    const token = 'spl_' + secret();
+    await env.DB.prepare('INSERT INTO cli_tokens(id,token_hash,user_id,name,created_at,scope,is_remote) VALUES (?,?,?,?,?,?,?)')
+      .bind(connection.id, await digest(token), user, name, connection.created_at, connection.scope, connection.is_remote).run();
+    return json({ connection, token }, 201);
   }
   if (path === '/v1/device/revoke' && request.method === 'POST') {
     const { id } = await body(request);
-    if (typeof id !== 'string') throw new HTTPError(400, 'Choose a computer.');
+    if (typeof id !== 'string') throw new HTTPError(400, 'Choose a connection.');
     const result = await env.DB.prepare('UPDATE cli_tokens SET revoked_at=? WHERE id=? AND user_id=? AND revoked_at IS NULL').bind(Date.now(), id, user).run();
-    if (!result.meta.changes) throw new HTTPError(404, 'Computer not found.');
+    if (!result.meta.changes) throw new HTTPError(404, 'Connection not found.');
     return json({ revoked: true });
   }
   if (request.method === 'POST' && ['/v1/device/review','/v1/device/approve'].includes(path)) {

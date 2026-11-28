@@ -60,6 +60,39 @@ describe('device authorization', () => {
     for (let i=0;i<15;i++) expect((await fetch('/v1/device/start',{name:'Test'})).status).toBe(201);
     expect((await fetch('/v1/device/start',{name:'Test'})).status).toBe(429);
   });
+  it('issues named, revocable MCP-only tokens through signed-in account management', async () => {
+    const path = '/v1/device/tokens';
+    const payload = { name: '  My MCP client  ' };
+    expect((await fetch(path, payload)).status).toBe(401);
+    const localToken = await authorize('alex');
+    expect((await fetch(path, payload, localToken)).status).toBe(403);
+    await expect(manageDevices(req(path, { name: ' ' }), env, 'alex')).rejects.toMatchObject({ status: 422 });
+    await expect(manageDevices(req(path, { name: 'x'.repeat(81) }), env, 'alex')).rejects.toMatchObject({ status: 422 });
+
+    const response = await manageDevices(req(path, payload), env, 'alex');
+    expect(response.status).toBe(201);
+    expect(response.headers.get('Cache-Control')).toBe('no-store');
+    const { connection, token } = await response.json<{ connection: { id: string }; token: string }>();
+    expect(token).toMatch(/^spl_/);
+    expect(connection).toMatchObject({ name: 'My MCP client', scope: 'cli', is_remote: 1, last_used: null });
+    const saved = await env.DB.prepare('SELECT * FROM cli_tokens WHERE id=?').bind(connection.id).first();
+    expect(JSON.stringify(saved)).not.toContain(token);
+    const list = await (await manageDevices(req(path), env, 'alex')).json();
+    expect(list).toEqual(expect.arrayContaining([connection, expect.objectContaining({ name: 'Test computer', is_remote: 0 })]));
+    expect(JSON.stringify(list)).not.toContain(token);
+    expect(await (await manageDevices(req(path), env, 'maya')).json()).toEqual([]);
+    expect((await fetch(path, payload, token)).status).toBe(403);
+    expect((await fetch('/v1/cli', { name: 'groups_list' }, token)).status).toBe(403);
+
+    const listTools = () => fetch('/mcp', { jsonrpc: '2.0', id: 1, method: 'tools/list' }, token, { Accept: 'application/json, text/event-stream' });
+    expect((await listTools()).status).toBe(200);
+    const revoke = req('/v1/device/revoke', { id: connection.id });
+    await expect(manageDevices(revoke.clone(), env, 'maya')).rejects.toMatchObject({ status: 404 });
+    expect((await listTools()).status).toBe(200);
+    await manageDevices(revoke, env, 'alex');
+    expect((await listTools()).status).toBe(401);
+    expect(await (await manageDevices(req(path), env, 'alex')).json()).not.toEqual(expect.arrayContaining([expect.objectContaining({ id: connection.id })]));
+  });
 });
 describe('CLI and MCP', () => {
   it('invites individuals, corrects placeholder emails and links verified accounts to their history', async () => {

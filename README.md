@@ -202,7 +202,7 @@ command = "/opt/homebrew/bin/split"
 args = ["mcp"]
 ```
 
-Remote MCP clients can use Streamable HTTP at `https://split-api.yoinklabs.dev/mcp` with a device bearer token. See the [CLI and MCP guide](cli/README.md) for receipt photos, open purchases, spending breakdowns, expense splits, placeholder invitations, lookup, confirmation previews and remote client configuration.
+For remote MCP, create a token in **AI & CLI → Manage access** in the Split web app. Configure the client to use Streamable HTTP at `https://split-api.yoinklabs.dev/mcp` and send the token as a bearer credential. See the [CLI and MCP guide](cli/README.md) for receipt photos, open purchases, spending breakdowns, expense splits, placeholder invitations, lookup, confirmation previews and remote client configuration.
 
 ## Group tools in 0.4
 

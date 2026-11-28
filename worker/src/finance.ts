@@ -144,7 +144,7 @@ async function chargeRoute(request: Request, env: Env, user: string, handle: Led
     void recurrence; void receiptIDs; void editable; void commentCount; void likeCount; void likedByMe;
     const updated: Entry = { ...original as Entry, exchange: { target, rateE8: rate as number, date: entry.createdAt.slice(0, 10), source: 'Statement', statementAmount: charged as number } };
     const saved = await handle(new Request(new URL('/v1/entries/' + id + '/edit', request.url), {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ original, entry: updated }),
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ original, entry: updated, reason: 'Card charge updated through Finance.' }),
     }), env, user);
     if (!saved.ok) throw new HTTPError(saved.status, (await saved.json<{ error?: string }>().catch(() => ({ error: undefined }))).error ?? 'Could not save.');
     const converted = settlementEntry(updated);

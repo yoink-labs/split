@@ -13,6 +13,7 @@ struct ChangeHistoryView: View {
     @State private var through = Date.now
     @State private var error: String?
     @State private var loading = true
+    @State private var restoring = false
 
     private var filters: [URLQueryItem] {
         if let expense { return [URLQueryItem(name: "expense", value: expense.id)] }
@@ -82,16 +83,60 @@ struct ChangeHistoryView: View {
             Text("No changes recorded.").foregroundStyle(.secondary)
         }
         ForEach(events) { event in
-            if expense == nil, let id = event.expense, store.entries.contains(where: { $0.id == id }) {
-                NavigationLink(value: LedgerRoute.entry(group: group.id, id: id)) { row(event) }
-            } else if expense == nil && event.type == "member" && group.members.contains(where: { $0.id == event.entity }) {
-                NavigationLink(value: LedgerRoute.member(group: group.id, seat: event.entity)) { row(event) }
+            if expense == nil {
+                activityRow(event)
             } else {
                 row(event)
             }
         }
         if next != nil {
             Button("Earlier changes") { Task { await load(reset: false) } }.disabled(loading)
+        }
+    }
+
+    @ViewBuilder private func activityRow(_ event: ChangeHistoryEvent) -> some View {
+        let entryID = store.entries.contains { $0.id == event.entity && $0.groupID == group.id }
+            ? event.entity : event.expense
+        if let entryID, store.entries.contains(where: { $0.id == entryID && $0.groupID == group.id }) {
+            NavigationLink(value: LedgerRoute.entry(group: group.id, id: entryID)) { row(event) }
+        } else if event.type == "member" && group.members.contains(where: { $0.id == event.entity }) {
+            NavigationLink(value: LedgerRoute.member(group: group.id, seat: event.entity)) { row(event) }
+        } else if event.type == "group" && event.action != "delete" {
+            NavigationLink { GroupTools(group: group) } label: { row(event) }
+        } else {
+            NavigationLink { recordedChange(event) } label: { row(event) }
+        }
+    }
+
+    private func recordedChange(_ event: ChangeHistoryEvent) -> some View {
+        List {
+            row(event)
+            if event.type == "expense" && event.action == "delete" && event.actor == store.currentUserID {
+                if store.entries.contains(where: { $0.id == event.entity }) {
+                    NavigationLink("Open expense", value: LedgerRoute.entry(group: group.id, id: event.entity))
+                } else {
+                    Button("Restore expense") {
+                        Task { await restoreExpense(event.entity) }
+                    }
+                    .disabled(restoring)
+                }
+            }
+            if let error { InlineError(text: error) }
+        }
+        .navigationTitle(event.title ?? "Recorded change")
+    }
+
+    private func restoreExpense(_ id: String) async {
+        guard !restoring else { return }
+        restoring = true
+        error = nil
+        defer { restoring = false }
+        do {
+            _ = try await store.request(path: "/v1/entries/\(id)/restore", body: Data("{}".utf8))
+            await store.sync()
+            await load(reset: true)
+        } catch {
+            self.error = error.localizedDescription
         }
     }
 

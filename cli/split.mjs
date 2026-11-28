@@ -342,6 +342,16 @@ export async function main(argv = process.argv.slice(2), io = terminal()) {
     }
     if (tool.name === 'import_splitwise' && result?.preview && guided) return console.log(describeImport(result));
     if (tool.name === 'groups_delete' && result?.preview && guided) return console.log(describeGroupDelete(result));
+    if (tool.name === 'members_link' && !compact && result.placeholder) {
+      const { placeholder, account, keptMemberID, mergedMemberID, moved } = result;
+      const email = account.email ? ' <' + clean(account.email) + '>' : ' (no verified email)';
+      return console.log([
+        'Linked ' + clean(placeholder.name) + ' (' + clean(placeholder.memberID) + ') to ' + clean(account.name) + email + '.',
+        'Kept member ' + clean(keptMemberID) + '.',
+        mergedMemberID ? 'Merged member ' + clean(mergedMemberID) + ' into it.' : 'The placeholder became the account’s member record.',
+        'Expenses linked: ' + moved.expenses + ' · Splits linked: ' + moved.splits + ' · Receipts linked: ' + moved.receipts,
+      ].join('\n'));
+    }
     if (tool.name === 'expenses_edit' && !compact) {
       if (result.preview) return console.log(describeExpenseEdit(result));
       const category = result.category ? ' Saved category is ' + clean(result.category) + '.' : '';

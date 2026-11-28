@@ -1,3 +1,4 @@
+import { Picker } from "./picker";
 import { useMemo, useState } from "react";
 import { importedBalances, type ImportRow, type SplitwiseGroup } from "../../worker/src/splitwiseCsv";
 import { Form, useLedger, value } from "./context";
@@ -29,15 +30,7 @@ export function ImportPerson({ source, person, members, newGroup, update }: {
     <div className="splitwise-person">
       <Avatar name={source} size={32} />
       <strong>{source}</strong>
-      <select aria-label={"Match " + source} value={person.match} onChange={(e) => {
-        setMatches(undefined);
-        update({ ...person, match: e.target.value, account: undefined });
-      }}>
-        <option value="new">Placeholder</option>
-        <option value="me">This is me</option>
-        {members.map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}
-        <option value="account">Link a Split account</option>
-      </select>
+      <Picker label={"Match " + source} value={person.match} onChange={(match) => { setMatches(undefined); update({ ...person, match, account: undefined }); }} options={[{ value: "new", label: "Placeholder" }, { value: "me", label: "This is me" }, ...members.map((member) => ({ value: member.id, label: member.name })), { value: "account", label: "Link a Split account" }]} />
       <div className="splitwise-person-fields">
         {(placeholder || (person.match === "me" && newGroup)) && (
           <details className="splitwise-person-details">

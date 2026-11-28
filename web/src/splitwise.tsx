@@ -1,3 +1,4 @@
+import { Picker } from "./picker";
 // Import from Splitwise: pick one or more "Export as spreadsheet" CSVs (one group each),
 // preview, map names to people, then import each group atomically.
 import { useEffect, useMemo, useRef, useState, type DragEvent } from "react";
@@ -440,12 +441,12 @@ function Preview({
             <fieldset className="splitwise-settings" disabled={busy} aria-label="Group settings and people">
               <h4>Group settings</h4>
               <div className="splitwise-fields">
-                <label className="field">
+                <div className="field">
                   Import into
-                  <select
+                  <Picker label="Import into"
                     value={i.target}
-                    onChange={(e) => {
-                      const targetID = e.target.value;
+                    onChange={(selected) => {
+                      const targetID = selected;
                       const next = guessMapping(g, groups.find((x) => x.id === targetID), user, userName);
                       for (const name of g.members) {
                         const person = i.mapping[name];
@@ -460,14 +461,8 @@ function Preview({
                         else if (next[name].match === "me") next[name].match = "new";
                       }
                       update({ target: targetID, mapping: next });
-                    }}
-                  >
-                    <option value="new">A new group</option>
-                    {groups.map((x) => (
-                      <option key={x.id} value={x.id}>{x.name} ({x.currency})</option>
-                    ))}
-                  </select>
-                </label>
+                    }} options={[{ value: "new", label: "A new group" }, ...groups.map((group) => ({ value: group.id, label: `${group.name} (${group.currency})` }))]} />
+                </div>
               </div>
               {i.target === "new" && (
                 <label className="field">

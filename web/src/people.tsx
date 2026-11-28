@@ -1,62 +1,179 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Form, useLedger, value } from "./context";
-import type { DirectoryPerson, Invitation } from "./data";
+import { balances, groupTransfers, money, settlementEntry, type DirectoryPerson,
+  type Invitation, type SentFriendRequest, type Snapshot } from "./data";
+import { PaymentOptions } from "./paymentMethods";
+import { FormPicker } from "./picker";
 import { Avatar } from "./ui";
 
 const kindLabel: Record<string, string> = { trip: "Trip", home: "Home", friend: "Friend tab" };
 
+function friendBalances({ groups, entries }: Snapshot, user: string, friends: DirectoryPerson[]) {
+  const totals = new Map(friends.map(({ userID }) => [userID, new Map<string, number>()]));
+  const byGroup = new Map<string, Snapshot["entries"]>();
+  for (const entry of entries) {
+    const groupEntries = byGroup.get(entry.groupID);
+    if (groupEntries) groupEntries.push(entry);
+    else byGroup.set(entry.groupID, [entry]);
+  }
+  for (const group of groups) {
+    if (group.archived) continue;
+    const me = group.members.find((member) => member.userID === user);
+    if (!me) continue;
+    const roster = new Map(group.members.map((member) => [member.id, member.userID]));
+    const groupEntries = byGroup.get(group.id) ?? [];
+    for (const currency of new Set(groupEntries.map((entry) => settlementEntry(entry).currency))) {
+      for (const { from, to, amount } of groupTransfers(group, balances(groupEntries, currency))) {
+        if (from !== me.id && to !== me.id) continue;
+        const friend = roster.get(from === me.id ? to : from);
+        const total = friend && totals.get(friend);
+        if (total) total.set(currency, (total.get(currency) ?? 0) + (to === me.id ? amount : -amount));
+      }
+    }
+  }
+  return totals;
+}
+
 export function FriendsScreen() {
-  const { request } = useLedger();
-  const [friends, setFriends] = useState<DirectoryPerson[]>([]);
-  const [shared, setShared] = useState<DirectoryPerson[]>([]);
+  const { data, user, request, refresh } = useLedger();
+  const [people, setPeople] = useState<{ friends: DirectoryPerson[]; shared: DirectoryPerson[];
+    received: Invitation[]; sent: SentFriendRequest[] }>();
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [removing, setRemoving] = useState<string>();
+  const [showInvite, setShowInvite] = useState(false);
+  const loadNumber = useRef(0);
   const load = useCallback(async () => {
+    const run = ++loadNumber.current;
     try {
-      const [friends, shared] = await Promise.all([
+      const [friends, shared, { invitations }, sent] = await Promise.all([
         request<DirectoryPerson[]>("/v1/friends"),
         request<DirectoryPerson[]>("/v1/people/shared"),
+        request<{ invitations: Invitation[] }>("/v1/invitations"),
+        request<SentFriendRequest[]>("/v1/friends/requests"),
       ]);
-      setFriends(friends);
-      setShared(shared);
-    } catch (e) { setError(e instanceof Error ? e.message : "Could not load friends."); }
+      if (run !== loadNumber.current) return;
+      setPeople({ friends, shared, received: invitations.filter(({ kind }) => kind === "friend"), sent });
+      setError("");
+    } catch (e) {
+      if (run === loadNumber.current) setError(e instanceof Error ? e.message : "Could not load friends.");
+    }
   }, [request]);
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    void load();
+    return () => { loadNumber.current++; };
+  }, [load]);
   async function send(target: { email: string } | { userID: string }) {
     await request("/v1/friends/requests", target);
-    setNotice("If this person can receive your request, it will appear in their invitation inbox.");
+    setShowInvite(false);
+    await load();
+    setNotice("If this person can receive your request, it will appear in their Invitations.");
   }
-  const candidates = shared.filter((person) => !friends.some((friend) => friend.userID === person.userID));
+  async function act(path: string, message: string) {
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      await request(path, {});
+      setRemoving(undefined);
+      await load();
+      setNotice(message);
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const totals = useMemo(() => friendBalances(data, user, people?.friends ?? []), [data, user, people]);
+  const candidates = people?.shared.filter((person) => !people.friends.some((friend) => friend.userID === person.userID)) ?? [];
   return (
-    <div className="people-page form-stack">
-      <div className="page-head"><h1 className="page-title">Friends</h1></div>
+    <div className="friends-page form-stack">
+      <header className="page-head friends-head">
+        <div><h1 className="page-title">Friends</h1><p className="page-sub">See what you owe each other across active groups.</p></div>
+        <button className="btn btn-primary" type="button" aria-expanded={showInvite}
+          aria-controls="add-friend" onClick={() => setShowInvite(!showInvite)}>{showInvite ? "Close" : "Add friend"}</button>
+      </header>
       {notice && <p className="ok-banner" role="status">{notice}</p>}
       {error && <p className="error-banner" role="alert">{error}</p>}
-      <section className="card card-pad form-stack">
-        <h2>Send a friend request</h2>
-        <Form label="Send by email" submit={async (form) => send({ email: value(form, "email") })}>
-          <label className="field">Full email address<input type="email" name="email" required maxLength={254} /></label>
-        </Form>
-        {candidates.length > 0 && <Form label="Send to group member" submit={async (form) => send({ userID: value(form, "user") })}>
-          <label className="field">From shared groups<select name="user" required>
-            <option value="">Choose a person</option>
-            {candidates.map((person) => <option key={person.userID} value={person.userID}>{person.name}</option>)}
-          </select></label>
-        </Form>}
+      {!people && !error && <p className="muted" role="status">Loading friends…</p>}
+      <section id="add-friend" className="card card-pad friends-invite" hidden={!showInvite}>
+        {showInvite && <>
+          <Form label="Send by email" submit={(form) => send({ email: value(form, "email") })}>
+            <label className="field">Friend’s email<input type="email" name="email" required maxLength={254} autoComplete="off" /></label>
+          </Form>
+          {candidates.length > 0 && <Form label="Send to group member" submit={(form) => send({ userID: value(form, "user") })}>
+            <div className="field">From shared groups
+              <FormPicker label="From shared groups" name="user" defaultValue="" required search
+                options={[{ value: "", label: "Choose a person" }, ...candidates.map(({ userID, name }) => ({ value: userID, label: name }))]} />
+            </div>
+          </Form>}
+        </>}
       </section>
-      <section className="card card-pad form-stack">
-        <h2>Your friends</h2>
-        {friends.length === 0 && <p className="muted">Accepted requests appear here.</p>}
-        {friends.map((friend) => <div className="people-row-main" key={friend.userID}>
-          <Avatar name={friend.name} avatarURL={friend.avatarURL} size={36} />
-          <strong>{friend.name}</strong>
-          <div className="people-row-actions"><Form label="Remove" submit={async () => {
-            await request(`/v1/friends/${encodeURIComponent(friend.userID)}/remove`, {});
-            await load();
-          }} /></div>
-        </div>)}
-      </section>
+
+      {people && <div className="friends-layout">
+        <section aria-labelledby="friends-list">
+          <h2 id="friends-list">Your friends <span>{people.friends.length}</span></h2>
+          <div className="card">
+            {people.friends.length === 0 && <p className="card-pad muted">Accepted requests appear here. Add a friend using their email address.</p>}
+            {people.friends.map((friend) => {
+              const amounts = [...(totals.get(friend.userID) ?? [])].filter(([, amount]) => amount).sort();
+              return <article className="friend-card" key={friend.userID}>
+                <div className="friend-row">
+                  <Avatar name={friend.name} avatarURL={friend.avatarURL} size={44} />
+                  <h3>{friend.name}</h3>
+                  <div className="friend-balance">{amounts.length ? amounts.map(([currency, amount]) => (
+                    <div key={currency} className={amount > 0 ? "friend-owed" : "friend-owes"}>
+                      <small>{amount > 0 ? "Owes you" : "You owe"}</small>
+                      <strong>{money(Math.abs(amount), currency)}</strong>
+                    </div>
+                  )) : <small className="muted">Settled up</small>}</div>
+                  {removing !== friend.userID && <button type="button" className="btn btn-xs friend-remove"
+                    aria-label={`Remove ${friend.name}`} onClick={() => setRemoving(friend.userID)}>Remove</button>}
+                </div>
+                {!!friend.paymentMethods?.length && <details className="friend-payments">
+                  <summary>Payment methods</summary>
+                  <PaymentOptions methods={friend.paymentMethods} />
+                </details>}
+                {removing === friend.userID && (
+                  <div className="friend-actions friend-confirm">
+                    <span>Remove {friend.name}?</span>
+                    <button type="button" className="btn btn-xs" onClick={() => setRemoving(undefined)} autoFocus>Keep friend</button>
+                    <button type="button" className="btn btn-xs btn-danger" disabled={busy}
+                      onClick={() => void act(`/v1/friends/${encodeURIComponent(friend.userID)}/remove`, "Friend removed.")}>Remove</button>
+                  </div>
+                )}
+              </article>;
+            })}
+          </div>
+        </section>
+        <section aria-labelledby="friend-requests">
+          <h2 id="friend-requests">Requests <span>{people.received.length + people.sent.length}</span></h2>
+          <div className="card card-pad friend-requests">
+            <h3>Received</h3>
+            {people.received.length === 0 && <p className="muted">No incoming requests.</p>}
+            {people.received.map((invite) => <div key={invite.id} className="friend-request-item">
+              <strong>{invite.inviterName ?? "Split member"}</strong>
+              <div className="friend-actions">
+                <button className="btn btn-sm btn-primary" type="button" disabled={busy}
+                  onClick={() => void act(`/v1/invitations/${invite.id}/accept`, "Friend request accepted.")}>Accept</button>
+                <button className="btn btn-sm" type="button" disabled={busy}
+                  onClick={() => void act(`/v1/invitations/${invite.id}/decline`, "Friend request declined.")}>Decline</button>
+              </div>
+            </div>)}
+            <h3>Sent</h3>
+            {people.sent.length === 0 && <p className="muted">No sent requests.</p>}
+            {people.sent.map((item) => <div key={item.id} className="friend-request-item">
+              <strong>{item.label}</strong>
+              <button className="btn btn-sm" type="button" disabled={busy} aria-label={`Cancel request to ${item.label}`}
+                onClick={() => void act(`/v1/friends/requests/${item.id}/cancel`, "Friend request canceled.")}>Cancel request</button>
+            </div>)}
+          </div>
+        </section>
+      </div>}
     </div>
   );
 }

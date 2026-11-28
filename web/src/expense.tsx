@@ -388,7 +388,7 @@ function Composer({ g, existing }: { g: Group; existing?: Expense }) {
                     <small className="muted">{homeMoney.totalText({ [currency]: typed })}</small>
                   )}
                 </label>}
-                <CurrencySelect label="Currency" searchable value={currency} onChange={(next) => {
+                <CurrencySelect label="Currency" value={currency} onChange={(next) => {
                   setExchange(null);
                   setCurrency(next);
                 }} />

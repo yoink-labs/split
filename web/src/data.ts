@@ -79,6 +79,7 @@ export interface Snapshot {
   invitationCount?: number;
   /** Whether other people can find this account in people search. Defaults to true. */
   discoverable?: boolean;
+  sharePaymentWithFriends?: boolean;
 }
 
 /** A people search result. The Worker never returns contact details. */
@@ -86,6 +87,13 @@ export interface DirectoryPerson {
   userID: string;
   name: string;
   avatarURL?: string;
+  paymentMethods?: PaymentMethod[];
+}
+
+export interface SentFriendRequest {
+  id: string;
+  label: string;
+  expiresAt: number;
 }
 
 export interface Invitation {

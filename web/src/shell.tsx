@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { useLedger } from "./context";
 import { type Group } from "./data";
 import { memberBalances, useHomeMoney, useLedgerRates } from "./homeMoney";
 import { SplitLogo, Avatar } from "./ui";
+import { NavigationMenu } from "./picker";
 
 const accountLinks = [
   { to: "/you", label: "Account & avatar", hint: "Profile, theme, payment handles" },
@@ -14,58 +15,17 @@ const accountLinks = [
 ];
 
 function AccountMenu({ name, avatarURL, onNavigate }: { name: string; avatarURL?: string | null; onNavigate: () => void }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  const loc = useLocation();
-  useEffect(() => setOpen(false), [loc.pathname]);
-  useEffect(() => {
-    if (!open) return;
-    const close = (e: MouseEvent | KeyboardEvent) => {
-      if (e instanceof KeyboardEvent ? e.key === "Escape" : !ref.current?.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", close);
-    document.addEventListener("keydown", close);
-    return () => {
-      document.removeEventListener("mousedown", close);
-      document.removeEventListener("keydown", close);
-    };
-  }, [open]);
-  return (
-    <div className="account-menu" ref={ref}>
-      {open && (
-        <div className="account-popover" role="menu">
-          {accountLinks.map((l) => (
-            <Link
-              key={l.to}
-              to={l.to}
-              role="menuitem"
-              className={"account-popover-item" + (loc.pathname === l.to ? " active" : "")}
-              onClick={onNavigate}
-            >
-              <span className="account-popover-label">{l.label}</span>
-              <span className="account-popover-hint">{l.hint}</span>
-            </Link>
-          ))}
-        </div>
-      )}
-      <button
-        type="button"
-        className={"user-pill" + (open ? " open" : "")}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        onClick={() => setOpen((v) => !v)}
-      >
+  const { pathname } = useLocation();
+  return <NavigationMenu key={pathname} label={name + ", settings and tools"} current={pathname}
+    links={accountLinks} onNavigate={onNavigate} trigger={
+      <>
         <Avatar name={name} avatarURL={avatarURL} size={30} />
         <span className="nav-item-main">
-          <span className="nav-item-name" style={{ fontSize: 13, fontWeight: 600 }}>
-            {name}
-          </span>
+          <span className="nav-item-name">{name}</span>
           <span className="nav-item-sub">Settings & tools</span>
         </span>
-        <span className="user-pill-caret" aria-hidden>⌃</span>
-      </button>
-    </div>
-  );
+      </>
+    } />;
 }
 
 export function AppShell({ children }: { children: ReactNode }) {

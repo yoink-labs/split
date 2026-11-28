@@ -95,10 +95,10 @@ export function PaymentEditor({ initial, defaults, save, shareWithFriends }: {
           {rows.map((row, index) => (
             <div className="payment-editor-row form-stack" key={row.id}>
               <div className="form-row">
-                <label className="field">
+                <div className="field">
                   Platform
                   <Picker label="Platform" value={row.choice} search onChange={(choice) => edit(row.id, { choice, platform: choice })} options={[{ value: "", label: "Custom platform" }, ...platforms.map(([value, label]) => ({ value, label }))]} />
-                </label>
+                </div>
                 {!row.choice && (
                   <label className="field">
                     Platform name

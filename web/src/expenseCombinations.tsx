@@ -90,7 +90,7 @@ export function ExpenseCombinations({ group, entries, onInspect }: {
         {!eligible.length && <p className="muted">No available expenses in this group.</p>}
       </fieldset>
       <label>Combined description <input type="text" name="title" maxLength={120} placeholder={first?.title} /></label>
-      <label>Split method <Picker label="Split method" value={mode} onChange={setMode} options={[{ value: "equal", label: "Equally" }, { value: "exact", label: "Exact amounts" }, { value: "percent", label: "Percentages" }, { value: "shares", label: "Shares" }, { value: "adjustment", label: "Equal + adjustments" }]} /></label>
+      <div>Split method <Picker label="Split method" value={mode} onChange={setMode} options={[{ value: "equal", label: "Equally" }, { value: "exact", label: "Exact amounts" }, { value: "percent", label: "Percentages" }, { value: "shares", label: "Shares" }, { value: "adjustment", label: "Equal + adjustments" }]} /></div>
       <fieldset>
         <legend>Split among</legend>
         {active.map((member) => <div className="row" key={member.id}>

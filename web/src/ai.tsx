@@ -173,10 +173,10 @@ function Setup({ openAccess }: { openAccess: (action: AccessAction) => void }) {
             <div className="ai-access-head">
               <p><button className="ai-link" type="button" onClick={() => openAccess("create")}>Create a token</button>{" "}
                 for a client that accepts a bearer token.</p>
-              <label className="ai-format">
+              <div className="ai-format">
                 Config format
                 <Picker label="Config format" value={remote} onChange={(selected) => setRemote(selected as RemoteClient)} options={[{ value: "http", label: "URL and header" }, { value: "cursor", label: "Cursor JSON" }, { value: "codex", label: "Codex TOML" }]} />
-              </label>
+              </div>
             </div>
             <CodeBlock key={remote} label={remoteCommands[remote].file} {...remoteCommands[remote]} />
             <p className="muted">{remote === "http"

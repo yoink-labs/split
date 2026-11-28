@@ -173,9 +173,9 @@ export function GroupMembers({ group, entries }: { group: Group; entries: Expens
                 await save(`${path}/members`, { id: crypto.randomUUID(), userID: person.userID, name: person.name });
                 setNotice(`${person.name} added.`);
               }}>
-                <label className="field">Friends and shared group members
+                <div className="field">Friends and shared group members
                   <FormPicker label="Choose a person" name="user" defaultValue="" required search options={[{ value: "", label: "Choose a person" }, ...known.filter((person) => !group.members.some((member) => member.userID === person.userID)).map((person) => ({ value: person.userID, label: person.name }))]} />
-                </label>
+                </div>
               </Form>
             )}
           </SettingsCard>
@@ -186,9 +186,9 @@ export function GroupMembers({ group, entries }: { group: Group; entries: Expens
               setNewLink(link);
               await load();
             }}>
-              <label className="field">Invite target
+              <div className="field">Invite target
                 <FormPicker label="Invite link access" name="member" defaultValue="" options={[{ value: "", label: "Anyone with the group link" }, ...group.members.filter((person) => !person.userID && !person.removed).map((person) => ({ value: person.id, label: `Claim ${person.name}’s place` }))]} />
-              </label>
+              </div>
             </Form>
             {newLink && (
               <div className="settings-invite-url">
@@ -251,7 +251,7 @@ export function GroupMembers({ group, entries }: { group: Group; entries: Expens
                 setNotice(`${selected.name} linked to ${person.name}.`);
                 await load();
               }}>
-                <label className="field">Link to an existing account<FormPicker label="Link to an existing account" name="user" defaultValue="" required search options={[{ value: "", label: "Choose a person" }, ...known.map((person) => ({ value: person.userID, label: person.name }))]} /></label>
+                <div className="field">Link to an existing account<FormPicker label="Link to an existing account" name="user" defaultValue="" required search options={[{ value: "", label: "Choose a person" }, ...known.map((person) => ({ value: person.userID, label: person.name }))]} /></div>
                 <label className="check-row"><input type="checkbox" required />
                   <span>Permanently merge this placeholder’s expense history into the selected account.</span>
                 </label>

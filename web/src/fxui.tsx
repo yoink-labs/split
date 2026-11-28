@@ -118,7 +118,7 @@ export function RateField({
         <strong>Settles in {to}</strong>
         <button type="button" className="btn btn-sm btn-ghost" onClick={() => setConverter(true)}>Open converter</button>
       </div>
-      <label className="field">
+      <div className="field">
         Exchange rate
         <Picker label="Rate source" value={mode} onChange={(selected) => {
           const next = selected as RateMode;
@@ -132,7 +132,7 @@ export function RateField({
           { value: "manual", label: "Custom transaction rate" },
           { value: "statement", label: "Calculate from statement amount" },
         ]} />
-      </label>
+      </div>
       {mode === "manual" && (
         <label className="field">
           {to} per 1 {from}

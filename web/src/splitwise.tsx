@@ -441,7 +441,7 @@ function Preview({
             <fieldset className="splitwise-settings" disabled={busy} aria-label="Group settings and people">
               <h4>Group settings</h4>
               <div className="splitwise-fields">
-                <label className="field">
+                <div className="field">
                   Import into
                   <Picker label="Import into"
                     value={i.target}
@@ -462,7 +462,7 @@ function Preview({
                       }
                       update({ target: targetID, mapping: next });
                     }} options={[{ value: "new", label: "A new group" }, ...groups.map((group) => ({ value: group.id, label: `${group.name} (${group.currency})` }))]} />
-                </label>
+                </div>
               </div>
               {i.target === "new" && (
                 <label className="field">

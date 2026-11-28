@@ -7,17 +7,24 @@ export function attachments(db:D1Database,entry:Entry,user:string,payload:string
   if(photos===undefined) return [];
   if(entry.kind!=='expense' || !Array.isArray(photos) || photos.length>4) throw new InputError('Choose up to four receipt photos.');
   return photos.map(photo=>{
-    if(!photo || !validID(photo.id) || typeof photo.data!=='string' || photo.data.length>327680) throw new InputError('Choose a JPEG up to 240 KiB.');
-    let binary:string;
-    try {binary=atob(photo.data);} catch {throw new InputError('Invalid receipt image.');}
-    if(binary.startsWith('%PDF-')) throw new InputError('PDF receipts are unsupported. Convert the PDF to a JPEG and try again.');
-    const bytes=Uint8Array.from(binary,c=>c.charCodeAt(0));
-    if(bytes.length<4 || bytes[0]!==255 || bytes[1]!==216 || bytes[2]!==255 || bytes.at(-2)!==255 || bytes.at(-1)!==217) throw new InputError('Choose a JPEG receipt.');
+    if(!photo || !validID(photo.id)) throw new InputError('Choose a JPEG up to 240 KiB.');
+    const bytes=jpegBytes(photo.data);
     return db.prepare(`INSERT INTO receipts(entry_id,id,image) SELECT id,?,? FROM entries
       WHERE id=? AND author=? AND payload=? AND id NOT IN (SELECT entry_id FROM deleted_entries)
       ON CONFLICT(entry_id,id) DO NOTHING`).bind(photo.id,bytes.buffer,entry.id,user,payload);
   });
 }
+/** Decodes a base64 JPEG receipt of up to 240 KiB. */
+export function jpegBytes(data:unknown) {
+  if(typeof data!=='string' || data.length>327680) throw new InputError('Choose a JPEG up to 240 KiB.');
+  let binary:string;
+  try {binary=atob(data);} catch {throw new InputError('Invalid receipt image.');}
+  if(binary.startsWith('%PDF-')) throw new InputError('PDF receipts are unsupported. Convert the PDF to a JPEG and try again.');
+  const bytes=Uint8Array.from(binary,c=>c.charCodeAt(0));
+  if(bytes.length<4 || bytes[0]!==255 || bytes[1]!==216 || bytes[2]!==255 || bytes.at(-2)!==255 || bytes.at(-1)!==217) throw new InputError('Choose a JPEG receipt.');
+  return bytes;
+}
+export const jpegResponse=(image:number[]|ArrayBuffer)=>new Response(new Uint8Array(image),{headers:{'Content-Type':'image/jpeg','Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'}});
 export function viewerAmounts(entry:Entry, viewer:string) {
   const paid = entryPayers(entry).reduce((sum,payer)=>sum+(payer.memberID===viewer ? payer.amount : 0),0);
   const share = entry.splits.reduce((sum,split)=>sum+(split.memberID===viewer ? split.amount : 0),0);
@@ -42,7 +49,7 @@ export async function purchaseRoute(req:Request,env:Env,user:string,ownExpensesO
     }
     const result=await env.DB.prepare('SELECT image FROM receipts WHERE entry_id=? AND id=?').bind(id,photo).first<number[] | ArrayBuffer>('image');
     if(!result) throw new HTTPError(404,'Receipt not found.');
-    return new Response(new Uint8Array(result),{headers:{'Content-Type':'image/jpeg','Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'}});
+    return jpegResponse(result);
   }
   if(req.method!=='POST' || photo || action==='receipts') throw new HTTPError(404,'Unknown receipt action.');
   const raw:Entry=JSON.parse(row.payload);

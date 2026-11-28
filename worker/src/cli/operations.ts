@@ -1,6 +1,6 @@
 import {settlementEntry} from '../exchange';
 import {rateE8 as parseRate} from '../fx';
-import { breakdown, grossItems, itemSplit, type Bill } from '../items';
+import { breakdown, consumptionReport, grossItems, itemSplit, type Bill } from '../items';
 import { exportGroup } from './export';
 import { refundRoom, refundsOf } from '../refundMath';
 import { deleteGroup } from '../social';
@@ -23,7 +23,7 @@ interface Args {
   description?: string; start?: string; end?: string; simplify?: 'on'|'off'; format?: 'ledger'|'summary'|'json';
   text?: string; comment?: string; avatar?: string;
   csv?: string; file?: string; me?: string; mapping?: Record<string,string>;
-  photos?: string[];
+  photos?: string[]; note?: string;
   from: string; to: string; category?:string; item:string; photo:string; action?:string; mode?: 'equal'|'exact'|'percent'|'shares'|'archive'|'restore'|'delete'; participants?: string[]; values?: string[];
   yes?: boolean; revision?: string; preview?: boolean; settlement?: string; state?: 'handled'|'unhandled'|'pending'|'confirmed'; reset?: boolean;
   pending?: boolean; pendingNote?: string; receiver?: string; note?: string;
@@ -154,6 +154,11 @@ function makeRefund(a: Args, group: Group, entries: Entry[], original?: Entry, i
     ...(a.notes ? { notes: a.notes } : {}), ...pendingFields(a) }, group.members.map(m => m.id));
 }
 
+function base64(bytes:Uint8Array) {
+  let raw='';
+  for(const byte of bytes) raw+=String.fromCharCode(byte);
+  return btoa(raw);
+}
 export async function operate(name: string, input: unknown, env: Env, user: string, handle: LedgerHandler) {
   const validate = validators.get(name);
   if (!validate) throw new HTTPError(404, 'Unknown Split command.');
@@ -449,6 +454,29 @@ export async function operate(name: string, input: unknown, env: Env, user: stri
       return a.member ? {...report,members:report.members.filter(m=>m.id===a.member),expenses:entries.filter(e=>(e.exchange?.target??e.currency)===currency && e.kind==='expense' && (e.paidBy===a.member || e.splits.some(s=>s.memberID===a.member)))} : report;
     });
   }
+  if(name==='receipts_inbox') return (await ledger<{receipts:{uploadedBy:string}[]}>('/v1/groups/'+group.id+'/receipts')).receipts
+    .map(r=>({...r,uploadedByName:nameOf(r.uploadedBy)}));
+  if(name==='receipts_upload') {
+    const uploaded:string[]=[];
+    for(const data of a.photos!) {
+      const id=crypto.randomUUID();
+      await ledger('/v1/groups/'+group.id+'/receipts',{id,data,...(a.note?{note:a.note}:{})});
+      uploaded.push(id);
+    }
+    return {uploaded};
+  }
+  if(name==='receipts_pair') return ledger('/v1/groups/'+group.id+'/receipts/'+a.photo+'/pair',{entryID:a.expense});
+  if(name==='receipts_delete') return ledger('/v1/groups/'+group.id+'/receipts/'+a.photo+'/delete',{});
+  if(name==='receipts_get' && !a.expense) {
+    const res=await handle(new Request(env.APP_URL+'/v1/groups/'+group.id+'/receipts/'+a.photo),env,user);
+    return {mimeType:'image/jpeg',data:base64(new Uint8Array(await res.arrayBuffer()))};
+  }
+  if(name==='items_report') {
+    if(a.member && !members.some(m=>m.id===a.member)) throw new InputError('Choose a group member.');
+    return [...new Set([group.currency,...entries.map(e=>e.currency)])].map(currency=>consumptionReport(entries,currency)).filter(r=>r.people.length)
+      .map(r=>({...r,people:r.people.filter(p=>!a.member || p.memberID===a.member).map(p=>({...p,name:nameOf(p.memberID),
+        lines:p.lines.map(l=>({...l,expenseTitle:entries.find(e=>e.id===l.entryID)?.title}))}))}));
+  }
   if(name==='items_open') return entries.filter(e=>e.bill).flatMap(e=>grossItems(e.bill!).filter(i=>!i.memberIDs.length).map(i=>({expense:e.id,expenseTitle:e.title,currency:e.currency,...i})));
   if(name.startsWith('receipts_') || name.startsWith('items_')) {
     const e=entries.find(e=>e.id===a.expense);
@@ -462,11 +490,9 @@ export async function operate(name: string, input: unknown, env: Env, user: stri
     }
     if(name==='receipts_get') {
       const res=await handle(new Request(env.APP_URL+path+'/receipts/'+a.photo),env,user);
-      const bytes=new Uint8Array(await res.arrayBuffer());
-      let raw='';
-      for(const byte of bytes) raw+=String.fromCharCode(byte);
-      return {mimeType:'image/jpeg',data:btoa(raw)};
+      return {mimeType:'image/jpeg',data:base64(new Uint8Array(await res.arrayBuffer()))};
     }
+    if(name==='receipts_move') return ledger(path+'/receipts/'+a.photo+'/move',{entryID:a.to==='inbox' ? null : a.to});
     if(name==='items_close') return ledger(path+'/close',{memberIDs:a.participants??members.filter(m=>!m.removed).map(m=>m.id)});
     const item=e.bill?.items.find(i=>i.id===a.item);
     if(!item) throw new HTTPError(404,'Item not found.');

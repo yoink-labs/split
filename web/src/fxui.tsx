@@ -16,36 +16,19 @@ const quoteLabel = (quote: Quote) => [
   quote.saved ? "saved quote" : "",
 ].filter(Boolean).join(" · ");
 
-export function CurrencySelect({
-  label, value, onChange, name, exclude, searchable,
-}: {
+export function CurrencySelect({ label, value, onChange, exclude }: {
   label: string;
   value: string;
-  onChange: (c: string) => void;
-  name?: string;
+  onChange: (code: string) => void;
   exclude?: string;
-  searchable?: boolean;
 }) {
-  if (searchable) {
-    const options = [value, ...currencies.filter((code) => code !== value && code !== exclude)]
-      .map((code) => ({ value: code, label: currencyLabel(code) }));
-    return (
-      <div className="field">
-        <span>{label}</span>
-        <Picker label={label} value={value} onChange={onChange} search options={options} />
-        {name && <input type="hidden" name={name} value={value} />}
-      </div>
-    );
-  }
+  const options = [value, ...currencies.filter((code) => code !== value && code !== exclude)]
+    .map((code) => ({ value: code, label: currencyLabel(code) }));
   return (
-    <label className="field">
-      {label}
-      <select name={name} value={value} onChange={(e) => onChange(e.target.value)}>
-        {currencies.filter((code) => code !== exclude).map((code) => (
-          <option key={code} value={code}>{currencyLabel(code)}</option>
-        ))}
-      </select>
-    </label>
+    <div className="field">
+      <span>{label}</span>
+      <Picker label={label} value={value} onChange={onChange} search options={options} />
+    </div>
   );
 }
 
@@ -137,18 +120,18 @@ export function RateField({
       </div>
       <label className="field">
         Exchange rate
-        <select value={mode} onChange={(event) => {
-          const next = event.target.value as RateMode;
+        <Picker label="Rate source" value={mode} onChange={(selected) => {
+          const next = selected as RateMode;
           const currentRate = (exchange ?? quote)?.rateE8;
           if (next === "manual" && !text && currentRate) setText(rateInput(currentRate));
           setMode(next);
-        }}>
-          {saved && <option value="saved">Saved transaction rate</option>}
-          {tripRate && <option value="trip">Trip rate</option>}
-          <option value="published">Published rate for charge date</option>
-          <option value="manual">Custom transaction rate</option>
-          <option value="statement">Calculate from statement amount</option>
-        </select>
+        }} options={[
+          ...(saved ? [{ value: "saved", label: "Saved transaction rate" }] : []),
+          ...(tripRate ? [{ value: "trip", label: "Trip rate" }] : []),
+          { value: "published", label: "Published rate for charge date" },
+          { value: "manual", label: "Custom transaction rate" },
+          { value: "statement", label: "Calculate from statement amount" },
+        ]} />
       </label>
       {mode === "manual" && (
         <label className="field">

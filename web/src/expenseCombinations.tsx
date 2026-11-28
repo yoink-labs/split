@@ -1,3 +1,4 @@
+import { Picker } from "./picker";
 import { useEffect, useState } from "react";
 import { Form, useLedger, value } from "./context";
 import { entryPayers, minor, moneyCompact, type Expense, type Group } from "./data";
@@ -89,11 +90,7 @@ export function ExpenseCombinations({ group, entries, onInspect }: {
         {!eligible.length && <p className="muted">No available expenses in this group.</p>}
       </fieldset>
       <label>Combined description <input type="text" name="title" maxLength={120} placeholder={first?.title} /></label>
-      <label>Split method <select value={mode} onChange={(event) => setMode(event.target.value)}>
-        <option value="equal">Equally</option><option value="exact">Exact amounts</option>
-        <option value="percent">Percentages</option><option value="shares">Shares</option>
-        <option value="adjustment">Equal + adjustments</option>
-      </select></label>
+      <label>Split method <Picker label="Split method" value={mode} onChange={setMode} options={[{ value: "equal", label: "Equally" }, { value: "exact", label: "Exact amounts" }, { value: "percent", label: "Percentages" }, { value: "shares", label: "Shares" }, { value: "adjustment", label: "Equal + adjustments" }]} /></label>
       <fieldset>
         <legend>Split among</legend>
         {active.map((member) => <div className="row" key={member.id}>

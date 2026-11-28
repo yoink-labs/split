@@ -5,6 +5,7 @@ struct PaymentSettings: View {
     @Environment(\.dismiss) private var dismiss
     let groupID: String?
     @State private var inherit: Bool
+    @State private var shareWithFriends: Bool
     @State private var rows: [Draft]
     @State private var busy = false
     @State private var error: String?
@@ -20,8 +21,9 @@ struct PaymentSettings: View {
         }
     }
 
-    init(groupID: String? = nil, initial: [PaymentMethod]?, defaults: [PaymentMethod] = []) {
+    init(groupID: String? = nil, initial: [PaymentMethod]?, defaults: [PaymentMethod] = [], shareWithFriends: Bool = false) {
         self.groupID = groupID
+        _shareWithFriends = State(initialValue: shareWithFriends)
         _inherit = State(initialValue: groupID != nil && initial == nil)
         _rows = State(initialValue: (initial ?? defaults).map(Draft.init))
     }
@@ -37,9 +39,9 @@ struct PaymentSettings: View {
                 }
             } else {
                 Section {
-                    Text("Active members of your groups can see these details. You can change what you share in each group.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
+                    Toggle("Share with accepted friends", isOn: $shareWithFriends)
+                } footer: {
+                    Text("Active group members can see the methods you share in their group.")
                 }
             }
             if !inherit {
@@ -51,6 +53,7 @@ struct PaymentSettings: View {
                             }
                             Text("Custom platform").tag("")
                         }
+                        .pickerStyle(.menu)
                         .onChange(of: row.choice) { _, choice in row.method.platform = choice }
                         if row.choice.isEmpty {
                             TextField("Platform name", text: $row.method.platform)
@@ -118,7 +121,8 @@ struct PaymentSettings: View {
         Task {
             defer { busy = false }
             do {
-                try await store.savePaymentMethods(inherit ? nil : methods, in: groupID)
+                try await store.savePaymentMethods(inherit ? nil : methods, in: groupID,
+                                                   shareWithFriends: groupID == nil ? shareWithFriends : nil)
                 dismiss()
             } catch {
                 self.error = error.localizedDescription

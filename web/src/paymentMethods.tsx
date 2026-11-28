@@ -1,3 +1,4 @@
+import { Picker } from "./picker";
 import { useState } from "react";
 import { Form } from "./context";
 import type { PaymentMethod, Person } from "./data";
@@ -48,14 +49,16 @@ function drafts(methods: PaymentMethod[]): Draft[] {
   return methods.map((method) => ({ ...method, id: crypto.randomUUID(), choice: platformInfo(method.platform) ? method.platform : "" }));
 }
 
-export function PaymentEditor({ initial, defaults, save }: {
+export function PaymentEditor({ initial, defaults, save, shareWithFriends }: {
   initial?: PaymentMethod[];
   defaults?: PaymentMethod[];
-  save: (methods: PaymentMethod[] | null) => Promise<void>;
+  save: (methods: PaymentMethod[] | null, shareWithFriends?: boolean) => Promise<void>;
+  shareWithFriends?: boolean;
 }) {
   const group = defaults !== undefined;
   const [inherit, setInherit] = useState(group && initial === undefined);
   const [rows, setRows] = useState(() => drafts(initial ?? defaults ?? []));
+  const [sharing, setSharing] = useState(shareWithFriends ?? false);
   const [saved, setSaved] = useState(false);
 
   function edit(id: string, change: Partial<Draft>) {
@@ -68,12 +71,19 @@ export function PaymentEditor({ initial, defaults, save }: {
       setSaved(false);
       await save(inherit ? null : rows.map(({ platform, handle, preferred }) => ({
         platform: platform.trim(), handle: handle.trim(), ...(preferred ? { preferred } : {}),
-      })));
+      })), group ? undefined : sharing);
       setSaved(true);
     }}>
       <p className="muted">{group
         ? "Choose what this group sees in member profiles and when settling up."
         : "Active members of your groups can see these details. You can change what you share in each group."}</p>
+      {!group && <label className="check-row">
+        <input type="checkbox" checked={sharing} onChange={(event) => {
+          setSharing(event.target.checked);
+          setSaved(false);
+        }} />
+        <span>Share my profile payment methods with accepted friends</span>
+      </label>}
       {group && (
         <label>
           <input type="checkbox" checked={inherit} onChange={(e) => { setInherit(e.target.checked); setSaved(false); }} />
@@ -87,12 +97,7 @@ export function PaymentEditor({ initial, defaults, save }: {
               <div className="form-row">
                 <label className="field">
                   Platform
-                  <select value={row.choice} onChange={(e) => edit(row.id, {
-                    choice: e.target.value, platform: e.target.value,
-                  })}>
-                    <option value="">Custom platform</option>
-                    {platforms.map(([id, label]) => <option key={id} value={id}>{label}</option>)}
-                  </select>
+                  <Picker label="Platform" value={row.choice} search onChange={(choice) => edit(row.id, { choice, platform: choice })} options={[{ value: "", label: "Custom platform" }, ...platforms.map(([value, label]) => ({ value, label }))]} />
                 </label>
                 {!row.choice && (
                   <label className="field">
@@ -164,13 +169,15 @@ function paymentURL({ platform, handle }: PaymentMethod, amount?: number, curren
   if (platform === "cashapp" && /^\$[a-z\d]+$/i.test(handle)) return "https://cash.app/" + handle;
 }
 
-export function PaymentOptions({ person, amount, currency }: { person: Person; amount?: number; currency?: string }) {
-  const methods = [...personPaymentMethods(person)].sort((a, b) => Number(!!b.preferred) - Number(!!a.preferred));
+export function PaymentOptions({ person, methods, amount, currency }: (
+  { person: Person; methods?: never } | { person?: never; methods: PaymentMethod[] }
+) & { amount?: number; currency?: string }) {
+  const ordered = [...(person ? personPaymentMethods(person) : methods)].sort((a, b) => Number(!!b.preferred) - Number(!!a.preferred));
   const [copyStatus, setCopyStatus] = useState("");
-  if (methods.length === 0) return null;
+  if (ordered.length === 0) return null;
   return (
     <div className="payment-options">
-      {methods.map((method, index) => {
+      {ordered.map((method, index) => {
         const info = platformInfo(method.platform);
         const label = info?.[1] ?? method.platform;
         const icon = info?.[3] ?? method.platform;

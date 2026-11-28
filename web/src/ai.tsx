@@ -1,3 +1,4 @@
+import { Picker } from "./picker";
 import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useLedger, value } from "./context";
@@ -174,11 +175,7 @@ function Setup({ openAccess }: { openAccess: (action: AccessAction) => void }) {
                 for a client that accepts a bearer token.</p>
               <label className="ai-format">
                 Config format
-                <select className="input" value={remote} onChange={(event) => setRemote(event.target.value as RemoteClient)}>
-                  <option value="http">URL and header</option>
-                  <option value="cursor">Cursor JSON</option>
-                  <option value="codex">Codex TOML</option>
-                </select>
+                <Picker label="Config format" value={remote} onChange={(selected) => setRemote(selected as RemoteClient)} options={[{ value: "http", label: "URL and header" }, { value: "cursor", label: "Cursor JSON" }, { value: "codex", label: "Codex TOML" }]} />
               </label>
             </div>
             <CodeBlock key={remote} label={remoteCommands[remote].file} {...remoteCommands[remote]} />

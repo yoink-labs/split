@@ -1,3 +1,4 @@
+import { FormPicker, Picker } from "./picker";
 import { DiscoverySetting } from "./people";
 import { PaymentEditor, PaymentOptions, personPaymentMethods } from "./paymentMethods";
 import { PendingPayments } from "./settlements";
@@ -22,7 +23,6 @@ import {
   type Group,
 } from "./data";
 import { fx, useHomeCurrency } from "./fx";
-import { CurrencySelect } from "./fxui";
 import { memberBalances, useHomeMoney } from "./homeMoney";
 import { Avatar, AvatarStack, BalanceBadge, CategoryIcon, EmptyState, TIP_URL } from "./ui";
 
@@ -241,11 +241,7 @@ export function NewGroup() {
             </label>
             <label className="field">
               Type
-              <select value={kind} onChange={(e) => setKind(e.target.value)}>
-                <option value="trip">Trip (day-by-day)</option>
-                <option value="home">Long-term / Home (monthly)</option>
-                <option value="friend">Friends tab</option>
-              </select>
+              <Picker label="Group type" value={kind} onChange={(selected) => setKind(selected)} options={[{ value: "trip", label: "Trip (day-by-day)" }, { value: "home", label: "Long-term / Home (monthly)" }, { value: "friend", label: "Friends tab" }]} />
             </label>
           </div>
           <label className="field">
@@ -255,11 +251,7 @@ export function NewGroup() {
           <div className="form-row">
             <label className="field">
               Group settlement currency
-              <select name="currency" defaultValue="USD">
-                {currencies.map((c) => (
-                  <option key={c}>{c}</option>
-                ))}
-              </select>
+              <FormPicker label="Currency" name="currency" defaultValue="USD" search options={currencies.map((code) => ({ value: code, label: code }))} />
             </label>
             <label className="field">
               Add people now (comma-separated, optional)
@@ -692,8 +684,8 @@ export function Account() {
 
       <div className="card card-pad form-stack">
         <h3>Payment methods</h3>
-        <PaymentEditor initial={data.paymentMethods ?? []}
-          save={(methods) => save("/v1/profile/payment-methods", { methods })} />
+        <PaymentEditor initial={data.paymentMethods ?? []} shareWithFriends={data.sharePaymentWithFriends}
+          save={(methods, shareWithFriends) => save("/v1/profile/payment-methods", { methods, shareWithFriends })} />
       </div>
 
       <DiscoverySetting />
@@ -705,11 +697,7 @@ export function Account() {
         <div className="form-row">
           <label className="field">
             Home currency
-            <select value={home} onChange={(e) => setHome(e.target.value)}>
-              {currencies.map((c) => (
-                <option key={c}>{c}</option>
-              ))}
-            </select>
+            <Picker label="Home currency" value={home} onChange={setHome} search options={currencies.map((code) => ({ value: code, label: code }))} />
           </label>
         </div>
         <p className="muted" style={{ fontSize: 12.5 }}>

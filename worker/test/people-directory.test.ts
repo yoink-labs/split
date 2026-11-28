@@ -148,7 +148,10 @@ describe('direct placeholder linking', () => {
     await people();
     await call(owner,'/v1/friends/requests',{email:'casey@example.test'});
     const [expired] = await inbox(casey);
-    await env.DB.prepare('UPDATE friendships SET expires_at=0 WHERE id=?').bind(expired.id).run();
+    await env.DB.batch([
+      env.DB.prepare('UPDATE friendships SET expires_at=0 WHERE id=?').bind(expired.id),
+      env.DB.prepare('UPDATE friend_request_receipts SET expires_at=0 WHERE id=?').bind(expired.id),
+    ]);
     expect(await inbox(casey)).toEqual([]);
     await expect(call(casey,`/v1/invitations/${expired.id}/accept`,{})).rejects.toMatchObject({status:404});
     await befriend(casey);
@@ -267,5 +270,86 @@ describe('invite inbox', () => {
     await call(casey, `/v1/invitations/${invite.id}/decline`, {});
     expect(await inbox(casey)).toEqual([]);
     expect((await read(owner, groupPath + '/invites')).invites).toEqual([]);
+  });
+});
+
+describe('Friends page', () => {
+  it('lists only the sender’s receipts and cancels an actionable request only for its sender', async () => {
+    await people();
+    await call(mallory, '/v1/profile/discoverable', { discoverable: false });
+    for (const email of ['casey@example.test', 'CASEY@example.test', 'unknown@example.test', 'mallory@example.test']) {
+      await call(owner, '/v1/friends/requests', { email });
+    }
+    const path = '/v1/friends/requests';
+    const sent = await read<{ id: string; label: string; expiresAt: number }[]>(owner, path);
+    expect(sent.map(row => row.label).sort()).toEqual(['casey@example.test', 'mallory@example.test', 'unknown@example.test']);
+    for (const row of sent) {
+      expect(Object.keys(row).sort()).toEqual(['expiresAt', 'id', 'label']);
+      expect(row.expiresAt).toBeGreaterThan(Date.now());
+    }
+    expect(await read(casey, path)).toEqual([]);
+    expect(await inbox(mallory)).toEqual([]);
+    const [invite] = await inbox(casey);
+    const cancel = `${path}/${invite.id}/cancel`;
+    await expect(call(casey, cancel, {})).rejects.toMatchObject({ status: 404 });
+    await expect(call(mallory, cancel, {})).rejects.toMatchObject({ status: 404 });
+    expect(await read(owner, cancel, {})).toEqual({ ok: true });
+    expect(await inbox(casey)).toEqual([]);
+    await expect(call(owner, cancel, {})).rejects.toMatchObject({ status: 404 });
+    const unmatched = sent.find(row => row.label === 'unknown@example.test')!;
+    expect(await read(owner, `${path}/${unmatched.id}/cancel`, {})).toEqual({ ok: true });
+    expect((await read<any[]>(owner, path)).map(row => row.label)).toEqual(['mallory@example.test']);
+  });
+
+  it('clears accepted, declined and expired requests from the outgoing list', async () => {
+    await people();
+    const path = '/v1/friends/requests';
+    await call(owner, path, { email: 'casey@example.test' });
+    const [accepted] = await inbox(casey);
+    await call(casey, `/v1/invitations/${accepted.id}/accept`, {});
+    await expect(call(owner, `${path}/${accepted.id}/cancel`, {})).rejects.toMatchObject({ status: 404 });
+    expect(await read(owner, path)).toEqual([]);
+    await call(owner, path, { email: 'mallory@example.test' });
+    const [declined] = await inbox(mallory);
+    await call(mallory, `/v1/invitations/${declined.id}/decline`, {});
+    expect(await read(owner, path)).toEqual([]);
+    await call(owner, path, { email: 'unknown@example.test' });
+    await env.DB.prepare('UPDATE friend_request_receipts SET expires_at=0 WHERE sender=?').bind(owner).run();
+    expect(await read(owner, path)).toEqual([]);
+  });
+
+  it('keeps payment details private until opted in and limits them to accepted friends or active group peers', async () => {
+    await people();
+    const methods = [{ platform: 'venmo', handle: 'casey-pay', preferred: true }];
+    const profile = '/v1/profile/payment-methods';
+    await call(casey, profile, { methods });
+    await call(owner, '/v1/friends/requests', { email: 'casey@example.test' });
+    const [invite] = await inbox(casey);
+    expect(await read(owner, '/v1/friends')).toEqual([]);
+    await call(casey, `/v1/invitations/${invite.id}/accept`, {});
+    expect(await read(owner, '/v1/friends')).toEqual([{ userID: casey, name: 'Casey Green' }]);
+    await expect(call(casey, profile, { methods, shareWithFriends: 'yes' })).rejects.toBeInstanceOf(InputError);
+    await call(casey, profile, { methods, shareWithFriends: true });
+    await call(casey, profile, { methods }); // Older clients preserve the opt-in.
+    expect((await read(casey, '/v1/snapshot')).sharePaymentWithFriends).toBe(true);
+    expect(await read(owner, '/v1/friends')).toEqual([{ userID: casey, name: 'Casey Green', paymentMethods: methods }]);
+    expect(await read(owner, '/v1/people/known')).toEqual([{ userID: casey, name: 'Casey Green' }]);
+    expect(await read(mallory, '/v1/friends')).toEqual([]);
+    expect(JSON.stringify(await read(mallory, '/v1/snapshot'))).not.toContain('casey-pay');
+
+    const shared = await shareGroup();
+    await call(casey, `/v1/groups/${shared}/payment-profile`, { methods: [] });
+    const groupMethods = async () => (await read(owner, '/v1/snapshot')).groups
+      .find((group: {id: string}) => group.id === shared).members
+      .find((member: {userID: string}) => member.userID === casey).paymentMethods;
+    expect(await groupMethods()).toEqual([]);
+    await call(casey, profile, { methods, shareWithFriends: false });
+    expect(await read(owner, '/v1/friends')).toEqual([{ userID: casey, name: 'Casey Green' }]);
+    await call(casey, `/v1/groups/${shared}/payment-profile`, { methods: null });
+    await call(owner, `/v1/friends/${casey}/remove`, {});
+    expect(await groupMethods()).toEqual(methods);
+    await env.DB.prepare('UPDATE members SET removed_at=? WHERE group_id=? AND user_id=?').bind('2026-01-01',shared,owner).run();
+    expect(await groupMethods()).toEqual([]);
+    expect(await read(owner, '/v1/friends')).toEqual([]);
   });
 });

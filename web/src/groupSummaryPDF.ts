@@ -1,6 +1,7 @@
 import type { Content, ContentTable, ContentText, TableCell, TDocumentDefinitions } from "pdfmake/interfaces";
 
 const ink = "#24201b";
+const highlight = "#e9f1df";
 const muted = "#665e54";
 
 function textRuns(element: HTMLElement): ContentText[] {
@@ -52,7 +53,7 @@ function tableBlock(table: HTMLTableElement): ContentTable | undefined {
       body: rows.map((row) => Array.from(row.cells, (cell): TableCell => {
         // Item and person rows that head a group of portion lines are bold on a light wash.
         const subhead = row.classList.contains("sum-subhead");
-        const fill = subhead && !itemized ? { fillColor: "#f4f1ec" } : {};
+        const fill = row.closest(".sum-involved") ? { fillColor: highlight } : subhead && !itemized ? { fillColor: "#f4f1ec" } : {};
         const indent = cell.querySelector(":scope > .sum-indent") ? 12 : 0;
         const claims = Array.from(cell.querySelectorAll(".sum-claims > li"), (claim, index) => {
           const [person, amount] = Array.from(claim.children) as HTMLElement[];
@@ -115,9 +116,21 @@ function blocks(element: Element): Content[] {
         text: textRuns(child as HTMLElement),
         width: figures || index === 1 ? "*" : 76,
         fontSize: figures || index !== 0 ? 10 : 9,
-        wordBreak: "break-all" as const,
+
       };
     });
+    if (element.closest(".sum-involved")) {
+      return [{
+        layout: "noBorders",
+        headlineLevel: 2,
+        table: {
+          widths: [76, "*", 124],
+          dontBreakRows: true,
+          body: [columns.map((column) => ({ ...column, width: undefined, fillColor: highlight, margin: [3, 4, 3, 4] }))],
+        },
+        margin: [0, 0, 0, 3],
+      }];
+    }
     return [{ columns, unbreakable: !figures, columnGap: 10, margin: [0, 0, 0, 7] }];
   }
 
@@ -146,8 +159,13 @@ export async function downloadReportPDF(report: HTMLElement, title: string) {
       fontSize: 8,
       color: muted,
     }),
-    pageBreakBefore: (block, following) =>
-      block.headlineLevel === 1 && following.getFollowingNodesOnPage().length === 0,
+    pageBreakBefore: (block, following) => {
+      if (block.headlineLevel === 1) return following.getFollowingNodesOnPage().length === 0;
+      if (block.headlineLevel === 2) {
+        return !following.getFollowingNodesOnPage().some((node) => node.table);
+      }
+      return false;
+    },
   };
   const [{ default: pdfMake }, { default: fonts }] = await Promise.all([
     import("pdfmake/build/pdfmake"),

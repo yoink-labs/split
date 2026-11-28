@@ -24,7 +24,7 @@ enum GroupSummaryPDF {
 
     @MainActor
     static func render(group: ExpenseGroup, entries: [LedgerEntry], fx: FXStore, layout: Layout = .receipts,
-                       sections: Sections = .init()) throws -> Data {
+                       sections: Sections = .init(), memberID: String? = nil) throws -> Data {
         guard !sections.isEmpty else { throw LedgerError.invalid("Choose at least one report section.") }
         let report = sections.history ? layout.rawValue : "Group report"
         let writer = try PDFWriter(title: "\(group.name) – \(report)")
@@ -39,6 +39,7 @@ enum GroupSummaryPDF {
         writer.text(group.name, .title)
         writer.text(sections.totals || sections.balances || sections.history
                     ? "\(report)  /  Preferred currency: \(home)" : report, .heading)
+        if let memberID { writer.text("Personal report for \(name(memberID))", .body) }
         let kind = switch group.kind { case "trip": "Trip"; case "home": "Household"; case "friend": "Friends"; default: "Group" }
         let dates = [group.startDate, group.endDate].compactMap { $0 }.map(displayDay)
         writer.text(([kind] + dates + ["Exported \(Date.now.formatted(date: .abbreviated, time: .omitted))"]).joined(separator: "  /  "), .detail)
@@ -88,11 +89,11 @@ enum GroupSummaryPDF {
             renderPeople(entries: recordedExpenses, writer: writer, name: name)
         }
         if sections.consumption {
-            renderConsumption(entries: recordedExpenses, writer: writer, name: name)
+            renderConsumption(entries: recordedExpenses, writer: writer, name: name, memberID: memberID)
         }
         guard sections.history else { return writer.finish(showRateNote: showsConversion) }
 
-        renderHistory(rows, layout: layout, home: home, writer: writer, name: name)
+        renderHistory(rows, layout: layout, home: home, writer: writer, name: name, memberID: memberID)
         return writer.finish(showRateNote: showsConversion)
     }
 
@@ -192,7 +193,7 @@ enum GroupSummaryPDF {
 
     /// Consumption by person for every expense, per recorded currency. Receipt items show their
     /// tax and tip; other expenses are one line equal to the person's share.
-    private static func renderConsumption(entries: [LedgerEntry], writer: PDFWriter, name: (String) -> String) {
+    private static func renderConsumption(entries: [LedgerEntry], writer: PDFWriter, name: (String) -> String, memberID: String?) {
         writer.section("Consumption by person")
         guard !entries.isEmpty else {
             writer.text("No expenses recorded.", .body)
@@ -203,7 +204,9 @@ enum GroupSummaryPDF {
         let refunds = Set(entries.filter(\.isRefund).map(\.id))
         let currencies = Set(entries.map(\.currency)).sorted()
         for currency in currencies {
-            guard let people = try? Consumption.report(entries, currency: currency), !people.isEmpty else { continue }
+            guard let report = try? Consumption.report(entries, currency: currency) else { continue }
+            let people = report.filter { memberID == nil || $0.total.memberID == memberID }
+            guard !people.isEmpty else { continue }
             if currencies.count > 1 { writer.space(4); writer.text("Recorded in \(currency)", .heading) }
             writer.draw(writer.columns(["Person", "Items", "Tax", "Tip", "Total"], style: .detail))
             writer.rule()
@@ -224,8 +227,8 @@ enum GroupSummaryPDF {
     }
 
     private static func renderHistory(_ rows: [(recorded: LedgerEntry, preferred: LedgerEntry?)], layout: Layout,
-                                      home: String, writer: PDFWriter, name: (String) -> String) {
-        if layout == .summary, !rows.isEmpty {
+                                      home: String, writer: PDFWriter, name: (String) -> String, memberID: String?) {
+        if layout == .summary, memberID == nil, !rows.isEmpty {
             writer.section("Expense and payment history")
             for (entry, projected) in rows {
                 let status = (entry.isSettlement ? " (payment)" : entry.isRefund ? " (refund)" : entry.isHandled ? " (handled)" : "")
@@ -234,6 +237,9 @@ enum GroupSummaryPDF {
                 let converted = projected.map { money($0.signedAmount, home, approximate: entry.currency != home) }
                 writer.row("\(displayDay(entry.day))  /  \(entry.title)\(status)", amount: converted ?? original,
                            detail: entry.currency != home && converted != nil ? "Recorded \(original)" : nil)
+                if entry.bill != nil, let items = try? Consumption.items(entry) {
+                    for item in items { writer.row(item.title, amount: Money.text(item.gross, entry.currency)) }
+                }
             }
             return
         }
@@ -270,6 +276,10 @@ enum GroupSummaryPDF {
             let total = line(entry.isSettlement ? "Payment amount" : entry.isRefund ? "Refund amount" : "Expense total", entry.amount, projected?.amount)
             let paid = Dictionary(entry.allPayers.map { ($0.memberID, $0.amount) }, uniquingKeysWith: +)
             let shares = Dictionary(entry.splits.map { ($0.memberID, $0.amount) }, uniquingKeysWith: +)
+            let involved = memberID.map { paid[$0] != nil || shares[$0] != nil } ?? false
+            if involved && !entry.isSettlement {
+                header += writer.lines("Split method: \(entry.bill == nil ? entry.splitMode.title : "By item")", .detail)
+            }
             let preferredPaid = Dictionary((projected?.allPayers ?? []).map { ($0.memberID, $0.amount) }, uniquingKeysWith: +)
             let preferredShares = Dictionary((projected?.splits ?? []).map { ($0.memberID, $0.amount) }, uniquingKeysWith: +)
             let people = Set(paid.keys).union(shares.keys).sorted { (name($0), $0) < (name($1), $1) }
@@ -277,11 +287,13 @@ enum GroupSummaryPDF {
                 ? writer.tableRow("Person", "Received", "Credit", style: .detail)
                 : writer.tableRow("Person", "Paid", entry.isSettlement ? "Received" : "Share", style: .detail)
             var detailRows = [tableHeader] + people.map { id in
-                writer.tableRow(name(id), amount(paid[id], preferredPaid[id]), amount(shares[id], preferredShares[id]),
+                writer.tableRow(id == memberID ? "\(name(id)) (you)" : name(id),
+                                amount(paid[id] ?? (id == memberID ? 0 : nil), preferredPaid[id]),
+                                amount(shares[id] ?? (id == memberID ? 0 : nil), preferredShares[id]),
                                 middleDetail: recorded(paid[id], preferredPaid[id]),
                                 rightDetail: recorded(shares[id], preferredShares[id]))
             }
-            if layout == .receipts, let bill = entry.bill, let gross = try? bill.gross() {
+            if let bill = entry.bill, let gross = try? bill.gross() {
                 let itemShares = zip(bill.items, gross).map { item, original in
                     let parts = (try? item.portions(gross: original, payer: entry.paidBy)) ?? []
                     return Dictionary(parts.map { ($0.memberID, $0.amount) }, uniquingKeysWith: +)
@@ -290,9 +302,14 @@ enum GroupSummaryPDF {
                 let consumption = try? Consumption.bill(bill, payer: entry.paidBy)
                 let itemized = writer.tableRow("Itemized receipt", "", "Share incl. tax & tip", style: .detail)
                 detailRows.append(itemized)
+                let myPayments = memberID.flatMap { id in try? Consumption.spread(paid[id, default: 0], gross) }
                 for (index, item) in bill.items.enumerated() {
                     let itemPreferred = converted[index]
                     detailRows.append(line(item.title, gross[index], itemPreferred.map { $0.values.reduce(0, +) }))
+                    if involved, let memberID, let myPayments {
+                        detailRows.append(writer.makeRow("Your item payment (allocated)", amount: Money.text(myPayments[index], entry.currency), detail: nil))
+                        detailRows.append(writer.makeRow("Your item share", amount: Money.text(itemShares[index][memberID, default: 0], entry.currency), detail: nil))
+                    }
                     if let use = consumption?.items[index], use.tax > 0 || use.tip > 0 {
                         let parts = ["Item \(Money.text(use.amount, entry.currency))"]
                             + (use.tax > 0 ? ["tax \(Money.text(use.tax, entry.currency))"] : [])
@@ -317,6 +334,8 @@ enum GroupSummaryPDF {
                                                           Money.text(part.tip, currency), Money.text(part.amount, currency)]))
                     }
                 }
+            } else if let item = try? Consumption.items(entry).first {
+                detailRows.append(line("Item · \(item.title)", item.gross, projected?.amount))
             }
             let notes = writer.lines(entry.notes ?? "", .detail)
             let lines = [total] + detailRows
@@ -329,9 +348,9 @@ enum GroupSummaryPDF {
                 writer.reserve(fullHeight <= writer.contentHeight ? fullHeight : minimum)
             }
             writer.space(7)
-            writer.draw(header)
-            for part in lines { writer.draw(part) }
-            writer.draw(notes)
+            writer.draw(header, highlighted: involved)
+            for part in lines { writer.draw(part, highlighted: involved) }
+            writer.draw(notes, highlighted: involved)
             writer.rule()
         }
     }
@@ -503,9 +522,10 @@ private final class PDFWriter {
         return Cell(lines: primary + secondary, x: x, width: width, rightAligned: rightAligned)
     }
 
-    func draw(_ row: Row) {
+    func draw(_ row: Row, highlighted: Bool = false) {
         let height = row.height
         reserve(height)
+        if highlighted { highlight(height) }
         for cell in row.cells {
             var baseline = y
             for line in cell.lines {
@@ -536,9 +556,15 @@ private final class PDFWriter {
         return result
     }
 
-    func draw(_ lines: [Line]) {
+    private func highlight(_ height: CGFloat) {
+        context.setFillColor(CGColor(red: 0.91, green: 0.95, blue: 0.87, alpha: 1))
+        context.fill(CGRect(x: margin - 3, y: y - height, width: width + 6, height: height))
+    }
+
+    func draw(_ lines: [Line], highlighted: Bool = false) {
         for line in lines {
             reserve(line.height)
+            if highlighted { highlight(line.height) }
             paint(line, y: y)
             y -= line.height
         }

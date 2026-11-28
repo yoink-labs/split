@@ -1,6 +1,6 @@
 // Group exports for the CLI and MCP. Amounts stay in integer minor units until formatted as decimals.
 import { settlementEntry } from '../exchange';
-import { breakdown, grossItems } from '../items';
+import { breakdown, entryItems, grossItems } from '../items';
 import { Entry, entryPayers, entrySign } from '../ledger';
 
 interface Member { id: string; name: string; userID: string|null; removed?: boolean; payment?: Record<string,string> }
@@ -22,7 +22,7 @@ export function exportGroup(group: Group, entries: Entry[], format: 'ledger'|'su
   if (format === 'json') {
     return { filename: slug + '.json', mimeType: 'application/json', content: JSON.stringify({
       exportedAt: new Date().toISOString(), group,
-      entries: sorted.map(e => ({ ...e, items: e.bill ? grossItems(e.bill) : undefined, comments: comments[e.id] })),
+      entries: sorted.map(e => ({ ...e, items: e.bill ? grossItems(e.bill) : entryItems(e), comments: comments[e.id] })),
       summary: currencies(sorted, group).map(c => breakdown(sorted.map(settlementEntry), group.members, c))
     }, null, 2) + '\n' };
   }
@@ -45,7 +45,7 @@ export function exportGroup(group: Group, entries: Entry[], format: 'ledger'|'su
       e.exchange ? (e.exchange.rateE8 / 1e8).toFixed(8) : '', e.exchange?.source ?? '', se.currency, se.amount,
       payers.map(p => nameOf(p.memberID) + ' ' + decimal(p.amount)).join('; '),
       se.splits.map(p => nameOf(p.memberID) + ' ' + decimal(p.amount)).join('; '),
-      e.bill ? grossItems(e.bill).map(i => i.title + ' ' + decimal(i.gross) + ' [' + (i.memberIDs.map(nameOf).join('+') || 'open') + ']').join('; ') : '',
+      entryItems(e).map(i => i.title + ' ' + decimal(i.gross) + ' [' + (i.open ? 'open' : i.portions.map(p => nameOf(p.memberID)).join('+')) + ']').join('; '),
       e.handled ? 'Handled' : e.pending ? 'Pending' + (e.pendingNote ? ': ' + e.pendingNote : '') : '',
       e.refundOf ? sorted.find(o => o.id === e.refundOf)?.title ?? e.refundOf : '',
       ...group.members.map(m => entrySign(e) * (payers.filter(p => p.memberID === m.id).reduce((s, p) => s + p.amount, 0) - (se.splits.find(p => p.memberID === m.id)?.amount ?? 0)))];

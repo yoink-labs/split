@@ -134,7 +134,20 @@ struct EntryDetails: View {
                     if entry.exchange != nil { settlementCard }
                     if showsBreakdownFirst { breakdown }
                     if entry.kind == "expense" || entry.receiptIDs?.isEmpty == false { receiptCard(entry.receiptIDs ?? []) }
-                    if let bill = entry.bill { purchasesCard(bill) }
+                    if let bill = entry.bill {
+                        purchasesCard(bill)
+                    } else if let item = try? Consumption.items(entry).first {
+                        Card {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Items").font(.headline)
+                                HStack {
+                                    Text(item.title)
+                                    Spacer()
+                                    Text(Money.text(item.gross, entry.currency)).monospacedDigit()
+                                }
+                            }
+                        }
+                    }
                     if !showsBreakdownFirst { breakdown }
                     if let notes = entry.notes, !notes.isEmpty { notesCard(notes) }
                     reactionsCard

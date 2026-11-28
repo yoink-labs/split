@@ -132,6 +132,15 @@ enum Consumption {
         return BillConsumption(items: items, people: people)
     }
 
+    static func items(_ entry: LedgerEntry) throws -> [ItemConsumption] {
+        if let receipt = entry.bill { return try bill(receipt, payer: entry.paidBy).items }
+        let portions = entry.splits.map {
+            ConsumptionPart(memberID: $0.memberID, amount: $0.amount, items: $0.amount, tax: 0, tip: 0)
+        }
+        return [ItemConsumption(id: entry.id, title: entry.title, amount: entry.amount, gross: entry.amount,
+                                tax: 0, tip: 0, open: false, portions: portions)]
+    }
+
     /// Swift port of the Worker's `itemRefund`: what refunding specific receipt items credits each
     /// person, their full item portion including tax and tip, in first-seen order. Zero credits drop out.
     static func itemRefund(_ original: LedgerEntry, itemIDs: [String]) throws -> (amount: Int64, splits: [Portion]) {

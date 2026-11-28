@@ -266,6 +266,20 @@ describe('CLI and MCP', () => {
     }
     const {id:group, members} = await run('groups_create',{name:'Trip',self:'Alex',placeholders:['Sam','Jo']});
     const [a,b,c] = members.map((m:{id:string})=>m.id);
+    const plain = await run('expenses_add',{group,payer:a,title:'Groceries',amount:'10.01',participants:[a,b,c]});
+    const whole = await run('items_list',{group,expense:plain.id});
+    expect(whole.items).toHaveLength(1);
+    expect(whole.items[0]).toMatchObject({title:'Groceries',amount:1001,gross:1001,open:false});
+    expect(whole.items[0].portions.map(({memberID,amount}:{memberID:string;amount:number})=>({memberID,amount}))).toEqual(plain.splits);
+    await expect(run('items_list',{group,expense:plain.id},outsider)).rejects.toMatchObject({status:404});
+    const edit = {group,expense:plain.id,bill:{items:[
+      {title:'Produce',amount:'3.34',memberIDs:[a]},
+      {title:'Bread and cheese',amount:'6.67',memberIDs:[b,c]}]}};
+    await expect(run('expenses_edit', edit, outsider)).rejects.toMatchObject({status:404});
+    const preview = await run('expenses_edit', edit);
+    expect(preview.after.splits).toEqual(plain.splits);
+    await run('expenses_edit', {...edit,yes:true,revision:preview.revision});
+    expect((await run('items_list',{group,expense:plain.id})).items.map((i:{gross:number})=>i.gross)).toEqual([334,667]);
     const entry = await run('expenses_add',{group,payer:a,title:'Parrilla',bill:{items:[
       {title:'Beers',amount:'24.00',memberIDs:[a,b],shares:[2,1]},
       {title:'Flan',amount:'10.00'},

@@ -97,6 +97,9 @@ function describeExpense(entry) {
   if (entry.bill) {
     const { items, closed, tax, tip } = entry.bill;
     lines.push(`  Itemized receipt: ${items.length} line items (${closed ? 'closed' : 'open'}), tax ${money(tax)}, tip ${money(tip)}`);
+    for (const item of items) {
+      lines.push(`    ${item.title}: ${money(item.amount)} · ${item.memberIDs.join(', ') || 'unclaimed'}`);
+    }
   }
   return lines;
 }

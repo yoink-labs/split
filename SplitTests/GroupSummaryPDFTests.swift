@@ -96,13 +96,24 @@ final class GroupSummaryPDFTests: XCTestCase {
                                                   sections: GroupSummaryPDF.Sections(consumption: false))
         let details = try XCTUnwrap(PDFDocument(data: detailed)?.string)
         XCTAssertTrue(details.contains(meal.title))
-        XCTAssertFalse(details.contains("Market dumplings"))
+        XCTAssertTrue(details.contains("Market dumplings"))
 
         let summary = try GroupSummaryPDF.render(group: group, entries: [meal], fx: fx, layout: .summary,
                                                   sections: GroupSummaryPDF.Sections(consumption: false))
         let summaryText = try XCTUnwrap(PDFDocument(data: summary)?.string)
         XCTAssertTrue(summaryText.contains("Suggested payments"))
         XCTAssertTrue(summaryText.contains(meal.title))
-        XCTAssertFalse(summaryText.contains("Market dumplings"))
+        XCTAssertTrue(summaryText.contains("Market dumplings"))
+
+        let personal = try GroupSummaryPDF.render(group: group, entries: [meal, unrated], fx: fx, layout: .summary,
+                                                   sections: GroupSummaryPDF.Sections(totals: false, balances: false, consumption: false),
+                                                   memberID: "one")
+        let personalText = try XCTUnwrap(PDFDocument(data: personal)?.string)
+        for label in ["Personal report for Alex", "Alex (you)", "Your item payment", "Your item share", "Item · Museum tickets"] {
+            XCTAssertTrue(personalText.contains(label), label)
+        }
+        let item = try XCTUnwrap(Consumption.items(unrated).first)
+        XCTAssertEqual(item.gross, unrated.amount)
+        XCTAssertEqual(item.portions.map(\.amount), unrated.splits.map(\.amount))
     }
 }

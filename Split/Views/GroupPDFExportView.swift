@@ -8,13 +8,25 @@ struct GroupPDFExportView: View {
     @EnvironmentObject private var fx: FXStore
     @State private var sections = GroupSummaryPDF.Sections()
     @State private var layout: GroupSummaryPDF.Layout = .receipts
+    @State private var personal = false
     @State private var exporting = false
     @State private var document: LedgerExportFile?
     @State private var filename = ""
     @State private var error: String?
 
+    private var memberID: String? {
+        guard let userID = store.currentUserID else { return nil }
+        return store.group(groupID)?.members.first { $0.userID == userID && $0.removed != true }?.id
+    }
+
     var body: some View {
         Form {
+            if memberID != nil {
+                Picker("Audience", selection: $personal) {
+                    Text("Group").tag(false)
+                    Text("Personal").tag(true)
+                }
+            }
             Section("Report sections") {
                 Toggle("Expense totals", isOn: $sections.totals)
                 Toggle("Balances and suggested payments", isOn: $sections.balances)
@@ -57,9 +69,9 @@ struct GroupPDFExportView: View {
         error = nil
         do {
             let data = try GroupSummaryPDF.render(group: group, entries: store.entries(in: group), fx: fx,
-                                                  layout: layout, sections: sections)
+                                                  layout: layout, sections: sections, memberID: personal ? memberID : nil)
             document = LedgerExportFile(data: data)
-            filename = "\(group.name) – \(sections.history ? layout.rawValue : "Group report")"
+            filename = "\(group.name) – \(sections.history ? layout.rawValue : "Group report")" + (personal && memberID != nil ? " – Personal" : "")
             exporting = true
         } catch {
             self.error = error.localizedDescription

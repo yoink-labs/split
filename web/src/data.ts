@@ -18,6 +18,7 @@ export {
   breakdown,
   billConsumption,
   entryConsumption,
+  entryItems,
   consumptionReport,
 } from "../../worker/src/items";
 export type { ConsumptionPart, ItemConsumption } from "../../worker/src/items";

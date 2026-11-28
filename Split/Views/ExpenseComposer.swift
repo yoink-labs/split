@@ -28,6 +28,9 @@ struct AddExpenseView: View {
     @State private var pendingNote = ""
     @State private var payers: [Payer] = []
     @State private var payerText: [String: String] = [:]
+    @State private var spreading = false
+    @State private var spreadStart = Date()
+    @State private var spreadEnd = Calendar.current.date(byAdding: .day, value: 1, to: Date()) ?? Date()
     @State private var mode: SplitMode = .equal
     @State private var selected = Set<String>()
     @State private var values: [String: String] = [:]
@@ -80,7 +83,9 @@ struct AddExpenseView: View {
         original.map { String($0.createdAt.prefix(10)) } ?? Exchange.localDay(purchaseDate)
     }
     private var people: [String] {
-        availableMembers.filter { selected.contains($0.id) }.map(\.id)
+        let available = availableMembers.map(\.id)
+        let prior = original?.splits.map(\.memberID).filter { available.contains($0) } ?? []
+        return (prior + available.filter { !prior.contains($0) }).filter { selected.contains($0) }
     }
     private var totalAmount: Int64? {
         if itemized { return bill.total > 0 ? bill.total : nil }
@@ -88,7 +93,8 @@ struct AddExpenseView: View {
         return value
     }
     private var ledgerValues: [String: String] {
-        values.mapValues { value in
+        let inputs = mode == .nights ? Dictionary(uniqueKeysWithValues: people.map { ($0, values[$0] ?? "1") }) : values
+        return inputs.mapValues { value in
             var clean = value
                 .replacingOccurrences(of: "−", with: "-")
                 .replacingOccurrences(of: "–", with: "-")
@@ -119,7 +125,7 @@ struct AddExpenseView: View {
     private var inputHint: String {
         switch mode {
         case .percent: return "0"
-        case .shares: return "1"
+        case .shares, .nights: return "1"
         case .adjustment: return "±0.00"
         default: return "0.00"
         }
@@ -128,13 +134,14 @@ struct AddExpenseView: View {
         switch mode {
         case .percent: return "%"
         case .shares: return "sh"
+        case .nights: return "nights"
         case .equal: return ""
         case .exact, .adjustment: return currency
         }
     }
     private var repeatAllowed: Bool {
         guard let original, !store.isDemo else { return false }
-        return original.kind == "expense" && original.bill == nil && original.exchange == nil
+        return original.kind == "expense" && original.bill == nil && original.exchange == nil && !spreading
     }
     private var categoryOptions: [CategoryMeta] {
         var options = CategoryMeta.grid
@@ -180,6 +187,7 @@ struct AddExpenseView: View {
                                     if showExchange { exchangeCard }
                                     payersCard
                                     if itemized { receiptSplitCard } else { splitCard }
+                                    spreadCard
                                 }
                                 .frame(maxWidth: .infinity)
                                 VStack(spacing: 16) {
@@ -198,6 +206,7 @@ struct AddExpenseView: View {
                                 if showExchange { exchangeCard }
                                 payersCard
                                 if itemized { receiptSplitCard } else { splitCard }
+                                spreadCard
                                 categoryCard
                                 notesCard
                                 if repeatAllowed { repeatCard }
@@ -739,6 +748,24 @@ struct AddExpenseView: View {
 
     // MARK: - Split
 
+    private var spreadCard: some View {
+        Card {
+            VStack(alignment: .leading, spacing: 12) {
+                Toggle("Spread over days", isOn: $spreading)
+                    .disabled(recurrence != "off")
+                if spreading {
+                    DatePicker("First day", selection: $spreadStart, displayedComponents: .date)
+                    DatePicker("End date (excluded)", selection: $spreadEnd, displayedComponents: .date)
+                    if mode == .nights && !itemized {
+                        Text("Each person’s nights start on the first day.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+    }
+
     private var splitCard: some View {
         Card {
             VStack(alignment: .leading, spacing: 12) {
@@ -748,7 +775,7 @@ struct AddExpenseView: View {
                         Button {
                             guard mode != option else { return }
                             mode = option
-                            values = [:]
+                            values = option == .nights ? Dictionary(uniqueKeysWithValues: people.map { ($0, "1") }) : [:]
                             error = nil
                         } label: {
                             Label(option.title, systemImage: option == mode ? "checkmark" : "person.2")
@@ -847,7 +874,7 @@ struct AddExpenseView: View {
                     } else {
                         HStack(spacing: 3) {
                             TextField(inputHint, text: valueBinding(person.id))
-                                .keyboardType(mode == .adjustment ? .numbersAndPunctuation : .decimalPad)
+                                .keyboardType(mode == .nights ? .numberPad : mode == .adjustment ? .numbersAndPunctuation : .decimalPad)
                                 .multilineTextAlignment(.trailing)
                                 .font(.splitAmount(15))
                                 .frame(width: 76)
@@ -943,7 +970,7 @@ struct AddExpenseView: View {
 
     private func valueBinding(_ id: String) -> Binding<String> {
         Binding(
-            get: { values[id] ?? "" },
+            get: { values[id] ?? (mode == .nights ? "1" : "") },
             set: { values[id] = $0 }
         )
     }
@@ -1226,9 +1253,17 @@ struct AddExpenseView: View {
             kind: original?.kind ?? "expense",
             editable: original?.editable,
             recurrence: recurrence == "off" ? nil : recurrence,
-            splitMode: itemized ? .exact : mode,
+            splitMode: itemized ? .exact : mode == .nights ? .shares : mode,
             createdAt: created
         )
+        if spreading {
+            let spread = ExpenseSpread(start: Exchange.localDay(spreadStart), end: Exchange.localDay(spreadEnd))
+            let count = spread.dayCount
+            guard (1...366).contains(count), splits.allSatisfy({ ($0.nights ?? 0) <= count }) else {
+                throw LedgerError.invalid("Choose a date range up to 366 days that covers everyone’s nights.")
+            }
+            entry.spread = spread
+        }
         if payerList.count > 1 { entry.payers = payerList }
         let cleanNotes = notes.trimmingCharacters(in: .whitespacesAndNewlines)
         entry.notes = cleanNotes.isEmpty ? nil : cleanNotes
@@ -1368,7 +1403,16 @@ struct AddExpenseView: View {
             }
             let known = Set(current.members.map(\.id))
             selected = Set(original.splits.map(\.memberID)).intersection(known)
-            switch original.splitMode {
+            if let spread = original.spread,
+               let start = ExpenseSpread.localDate(spread.start), let end = ExpenseSpread.localDate(spread.end) {
+                spreading = true
+                spreadStart = start
+                spreadEnd = end
+            }
+            switch original.usesNights ? .nights : original.splitMode {
+            case .nights:
+                mode = .nights
+                values = Dictionary(uniqueKeysWithValues: original.splits.map { ($0.memberID, String($0.nights ?? 1)) })
             case .equal:
                 mode = .equal
             case .adjustment:

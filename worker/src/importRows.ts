@@ -1,3 +1,4 @@
+import { normalizeName } from './names';
 import {Entry, InputError, validID, validateEntry} from './ledger';
 import {json} from './http';
 async function digest(value:unknown) {
@@ -13,15 +14,16 @@ export async function importRows(db:D1Database,group:string,user:string,b:Record
     .bind(group,JSON.stringify(sourceIDs)).all<{id:string}>()).results.map(e=>e.id));
   const roster=(await db.prepare('SELECT id,name FROM members WHERE group_id=? AND id NOT IN (SELECT member_id FROM member_aliases)').bind(group).all<{id:string;name:string}>()).results;
   const names=new Map<string,string>(), ambiguous=new Set<string>();
-  for(const m of roster) {const key=m.name.toLowerCase().trim();if(names.has(key)) ambiguous.add(key);names.set(key,m.id);}
+  for(const m of roster) {const key=normalizeName(m.name).toLowerCase();if(names.has(key)) ambiguous.add(key);names.set(key,m.id);}
   const members:D1PreparedStatement[]=[],entries:D1PreparedStatement[]=[],copies=new Map<string,number>();
   async function resolve(name:unknown) {
     if(typeof name!=='string' || !name.trim() || name.length>60) throw new InputError('Invalid CSV member name.');
-    const key=name.trim().toLowerCase();
+    const displayName=normalizeName(name);
+    const key=displayName.toLowerCase();
     if(ambiguous.has(key)) throw new InputError('Multiple members match '+name+'. Rename the CSV column to identify one member.');
     if(!names.has(key)) {
       const id=await digest(['csv-person',group,key]);
-      members.push(db.prepare('INSERT INTO members(id,group_id,user_id,name) VALUES (?,?,NULL,?) ON CONFLICT(id) DO NOTHING').bind(id,group,name.trim()));
+      members.push(db.prepare('INSERT INTO members(id,group_id,user_id,name) VALUES (?,?,NULL,?) ON CONFLICT(id) DO NOTHING').bind(id,group,displayName));
       names.set(key,id);
     }
     return names.get(key)!;

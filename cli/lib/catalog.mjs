@@ -57,12 +57,14 @@ const allocation = {
   pending: { type: 'boolean', description: 'Mark the expense pending: its cost may still change, e.g. while a refund is requested. Pending expenses still count toward balances.' },
   pendingNote: text('Optional reason it is pending.', 500),
   payers: payerSplit,
-  mode: enumeration('How to allocate the expense.', ['equal','exact','percent','shares']),
+  mode: enumeration('How to allocate the expense.', ['equal','exact','percent','shares','nights']),
+  spreadStart: day('First day of the spread, inclusive.'),
+  spreadEnd: day('Last day of the spread, exclusive. For nights, each person starts on the first day.'),
   participants: list('Member IDs, in rounding order. Equal split defaults to all members.', member),
   values: listValues()
 };
 function listValues() {
-  return { type: 'array', description: 'Decimal strings in participant order. Exact values must sum to the amount. Percent values must sum to 100.', items: money, minItems: 1, maxItems: 50 };
+  return { type: 'array', description: 'Decimal strings in participant order. Exact values must sum to the amount. Percent values must sum to 100. Nights uses whole numbers.', items: money, minItems: 1, maxItems: 50 };
 }
 const confirmation = {
   yes: { type: 'boolean', description: 'Apply the reviewed change.' },
@@ -102,6 +104,7 @@ export const tools = [
     date:{ ...text('Optional date YYYY-MM-DD.', 10), pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
     pending:{type:'boolean',description:'Mark the refund pending until it arrives.'}, pendingNote:text('Optional reason it is pending.',500)},['group']),
   op('expenses_repeat','Set or cancel the schedule for your fixed-currency expense.',{group,expense,cadence:enumeration('Repeat cadence: off, daily, weekly, monthly, or yearly.',['off','daily','weekly','monthly','yearly'])},['group','expense','cadence']),
+  op('groups_daily','Daily costs per person in original currencies, with each expense and refund itemized.',{group,member},['group'],true),
   op('groups_breakdown','Spending, categories, months, paid, shares, ledger net and suggested transfers by currency. Ledger net includes handled expenses. Suggested transfers use outstanding balances. Provide a member ID for their expense detail.',{group,member},['group'],true),
   op('items_open','List open purchases with tax and tip included in each gross amount.',{group},['group'],true),
   op('items_list','List a transaction’s items, including the whole-amount item for transactions without a receipt bill, with exact portions and any share multipliers.',{group,expense},['group','expense'],true),
@@ -158,7 +161,7 @@ export const tools = [
   op('members_invite','Send a group invitation to someone you know. They can accept or decline from the inbox.', {
     group, user: text('Known user ID.',128), member
   }, ['group','user']),
-  op('members_link','Permanently link a placeholder and its history to a friend or shared group member.', {
+  op('members_link','Permanently link a placeholder and its history to a friend or shared group member. Returns the placeholder, account, kept and merged member IDs, and counts of linked expenses, splits, and receipts.', {
     group, member, user: text('Known user ID.',128)
   }, ['group','member','user'], false, true),
   op('members_links','List placeholder links recorded in a group’s activity.', { group }, ['group'], true),

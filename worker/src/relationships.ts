@@ -1,3 +1,4 @@
+import { normalizeName } from './names';
 export const activeSharedGroup = `EXISTS (
   SELECT 1 FROM members mine JOIN members theirs ON theirs.group_id=mine.group_id
   WHERE mine.user_id=? AND theirs.user_id=p.user_id
@@ -14,7 +15,7 @@ export async function listPeople(db: D1Database, actor: string, kind: 'friends' 
   const args = Array.from({length: kind === 'friends' ? 2 : kind === 'known' ? 3 : 1}, () => actor);
   const {results} = await db.prepare(`SELECT ${card} FROM split_profiles p WHERE p.user_id<>? AND ${predicate}
     ORDER BY p.name COLLATE NOCASE,p.user_id`).bind(actor, ...args).all<{userID: string; name: string; avatarURL: string | null}>();
-  return results.map(({avatarURL, ...person}) => ({...person, ...(avatarURL ? {avatarURL} : {})}));
+  return results.map(({avatarURL, ...person}) => ({...person, name:normalizeName(person.name), ...(avatarURL ? {avatarURL} : {})}));
 }
 
 export function knownPerson(db: D1Database, actor: string, target: unknown) {

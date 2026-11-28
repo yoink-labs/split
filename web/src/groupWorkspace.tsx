@@ -3,7 +3,9 @@ import { memberBalances, useHomeMoney } from "./homeMoney";
 import { PendingPayments } from "./settlements";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { analyze } from "./analytics";
 import { GroupAnalytics } from "./analyticsView";
+import { CategoryDonut } from "./categoryDonut";
 import { TransactionTable } from "./transactionTable";
 import { categoryMeta } from "./categories";
 import { Form, useLedger, value } from "./context";
@@ -564,6 +566,10 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
     .map((entry) => entry.id)), [entries, homeMoney.home]);
   const foreignSpend = convertedSpendIDs.size > 0;
   const spending = breakdown(homeEntries, g.members, homeMoney.home);
+  const overviewAnalytics = useMemo(
+    () => analyze(entries, homeMoney.project, homeMoney.home, {}, g.members.map((m) => m.id)),
+    [entries, homeMoney.project, homeMoney.home, g.members],
+  );
   const spendText = (amount: number) => missingSpend ? "Rate unavailable" : homeMoney.format(amount, foreignSpend);
   const myStats = me ? spending.members.find((member) => member.id === me.id) : undefined;
   const myBalances = me ? memberBalances(entries, me.id) : {};
@@ -678,112 +684,156 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
 
       {/* TAB 1: OVERVIEW & CHARTS */}
       {tab === "overview" && (
-        <div className="form-stack" style={{ gap: 18 }}>
-          <div className="kpi-grid group-kpis">
-            <div className="kpi">
-              <div className="kpi-label">Total group spend</div>
-              <div className="kpi-val">{spendText(spending.total)}</div>
-              <div className="kpi-sub">
-                {entries.filter((e) => e.kind === "expense").length} expenses
-
+        <div className="overview-stack">
+          <div className="metric-strip" role="region" aria-label="Group summary">
+            <div className="metric-cell">
+              <div className="metric-label">Total group spend</div>
+              <div className="metric-val num">
+                {overviewAnalytics.excluded > 0 && !overviewAnalytics.priced.length
+                  ? "Rate unavailable"
+                  : homeMoney.format(overviewAnalytics.total, overviewAnalytics.estimated)}
+              </div>
+              <div className="metric-sub">
+                {overviewAnalytics.rows.length} {overviewAnalytics.rows.length === 1 ? "entry" : "entries"}
+                {overviewAnalytics.estimated && ` · ≈ converted to ${homeMoney.home}`}
               </div>
             </div>
-            <div className="kpi">
-              <div className="kpi-label">Your total share</div>
-              <div className="kpi-val">{spendText(myStats?.share ?? 0)}</div>
-              <div className="kpi-sub">You paid {spendText(myStats?.paid ?? 0)}</div>
+            <div className="metric-cell">
+              <div className="metric-label">Your total share</div>
+              <div className="metric-val num">{spendText(myStats?.share ?? 0)}</div>
+              <div className="metric-sub">You paid {spendText(myStats?.paid ?? 0)}</div>
             </div>
-            <div className="kpi">
-              <div className="kpi-label">Your net balance</div>
-              <div className={"kpi-val " + (!myNet.missing.length && myNet.amount > 0 ? "pos" : !myNet.missing.length && myNet.amount < 0 ? "neg" : "")}>
+            <div className="metric-cell">
+              <div className="metric-label">Your net balance</div>
+              <div className={"metric-val num " + (!myNet.missing.length && myNet.amount > 0 ? "pos" : !myNet.missing.length && myNet.amount < 0 ? "neg" : "")}>
                 {homeMoney.totalText(myBalances)}
               </div>
-              <div className="kpi-sub">
-                {!myNet.missing.length && (myNet.amount > 0 ? "You are owed" : myNet.amount < 0 ? "You owe" : "")}
-                {pendingCount > 0 && <> · Includes {pendingCount} pending · Confirmed only {homeMoney.totalText(myConfirmed, true)}</>}
+              <div className="metric-sub">
+                {!myNet.missing.length && (myNet.amount > 0 ? "You are owed" : myNet.amount < 0 ? "You owe" : "All settled")}
+                {pendingCount > 0 && <> · {pendingCount} pending · confirmed {homeMoney.totalText(myConfirmed, true)}</>}
               </div>
             </div>
-            <button type="button" className="kpi kpi-action" onClick={() => setTab("receipts")}>
-              <div className="kpi-label">Unclaimed receipt items</div>
-              <div className={"kpi-val " + (openReceiptsCount > 0 ? "warn" : "pos")}>
+            <button type="button" className="metric-cell metric-cell-action" onClick={() => setTab("receipts")}>
+              <div className="metric-label">Unclaimed receipt items</div>
+              <div className={"metric-val num " + (openReceiptsCount > 0 ? "warn" : "pos")}>
                 {openItemsCount || "All claimed"}
               </div>
-              <div className="kpi-sub">
+              <div className="metric-sub">
                 {openReceiptsCount > 0
-                  ? `${openReceiptsCount} open receipt${openReceiptsCount === 1 ? "" : "s"} → Review`
+                  ? `${openReceiptsCount} open receipt${openReceiptsCount === 1 ? "" : "s"} · Review`
                   : "Every receipt item is assigned"}
               </div>
             </button>
           </div>
 
-          {foreignSpend && <p className="muted">Spending in {homeMoney.home} uses estimated exchange rates.</p>}
-
-          <div className="overview-grid">
-            <section className="overview-recent" aria-labelledby="overview-recent-title">
-              <header className="overview-section-head">
-                <h3 id="overview-recent-title">Recent transactions</h3>
-                <button type="button" className="btn btn-xs btn-ghost" onClick={() => setTab("transactions")}>Open ledger</button>
-              </header>
-              <TransactionTable g={g} entries={entries} size="compact" pageSize={25} label="Recent transactions"
-                inspectedID={inspected?.id} onInspect={setInspectID}
-                empty="No transactions yet. Add an expense to get started."
-                viewAll={{ to: `/g/${g.id}?tab=transactions`, label: `View all ${entries.length} in ledger` }} />
+          <div className="overview-pair">
+            <section className="card overview-card" aria-labelledby="overview-cats-title">
+              <div className="card-head">
+                <div>
+                  <h3 id="overview-cats-title">Spending by category</h3>
+                  <p className="muted card-sub">
+                    {overviewAnalytics.categories.length > 0
+                      ? `Net of refunds in ${homeMoney.home} · click a category to filter`
+                      : `Net of refunds in ${homeMoney.home}`}
+                  </p>
+                </div>
+                <button type="button" className="btn btn-xs btn-ghost" onClick={() => setTab("analytics")}>
+                  Analytics ›
+                </button>
+              </div>
+              <div className="overview-card-body">
+                {overviewAnalytics.excluded > 0 && !overviewAnalytics.priced.length ? (
+                  <p className="muted overview-empty">Waiting for exchange rates.</p>
+                ) : !overviewAnalytics.categories.length ? (
+                  <p className="muted overview-empty">No spending yet. Add an expense to see the breakdown.</p>
+                ) : (
+                  <CategoryDonut
+                    categories={overviewAnalytics.categories}
+                    total={overviewAnalytics.total}
+                    format={(amount) => homeMoney.format(amount, overviewAnalytics.estimated)}
+                    onSelect={(id) => setTab("transactions", { cat: id })}
+                  />
+                )}
+              </div>
+              {overviewAnalytics.excluded > 0 && (
+                <div className="overview-card-foot muted">
+                  {overviewAnalytics.excluded} {overviewAnalytics.excluded === 1 ? "entry has" : "entries have"} no {homeMoney.home} rate yet.
+                </div>
+              )}
             </section>
 
-            <div className="overview-side">
-              <div className="card">
-                <div className="card-head">
-                  <h3>Who owes whom</h3>
-                  <button className="btn btn-xs btn-ghost" onClick={() => setTab("settle")}>
-                    Full graph ›
-                  </button>
+            <section className="card overview-card" aria-labelledby="overview-owes-title">
+              <div className="card-head">
+                <div>
+                  <h3 id="overview-owes-title">Who owes whom</h3>
+                  <p className="muted card-sub">
+                    {suggestions.length
+                      ? `${suggestions.length} simplified ${suggestions.length === 1 ? "transfer" : "transfers"} to settle`
+                      : "All balances clear"}
+                  </p>
                 </div>
+                <button type="button" className="btn btn-xs btn-ghost" onClick={() => setTab("settle")}>
+                  Settle up ›
+                </button>
+              </div>
+              <div className="overview-card-body overview-owes-body">
                 {suggestions.length ? (
-                  <div className="bounded-list">
+                  <div className="bounded-list overview-owes-list">
                     {suggestions.map((t) => (
                       <div className="row" key={t.currency + "-" + t.from + "-" + t.to}>
-                        <span style={{ fontSize: 13 }}>
-                          <strong>{memberName(g, t.from)}</strong> → <strong>{memberName(g, t.to)}</strong>
+                        <span className="overview-transfer-names">
+                          <strong>{memberName(g, t.from)}</strong>
+                          <span className="muted" aria-hidden="true"> → </span>
+                          <strong>{memberName(g, t.to)}</strong>
                         </span>
-                        <div style={{ textAlign: "right" }}>
+                        <div className="overview-transfer-amt">
                           <b className="num">{homeMoney.totalText({ [t.currency]: t.amount })}</b>
-                          {t.currency !== homeMoney.home && <div className="muted">Pay {money(t.amount, t.currency)}</div>}
+                          {t.currency !== homeMoney.home && <div className="muted num">Pay {money(t.amount, t.currency)}</div>}
                         </div>
                       </div>
                     ))}
                   </div>
                 ) : (
-                  <div className="card-pad">
-                    <p className="muted" style={{ fontSize: 13 }}>Everyone is settled up.</p>
-                  </div>
+                  <p className="muted overview-empty">Everyone is settled up.</p>
                 )}
               </div>
-
-              <div className="card">
-                <div className="card-head">
-                  <h3>Top categories</h3>
-                  <button className="btn btn-xs btn-ghost" onClick={() => setTab("analytics")}>
-                    Analytics ›
-                  </button>
-                </div>
-                {missingSpend ? <p className="card-pad muted" style={{ fontSize: 13 }}>Waiting for exchange rates.</p>
-                  : !spending.total ? <p className="card-pad muted" style={{ fontSize: 13 }}>No spending yet.</p> : (
-                  <ul className="overview-cats">
-                    {Object.entries(spending.categories).sort((a, b) => b[1] - a[1]).slice(0, 4).map(([id, amount]) => (
-                      <li key={id}>
-                        <CategoryIcon category={id} />
-                        <span className="overview-cat-name">{categoryMeta(id).label}</span>
-                        <span className="overview-cat-bar" aria-hidden="true">
-                          <span style={{ inlineSize: `${(amount / spending.total) * 100}%`, background: categoryMeta(id).color }} />
-                        </span>
-                        <b className="num">{homeMoney.format(amount, foreignSpend)}</b>
-                      </li>
-                    ))}
-                  </ul>
-                )}
+              <div className="overview-card-foot">
+                <span className="muted">
+                  {suggestions.length
+                    ? `${activeMembers.length} active ${activeMembers.length === 1 ? "member" : "members"}`
+                    : "No payments needed"}
+                </span>
+                <button type="button" className="btn btn-xs" onClick={() => setTab("settle")}>
+                  Open money flow
+                </button>
               </div>
-            </div>
+            </section>
           </div>
+
+          <section className="overview-ledger" aria-labelledby="overview-recent-title">
+            <TransactionTable
+              g={g}
+              entries={entries}
+              size="compact"
+              pageSize={25}
+              label="Recent transactions"
+              inspectedID={inspected?.id}
+              onInspect={setInspectID}
+              empty="No transactions yet. Add an expense to get started."
+              header={
+                <>
+                  <div>
+                    <h3 id="overview-recent-title">Recent transactions</h3>
+                    <p className="muted card-sub">Select any row to inspect splits, receipts, or comments</p>
+                  </div>
+                  <button type="button" className="btn btn-xs btn-ghost" onClick={() => setTab("transactions")}>
+                    Open ledger ›
+                  </button>
+                </>
+              }
+              viewAll={{ to: `/g/${g.id}?tab=transactions`, label: `View all ${entries.length} in ledger` }}
+            />
+          </section>
         </div>
       )}
 

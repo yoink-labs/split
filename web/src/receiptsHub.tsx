@@ -121,16 +121,14 @@ function ReceiptViewer({
     return (
       <div className="photo-stage">
         <div className="photo-toolbar">
-          <strong>Receipt Photo</strong>
+          <strong>Receipt photo</strong>
           <span className="muted">None attached</span>
         </div>
-        <div className="photo-viewport" style={{ height: 320, textAlign: "center" }}>
-          <div>
-            <p className="muted" style={{ fontSize: 13 }}>
-              No photo attached to this expense yet.
-            </p>
-            <p className="muted" style={{ fontSize: 12, marginTop: 6 }}>
-              Pair one from the receipts inbox, upload one when editing the expense, or push one from your local AI via MCP.
+        <div className="photo-viewport photo-empty">
+          <div className="photo-empty-copy">
+            <p className="muted">No photo attached to this expense yet.</p>
+            <p className="muted">
+              Pair one from the receipts inbox, upload one when editing the expense, or push one via Split MCP.
             </p>
           </div>
         </div>
@@ -141,16 +139,17 @@ function ReceiptViewer({
   return (
     <div className="photo-stage">
       <div className="photo-toolbar">
-        <strong>
-          Receipt {receiptIDs.length > 1 ? `(${current + 1}/${receiptIDs.length})` : ""}
-        </strong>
-        <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+        <div className="photo-toolbar-left">
+          <strong>
+            Receipt{receiptIDs.length > 1 ? ` ${current + 1}/${receiptIDs.length}` : ""}
+          </strong>
           {receiptIDs.length > 1 && (
-            <>
-              <button className="btn btn-xs" aria-label="Previous photo" disabled={current === 0} onClick={() => setPage(current - 1)}>
+            <div className="photo-pager">
+              <button type="button" className="btn btn-xs" aria-label="Previous photo" disabled={current === 0} onClick={() => setPage(current - 1)}>
                 ‹
               </button>
               <button
+                type="button"
                 className="btn btn-xs"
                 aria-label="Next photo"
                 disabled={current >= receiptIDs.length - 1}
@@ -158,22 +157,23 @@ function ReceiptViewer({
               >
                 ›
               </button>
-            </>
+            </div>
           )}
-          <button className="btn btn-xs" aria-label="Zoom out" onClick={() => setZoom((z) => Math.max(0.6, +(z - 0.2).toFixed(1)))}>
-            −
-          </button>
-          <span className="mono" style={{ minWidth: 38, textAlign: "center", fontSize: 11.5 }}>
-            {Math.round(zoom * 100)}%
-          </span>
-          <button className="btn btn-xs" aria-label="Zoom in" onClick={() => setZoom((z) => Math.min(2.4, +(z + 0.2).toFixed(1)))}>
-            +
-          </button>
-          <button className="btn btn-xs btn-ghost" onClick={() => setZoom(1)}>
-            Reset
-          </button>
-          <button className="btn btn-xs" aria-expanded={moving} disabled={busy} onClick={() => { setMoving(!moving); setError(""); }}>
-            Move to…
+        </div>
+        <div className="photo-toolbar-right">
+          <div className="photo-zoom-group" role="group" aria-label="Zoom">
+            <button type="button" className="btn btn-xs" aria-label="Zoom out" onClick={() => setZoom((z) => Math.max(0.6, +(z - 0.2).toFixed(1)))}>
+              −
+            </button>
+            <button type="button" className="btn btn-xs photo-zoom-pct mono" title="Reset zoom" onClick={() => setZoom(1)}>
+              {Math.round(zoom * 100)}%
+            </button>
+            <button type="button" className="btn btn-xs" aria-label="Zoom in" onClick={() => setZoom((z) => Math.min(2.4, +(z + 0.2).toFixed(1)))}>
+              +
+            </button>
+          </div>
+          <button type="button" className="btn btn-xs" aria-expanded={moving} disabled={busy} onClick={() => { setMoving(!moving); setError(""); }}>
+            Move…
           </button>
         </div>
       </div>
@@ -231,36 +231,41 @@ function InboxTile({
   const [zoomed, setZoomed] = useState(false);
   return (
     <li className={"inbox-tile" + (pairing ? " pairing" : "")}>
-      <button type="button" className="inbox-thumb" aria-label="View receipt photo" onClick={() => setZoomed(!zoomed)} disabled={!image.url}>
-        {image.url ? <img src={image.url} alt="" onError={image.fail} /> : <span className="muted">{image.failed ? "No preview" : "Loading…"}</span>}
-      </button>
-      <div className="inbox-meta">
-        <strong>{receipt.note?.trim() || "Receipt photo"}</strong>
-        <span className="muted">{memberName(g, receipt.uploadedBy)} · {shortDate(receipt.createdAt)}</span>
+      <div className="inbox-tile-row">
+        <button type="button" className="inbox-thumb" aria-label="View receipt photo" onClick={() => setZoomed(!zoomed)} disabled={!image.url}>
+          {image.url ? <img src={image.url} alt="" onError={image.fail} /> : <span className="muted">{image.failed ? "No preview" : "Loading…"}</span>}
+        </button>
+        <div className="inbox-tile-body">
+          <div className="inbox-meta">
+            <strong>{receipt.note?.trim() || "Receipt photo"}</strong>
+            <span className="muted">{memberName(g, receipt.uploadedBy)} · {shortDate(receipt.createdAt)}</span>
+          </div>
+          {!pairing && (
+            <div className="receipt-move-actions">
+              <button type="button" className="btn btn-xs btn-primary" disabled={busy || !entries.length} onClick={() => setPairing(true)}>
+                Pair with expense
+              </button>
+              {mine && (
+                <button type="button" className="btn btn-xs btn-ghost" disabled={busy} onClick={() => void onDelete()}>
+                  Delete
+                </button>
+              )}
+            </div>
+          )}
+        </div>
       </div>
-      {pairing ? (
+      {pairing && (
         <div className="inbox-pair">
           <ExpenseChoice label="Pair receipt with" entries={entries} value={target} onChange={setTarget} />
           <div className="receipt-move-actions">
-            <button type="button" className="btn btn-sm btn-primary" disabled={busy || !target}
+            <button type="button" className="btn btn-xs btn-primary" disabled={busy || !target}
               onClick={() => void onPair(target).then(() => setPairing(false), () => {})}>
               {busy ? "Pairing…" : "Pair"}
             </button>
-            <button type="button" className="btn btn-sm btn-ghost" disabled={busy} onClick={() => setPairing(false)}>
+            <button type="button" className="btn btn-xs btn-ghost" disabled={busy} onClick={() => setPairing(false)}>
               Cancel
             </button>
           </div>
-        </div>
-      ) : (
-        <div className="receipt-move-actions">
-          <button type="button" className="btn btn-sm btn-primary" disabled={busy || !entries.length} onClick={() => setPairing(true)}>
-            Pair with expense
-          </button>
-          {mine && (
-            <button type="button" className="btn btn-sm btn-danger" disabled={busy} onClick={() => void onDelete()}>
-              Delete
-            </button>
-          )}
         </div>
       )}
       {zoomed && image.url && (
@@ -524,313 +529,304 @@ export function ReceiptsHub({
   }
 
   return (
-    <div className="form-stack" style={{ gap: 16 }}>
-    {inboxPanel}
-    <div className="receipts-hub">
-      {/* Left Pane: Receipts List */}
-      <div className="card" style={{ overflow: "hidden" }}>
-        {openList.length > 0 && (
-          <>
-            <div className="card-head" style={{ padding: "10px 14px" }}>
-              <h3 style={{ fontSize: 12, color: "var(--warn)" }}>Needs Claiming ({openList.length})</h3>
-            </div>
-            {openList.map((e) => {
-              const openCount = e.bill?.items.filter((i) => !i.memberIDs.length).length ?? 0;
-              return (
-                <button
-                  key={e.id}
-                  type="button"
-                  className={"receipt-list-item" + (selected?.id === e.id ? " active" : "")}
-                  disabled={Boolean(busyKey)}
-                  onClick={() => selectReceipt(e.id)}
-                >
-                  <div style={{ display: "flex", justifyContent: "space-between", gap: 6 }}>
-                    <strong style={{ fontSize: 13 }}>{e.title}</strong>
-                    <span className="num" style={{ fontSize: 12.5, fontWeight: 700 }}>
-                      {homeMoney.entry(e)}
-                    </span>
-                  </div>
-                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11.5 }}>
-                    <span className="muted">{shortDate(e.createdAt)} · {memberName(g, e.paidBy)}</span>
-                    {openCount > 0 ? (
-                      <span className="warn" style={{ fontWeight: 600 }}>{openCount} open</span>
-                    ) : (
-                      <span className="pos" style={{ fontWeight: 600 }}>All claimed</span>
-                    )}
-                  </div>
-                </button>
-              );
-            })}
-          </>
-        )}
-
-        {closedList.length > 0 && (
-          <>
-            <div className="card-head" style={{ padding: "10px 14px" }}>
-              <h3 style={{ fontSize: 12, color: "var(--muted)" }}>Closed & Photos ({closedList.length})</h3>
-            </div>
-            {closedList.map((e) => (
-              <button
-                key={e.id}
-                type="button"
-                className={"receipt-list-item" + (selected?.id === e.id ? " active" : "")}
-                disabled={Boolean(busyKey)}
-                onClick={() => selectReceipt(e.id)}
-              >
-                <div style={{ display: "flex", justifyContent: "space-between", gap: 6 }}>
-                  <strong style={{ fontSize: 13 }}>{e.title}</strong>
-                  <span className="num" style={{ fontSize: 12.5, fontWeight: 700 }}>
-                    {homeMoney.entry(e)}
-                  </span>
+    <div className="receipts-page">
+      {inboxPanel}
+      <div className="receipts-hub">
+        {/* Left Pane: Receipts List */}
+        <div className="card receipts-list-pane">
+          <div className="receipts-list-scroll">
+            {openList.length > 0 && (
+              <div className="receipts-list-group">
+                <div className="receipts-list-subhead">
+                  <span className="warn">Needs claiming</span>
+                  <span className="tag tag-warn">{openList.length}</span>
                 </div>
-                <span className="muted" style={{ fontSize: 11.5 }}>
-                  {shortDate(e.createdAt)} · {e.bill?.closed ? "Closed" : "Photo attached"}
-                </span>
-              </button>
-            ))}
-          </>
-        )}
-      </div>
-
-      {/* Center Pane: Zoomable Receipt Photo */}
-      {selected && (
-        <ReceiptViewer key={selected.id} entry={selected} entries={entries} onMoved={() => void reloadInbox()} />
-      )}
-
-      {/* Right Pane: Interactive Fractional Claiming */}
-      {selected && (
-        <div className="card" style={{ overflow: "hidden" }}>
-          <div className="card-head">
-            <div>
-              <h3 style={{ fontSize: 15 }}>{selected.title}</h3>
-              <p className="muted" style={{ fontSize: 12, marginTop: 2 }}>
-                Paid by {memberName(g, selected.paidBy)} · {shortDate(selected.createdAt)} · Total{" "}
-                <b className="num">{homeMoney.entry(selected, selected.amount)}</b>
-              </p>
-            </div>
-            {bill?.closed ? (
-              <span className="tag tag-pos">Closed</span>
-            ) : bill ? (
-              <span className="tag tag-warn">Open</span>
-            ) : (
-              <span className="tag">Standard split</span>
+                {openList.map((e) => {
+                  const openCount = e.bill?.items.filter((i) => !i.memberIDs.length).length ?? 0;
+                  return (
+                    <button
+                      key={e.id}
+                      type="button"
+                      className={"receipt-list-item" + (selected?.id === e.id ? " active" : "")}
+                      disabled={Boolean(busyKey)}
+                      onClick={() => selectReceipt(e.id)}
+                    >
+                      <div className="receipt-list-top">
+                        <strong>{e.title}</strong>
+                        <span className="num">{homeMoney.entry(e)}</span>
+                      </div>
+                      <div className="receipt-list-sub">
+                        <span className="muted">{shortDate(e.createdAt)} · {memberName(g, e.paidBy)}</span>
+                        {openCount > 0 ? (
+                          <span className="warn">{openCount} open</span>
+                        ) : (
+                          <span className="pos">All claimed</span>
+                        )}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
             )}
-          </div>
 
-          {error && <p className="error-banner" role="alert">{error}</p>}
-
-          {bill && !bill.closed && (unclaimedItems.length > 0 || canClose) && (
-            <div
-              style={{
-                padding: "12px 16px",
-                background: "var(--warn-soft)",
-                borderBottom: "1px solid var(--border)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                gap: 10,
-                flexWrap: "wrap",
-              }}
-            >
-              <div>
-                <strong className="warn" style={{ fontSize: 13 }}>
-                  {unclaimedItems.length ? `${unclaimedItems.length} unclaimed · ${homeMoney.entry(selected, unclaimedTotal)}` : "All items claimed"}
-                </strong>
-                {unclaimedItems.length > 0 && <p className="muted" style={{ fontSize: 12 }}>
-                  Currently sitting on {memberName(g, selected.paidBy)} until claimed.
-                </p>}
-              </div>
-              <div style={{ display: "flex", gap: 6 }}>
-                {unclaimedItems.length > 0 && <button type="button" className="btn btn-xs" onClick={copyReminder}>
-                  {copied ? "Copied!" : "Copy reminder"}
-                </button>}
-                {canClose && (
-                  <button type="button" className="btn btn-xs btn-primary" disabled={Boolean(busyKey)} onClick={() => {
-                    setCloseMembers(activeMembers.map((m) => m.id));
-                    setClosingOpen(!closingOpen);
-                  }}>
-                    Close receipt
+            {closedList.length > 0 && (
+              <div className="receipts-list-group">
+                <div className="receipts-list-subhead">
+                  <span className="muted">Closed & photos</span>
+                  <span className="tag">{closedList.length}</span>
+                </div>
+                {closedList.map((e) => (
+                  <button
+                    key={e.id}
+                    type="button"
+                    className={"receipt-list-item" + (selected?.id === e.id ? " active" : "")}
+                    disabled={Boolean(busyKey)}
+                    onClick={() => selectReceipt(e.id)}
+                  >
+                    <div className="receipt-list-top">
+                      <strong>{e.title}</strong>
+                      <span className="num">{homeMoney.entry(e)}</span>
+                    </div>
+                    <span className="muted receipt-list-sub">
+                      {shortDate(e.createdAt)} · {e.bill?.closed ? "Closed" : "Photo attached"}
+                    </span>
                   </button>
-                )}
-              </div>
-            </div>
-          )}
-
-          {closingOpen && canClose && (
-            <div style={{ padding: "12px 16px", background: "var(--surface-2)", borderBottom: "1px solid var(--border)" }}>
-              <p style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 8 }}>
-                {unclaimedItems.length ? "Split remaining open items evenly across:" : "Confirm the final item allocations."}
-              </p>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
-                {unclaimedItems.length > 0 && activeMembers.map((m) => (
-                  <label key={m.id} className="check" style={{ fontSize: 12.5 }}>
-                    <input
-                      type="checkbox"
-                      checked={closeMembers.includes(m.id)}
-                      onChange={(e) =>
-                        setCloseMembers(
-                          e.target.checked
-                            ? [...closeMembers, m.id]
-                            : closeMembers.filter((id) => id !== m.id),
-                        )
-                      }
-                    />
-                    {m.name}
-                  </label>
                 ))}
               </div>
-              <div style={{ display: "flex", gap: 8 }}>
-                <button
-                  type="button"
-                  className="btn btn-sm btn-primary"
-                  disabled={Boolean(busyKey) || (unclaimedItems.length > 0 && !closeMembers.length)}
-                  onClick={async () => {
-                    setBusyKey(selected.id);
-                    setError("");
-                    try {
-                      await save(`/v1/entries/${selected.id}/close`, { memberIDs: unclaimedItems.length ? closeMembers : [] });
-                      setClosingOpen(false);
-                    } catch (error) {
-                      setError(error instanceof Error ? error.message : "Could not close the receipt.");
-                    } finally {
-                      setBusyKey("");
-                    }
-                  }}
-                >
-                  Confirm & close receipt
-                </button>
-                <button type="button" className="btn btn-sm" onClick={() => setClosingOpen(false)}>
-                  Cancel
-                </button>
+            )}
+          </div>
+        </div>
+
+        {/* Center Pane: Zoomable Receipt Photo */}
+        {selected && (
+          <ReceiptViewer key={selected.id} entry={selected} entries={entries} onMoved={() => void reloadInbox()} />
+        )}
+
+        {/* Right Pane: Interactive Fractional Claiming */}
+        {selected && (
+          <div className="card receipts-detail-pane">
+            <div className="card-head">
+              <div style={{ minWidth: 0 }}>
+                <h3 style={{ fontSize: 15 }}>{selected.title}</h3>
+                <p className="muted card-sub">
+                  Paid by {memberName(g, selected.paidBy)} · {shortDate(selected.createdAt)} · Total{" "}
+                  <b className="num">{homeMoney.entry(selected, selected.amount)}</b>
+                </p>
               </div>
+              {bill?.closed ? (
+                <span className="tag tag-pos">Closed</span>
+              ) : bill ? (
+                <span className="tag tag-warn">Open</span>
+              ) : (
+                <span className="tag">Standard split</span>
+              )}
             </div>
-          )}
 
-          {bill ? (
-            <div>
-              {gross.map((item) => {
-                const isOpen = !item.memberIDs.length;
-                const portions = itemPortions(item, selected.paidBy);
-                return (
-                  <div key={item.id} className={"claim-item" + (isOpen && !bill.closed ? " unclaimed" : "")}>
-                    <div className="claim-item-top">
-                      <div>
-                        <strong style={{ fontSize: 13.5 }}>{item.title}</strong>
-                        {isOpen && (
-                          <span className="tag tag-warn" style={{ marginLeft: 8 }}>
-                            Unclaimed
-                          </span>
-                        )}
-                      </div>
-                      <div style={{ textAlign: "right" }}>
-                        <strong className="num" style={{ fontSize: 13.5 }}>
-                          {homeMoney.entry(selected, item.amount)}
-                        </strong>
-                        {item.gross !== item.amount && (
-                          <div className="muted num" style={{ fontSize: 11 }}>
-                            {homeMoney.entry(selected, item.gross)} w/ tax & tip
-                          </div>
-                        )}
-                      </div>
-                    </div>
+            {error && <p className="error-banner" role="alert" style={{ margin: "10px 14px 0" }}>{error}</p>}
 
-                    <div className="claim-pills">
-                      {g.members.filter((m) => !m.removed || item.memberIDs.includes(m.id)).map((m) => {
-                        const claimed = item.memberIDs.includes(m.id);
-                        const weight = item.shares?.[m.id] ?? 100;
-                        const myCents = claimed ? portions.reduce((sum, p) => sum + (p.memberID === m.id ? p.amount : 0), 0) : null;
-                        return (
-                          <div
-                            key={m.id}
-                            className={"claim-pill" + (claimed ? " on" : "")}
-                            style={{ opacity: busyKey === item.id ? 0.6 : 1 }}
-                          >
-                            <button
-                              type="button"
-                              disabled={bill.closed || Boolean(busyKey)}
-                              onClick={() => toggleMember(selected, item, m.id)}
-                              style={{
-                                display: "inline-flex",
-                                alignItems: "center",
-                                gap: 5,
-                                border: 0,
-                                background: "transparent",
-                                padding: 0,
-                                cursor: bill.closed ? "default" : "pointer",
-                                color: "inherit",
-                                fontWeight: "inherit",
-                              }}
-                            >
-                              <Avatar name={m.name} avatarURL={m.avatarURL} size={20} />
-                              <span>{m.name.split(" ")[0]}</span>
-                              {myCents !== null && (
-                                <span className="num" style={{ fontSize: 11, opacity: 0.85 }}>
-                                  {homeMoney.entry(selected, myCents)}
-                                </span>
-                              )}
-                            </button>
-                            {claimed && !bill.closed && !item.roundingSeats && (
-                              <span className="qty-stepper" title="Adjust fractional share">
-                                <button
-                                  type="button"
-                                  aria-label={`Decrease ${m.name} share`}
-                                  disabled={Boolean(busyKey) || weight === FRACTION_STEPS[0]}
-                                  onClick={() => stepShare(selected, item, m.id, -1)}
-                                >
-                                  −
-                                </button>
-                                <span>{formatShare(weight)}</span>
-                                <button
-                                  type="button"
-                                  aria-label={`Increase ${m.name} share`}
-                                  disabled={Boolean(busyKey) || weight === FRACTION_STEPS.at(-1) || weight === 100_000}
-                                  onClick={() => stepShare(selected, item, m.id, 1)}
-                                >
-                                  +
-                                </button>
+            {bill && !bill.closed && (unclaimedItems.length > 0 || canClose) && (
+              <div className="receipts-alert-bar">
+                <div>
+                  <strong className="warn">
+                    {unclaimedItems.length ? `${unclaimedItems.length} unclaimed · ${homeMoney.entry(selected, unclaimedTotal)}` : "All items claimed"}
+                  </strong>
+                  {unclaimedItems.length > 0 && <p className="muted">
+                    Sitting on {memberName(g, selected.paidBy)} until claimed.
+                  </p>}
+                </div>
+                <div className="receipt-move-actions">
+                  {unclaimedItems.length > 0 && <button type="button" className="btn btn-xs" onClick={copyReminder}>
+                    {copied ? "Copied!" : "Copy reminder"}
+                  </button>}
+                  {canClose && (
+                    <button type="button" className="btn btn-xs btn-primary" disabled={Boolean(busyKey)} onClick={() => {
+                      setCloseMembers(activeMembers.map((m) => m.id));
+                      setClosingOpen(!closingOpen);
+                    }}>
+                      Close receipt
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {closingOpen && canClose && (
+              <div className="receipts-close-bar">
+                <p style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 8 }}>
+                  {unclaimedItems.length ? "Split remaining open items evenly across:" : "Confirm the final item allocations."}
+                </p>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
+                  {unclaimedItems.length > 0 && activeMembers.map((m) => (
+                    <label key={m.id} className="check" style={{ fontSize: 12.5 }}>
+                      <input
+                        type="checkbox"
+                        checked={closeMembers.includes(m.id)}
+                        onChange={(e) =>
+                          setCloseMembers(
+                            e.target.checked
+                              ? [...closeMembers, m.id]
+                              : closeMembers.filter((id) => id !== m.id),
+                          )
+                        }
+                      />
+                      {m.name}
+                    </label>
+                  ))}
+                </div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-primary"
+                    disabled={Boolean(busyKey) || (unclaimedItems.length > 0 && !closeMembers.length)}
+                    onClick={async () => {
+                      setBusyKey(selected.id);
+                      setError("");
+                      try {
+                        await save(`/v1/entries/${selected.id}/close`, { memberIDs: unclaimedItems.length ? closeMembers : [] });
+                        setClosingOpen(false);
+                      } catch (error) {
+                        setError(error instanceof Error ? error.message : "Could not close the receipt.");
+                      } finally {
+                        setBusyKey("");
+                      }
+                    }}
+                  >
+                    Confirm & close receipt
+                  </button>
+                  <button type="button" className="btn btn-sm" onClick={() => setClosingOpen(false)}>
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {bill ? (
+              <>
+                <div className="receipts-items-scroll">
+                  {gross.map((item) => {
+                    const isOpen = !item.memberIDs.length;
+                    const portions = itemPortions(item, selected.paidBy);
+                    return (
+                      <div key={item.id} className={"claim-item" + (isOpen && !bill.closed ? " unclaimed" : "")}>
+                        <div className="claim-item-top">
+                          <div>
+                            <strong style={{ fontSize: 13.5 }}>{item.title}</strong>
+                            {isOpen && (
+                              <span className="tag tag-warn" style={{ marginLeft: 8 }}>
+                                Unclaimed
                               </span>
                             )}
                           </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                );
-              })}
+                          <div style={{ textAlign: "right" }}>
+                            <strong className="num" style={{ fontSize: 13.5 }}>
+                              {homeMoney.entry(selected, item.amount)}
+                            </strong>
+                            {item.gross !== item.amount && (
+                              <div className="muted num" style={{ fontSize: 11 }}>
+                                {homeMoney.entry(selected, item.gross)} w/ tax & tip
+                              </div>
+                            )}
+                          </div>
+                        </div>
 
-              <div style={{ padding: "12px 16px", background: "var(--surface-2)", fontSize: 12.5 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-                  <span className="muted">Tax (proportional)</span>
-                  <b className="num">{homeMoney.entry(selected, bill.tax)}</b>
+                        <div className="claim-pills">
+                          {g.members.filter((m) => !m.removed || item.memberIDs.includes(m.id)).map((m) => {
+                            const claimed = item.memberIDs.includes(m.id);
+                            const weight = item.shares?.[m.id] ?? 100;
+                            const myCents = claimed ? portions.reduce((sum, p) => sum + (p.memberID === m.id ? p.amount : 0), 0) : null;
+                            return (
+                              <div
+                                key={m.id}
+                                className={"claim-pill" + (claimed ? " on" : "")}
+                                style={{ opacity: busyKey === item.id ? 0.6 : 1 }}
+                              >
+                                <button
+                                  type="button"
+                                  disabled={bill.closed || Boolean(busyKey)}
+                                  onClick={() => toggleMember(selected, item, m.id)}
+                                  style={{
+                                    display: "inline-flex",
+                                    alignItems: "center",
+                                    gap: 5,
+                                    border: 0,
+                                    background: "transparent",
+                                    padding: 0,
+                                    cursor: bill.closed ? "default" : "pointer",
+                                    color: "inherit",
+                                    fontWeight: "inherit",
+                                  }}
+                                >
+                                  <Avatar name={m.name} avatarURL={m.avatarURL} size={20} />
+                                  <span>{m.name.split(" ")[0]}</span>
+                                  {myCents !== null && (
+                                    <span className="num" style={{ fontSize: 11, opacity: 0.85 }}>
+                                      {homeMoney.entry(selected, myCents)}
+                                    </span>
+                                  )}
+                                </button>
+                                {claimed && !bill.closed && !item.roundingSeats && (
+                                  <span className="qty-stepper" title="Adjust fractional share">
+                                    <button
+                                      type="button"
+                                      aria-label={`Decrease ${m.name} share`}
+                                      disabled={Boolean(busyKey) || weight === FRACTION_STEPS[0]}
+                                      onClick={() => stepShare(selected, item, m.id, -1)}
+                                    >
+                                      −
+                                    </button>
+                                    <span>{formatShare(weight)}</span>
+                                    <button
+                                      type="button"
+                                      aria-label={`Increase ${m.name} share`}
+                                      disabled={Boolean(busyKey) || weight === FRACTION_STEPS.at(-1) || weight === 100_000}
+                                      onClick={() => stepShare(selected, item, m.id, 1)}
+                                    >
+                                      +
+                                    </button>
+                                  </span>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
-                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
-                  <span className="muted">Tip (proportional)</span>
-                  <b className="num">{homeMoney.entry(selected, bill.tip)}</b>
-                </div>
-                <div style={{ display: "flex", justifyContent: "space-between", paddingTop: 6, borderTop: "1px solid var(--border)" }}>
-                  <strong>Receipt Total</strong>
-                  <strong className="num">{homeMoney.entry(selected, selected.amount)}</strong>
-                </div>
-              </div>
-            </div>
-          ) : (
-            <div style={{ padding: 16 }}>
-              <p className="muted" style={{ fontSize: 13, marginBottom: 12 }}>
-                This expense has a receipt photo attached and is split directly:
-              </p>
-              <div className="panel">
-                {selected.splits.map((s) => (
-                  <div className="row" key={s.memberID}>
-                    <span>{memberName(g, s.memberID)}</span>
-                    <b className="num">{homeMoney.entry(selected, s.amount)}</b>
+
+                <div className="receipts-total-foot">
+                  <div>
+                    <span className="muted">Tax (proportional)</span>
+                    <b className="num">{homeMoney.entry(selected, bill.tax)}</b>
                   </div>
-                ))}
+                  <div>
+                    <span className="muted">Tip (proportional)</span>
+                    <b className="num">{homeMoney.entry(selected, bill.tip)}</b>
+                  </div>
+                  <div className="receipts-total-row">
+                    <strong>Receipt total</strong>
+                    <strong className="num">{homeMoney.entry(selected, selected.amount)}</strong>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div className="receipts-items-scroll" style={{ padding: 16 }}>
+                <p className="muted" style={{ fontSize: 13, marginBottom: 12 }}>
+                  This expense has a receipt photo attached and is split directly:
+                </p>
+                <div className="panel">
+                  {selected.splits.map((s) => (
+                    <div className="row" key={s.memberID}>
+                      <span>{memberName(g, s.memberID)}</span>
+                      <b className="num">{homeMoney.entry(selected, s.amount)}</b>
+                    </div>
+                  ))}
+                </div>
               </div>
-            </div>
-          )}
-        </div>
-      )}
-    </div>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

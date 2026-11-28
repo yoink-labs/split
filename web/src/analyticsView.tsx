@@ -1,11 +1,12 @@
 import { useRef, useState, type CSSProperties } from "react";
 import { analyze, drillRows, type Analytics, type Drill, type Granularity } from "./analytics";
 import { categoryMeta } from "./categories";
+import { CategoryDonut } from "./categoryDonut";
 import { memberName, moneyCompact, type Expense, type Group } from "./data";
 import { useHomeMoney } from "./homeMoney";
 import { Picker } from "./picker";
 import { TransactionTable } from "./transactionTable";
-import { Avatar, CategoryIcon } from "./ui";
+import { Avatar } from "./ui";
 import "./analytics.css";
 
 type Range = "all" | "trip" | "30d" | "90d" | "12m" | "custom";
@@ -96,16 +97,7 @@ export function GroupAnalytics({ g, entries, onInspect, inspectedID }: {
   const average = data.priced.length ? Math.round(data.total / data.priced.length) : 0;
 
   return (
-    <section className="analytics" aria-labelledby="analytics-title">
-      <header className="analytics-head">
-        <div>
-          <h2 id="analytics-title">Analytics</h2>
-          <p className="muted">
-            {member ? `${member.name}’s share of expenses they’re part of` : "Every expense in the group"}, in {homeMoney.home}
-          </p>
-        </div>
-      </header>
-
+    <section className="analytics" aria-label="Group analytics">
       <div className="card analytics-filters" role="group" aria-label="Analytics filters">
         <div className="seg analytics-range" role="group" aria-label="Date range">
           {(Object.keys(RANGE_LABELS) as Range[]).filter((key) => key !== "trip" || tripRange).map((key) => (
@@ -125,6 +117,9 @@ export function GroupAnalytics({ g, entries, onInspect, inspectedID }: {
           </div>
         )}
         <div className="analytics-filter-end">
+          <span className="analytics-scope muted">
+            {member ? `${member.name}’s share` : "All members"} · {homeMoney.home}
+          </span>
           <Picker label="Member" value={member?.id ?? ""} search={people.length > 8} onChange={resetDrill(setMemberID)}
             options={[{ value: "", label: "Everyone" }, ...people.map((p) => ({
               value: p.id, label: p.name, icon: <Avatar name={p.name} avatarURL={p.avatarURL} size={21} />,
@@ -138,18 +133,36 @@ export function GroupAnalytics({ g, entries, onInspect, inspectedID }: {
         </p>
       ) : (
         <>
-          <dl className="analytics-stats">
-            <div><dt>{member ? `${member.name}’s share` : "Total spend"}</dt><dd className="num">{format(data.total)}</dd></div>
-            <div><dt>Expenses</dt><dd className="num">{data.rows.length}</dd></div>
-            <div><dt>Average expense</dt><dd className="num">{format(average)}</dd></div>
-            {largest && <div><dt>Largest category</dt><dd>{categoryMeta(largest.id).label} <small className="muted">{largest.percent}%</small></dd></div>}
+          <dl className="metric-strip analytics-stats">
+            <div className="metric-cell">
+              <dt className="metric-label">{member ? `${member.name}’s share` : "Total spend"}</dt>
+              <dd className="metric-val num">{format(data.total)}</dd>
+              {(data.estimated || data.excluded > 0) && (
+                <div className="metric-sub">
+                  {data.estimated && `≈ converted to ${homeMoney.home}`}
+                  {data.estimated && data.excluded > 0 && " · "}
+                  {data.excluded > 0 && `${data.excluded} unpriced`}
+                </div>
+              )}
+            </div>
+            <div className="metric-cell">
+              <dt className="metric-label">Entries</dt>
+              <dd className="metric-val num">{data.rows.length}</dd>
+              <div className="metric-sub">{data.buckets.filter((b) => b.count > 0).length} active {data.granularity === "day" ? "days" : data.granularity === "week" ? "weeks" : "months"}</div>
+            </div>
+            <div className="metric-cell">
+              <dt className="metric-label">Average entry</dt>
+              <dd className="metric-val num">{format(average)}</dd>
+              <div className="metric-sub">Net of refunds</div>
+            </div>
+            {largest && (
+              <div className="metric-cell">
+                <dt className="metric-label">Largest category</dt>
+                <dd className="metric-val">{categoryMeta(largest.id).label}</dd>
+                <div className="metric-sub num">{largest.percent}% · {format(largest.amount)}</div>
+              </div>
+            )}
           </dl>
-          {(data.excluded > 0 || data.estimated) && (
-            <p className="analytics-note muted">
-              {data.estimated && `≈ marks amounts converted to ${homeMoney.home} at saved or published rates. `}
-              {data.excluded > 0 && `${data.excluded} ${data.excluded === 1 ? "expense has" : "expenses have"} no ${homeMoney.home} rate yet and ${data.excluded === 1 ? "is" : "are"} shown only under currency.`}
-            </p>
-          )}
 
           <TimeChart data={data} grain={grain} onGrain={resetDrill(setGrain)} format={format}
             active={drill?.kind === "bucket" ? drill.key : ""} onSelect={(key) => select({ kind: "bucket", key })} />
@@ -159,25 +172,28 @@ export function GroupAnalytics({ g, entries, onInspect, inspectedID }: {
               active={drill?.kind === "category" ? drill.id : ""} onSelect={(id) => select({ kind: "category", id })} />
             <PeopleChart g={g} data={data} format={format} highlight={member?.id}
               active={drill?.kind === "person" ? drill.memberID : ""} onSelect={(id) => select({ kind: "person", memberID: id })} />
-            <CurrencyChart data={data} home={homeMoney.home} format={format}
-              active={drill?.kind === "currency" ? drill.currency : ""} onSelect={(currency) => select({ kind: "currency", currency })} />
           </div>
 
+          <CurrencyChart data={data} home={homeMoney.home} format={format}
+            active={drill?.kind === "currency" ? drill.currency : ""} onSelect={(currency) => select({ kind: "currency", currency })} />
+
           <section ref={drillPanel} className="analytics-drill" aria-live="polite" aria-labelledby="analytics-drill-title">
-            <header>
-              <div>
-                <h3 id="analytics-drill-title">{drillTitle}</h3>
-                <p className="muted">
-                  {drilled.length} {drilled.length === 1 ? "expense" : "expenses"}
-                  {drilled.some((row) => row.amount !== null) && <> · <b className="num">{format(drillTotal, drilled.some((r) => r.estimated))}</b>{member && " share"}</>}
-                </p>
-              </div>
-              {drill ? <button type="button" className="btn btn-xs" onClick={() => setDrill(null)}>Show all</button>
-                : <span className="muted analytics-hint">Select a bar or row to filter this list.</span>}
-            </header>
             <TransactionTable key={JSON.stringify([drill, bounds, member?.id])} g={g} size="compact" pageSize={25}
               entries={drilled.map((row) => row.entry)} label={`${drillTitle} transactions`}
               inspectedID={inspectedID} onInspect={onInspect}
+              header={
+                <>
+                  <div>
+                    <h3 id="analytics-drill-title">{drillTitle}</h3>
+                    <p className="muted card-sub">
+                      {drilled.length} {drilled.length === 1 ? "entry" : "entries"}
+                      {drilled.some((row) => row.amount !== null) && <> · <b className="num">{format(drillTotal, drilled.some((r) => r.estimated))}</b>{member && " share"}</>}
+                    </p>
+                  </div>
+                  {drill ? <button type="button" className="btn btn-xs" onClick={() => setDrill(null)}>Show all</button>
+                    : <span className="muted analytics-hint">Select a bar, slice, or row to filter</span>}
+                </>
+              }
               viewAll={{ to: ledgerLink, label: "Open full ledger" }}
               extra={member ? { header: `${member.name}’s share`, cell: (entry) => homeMoney.portion(entry, member.id) } : undefined} />
           </section>
@@ -277,37 +293,15 @@ function CategoryChart({ data, format, active, onSelect }: {
   active: string;
   onSelect: (id: string) => void;
 }) {
-  const max = data.categories[0]?.amount ?? 1;
   return (
     <section className="card analytics-card" aria-labelledby="analytics-cat-title">
       <header className="analytics-card-head">
         <div>
           <h3 id="analytics-cat-title">By category</h3>
-          <p className="muted">{data.categories.length} {data.categories.length === 1 ? "category" : "categories"}</p>
+          <p className="muted">{data.categories.length} {data.categories.length === 1 ? "category" : "categories"} · click to filter</p>
         </div>
       </header>
-      {data.total > 0 && (
-        <div className="analytics-composition" aria-hidden="true">
-          {data.categories.map((c) => <span key={c.id} style={{ flexGrow: c.amount, background: categoryMeta(c.id).color }} />)}
-        </div>
-      )}
-      <ul className="arank">
-        {data.categories.map((c) => {
-          const meta = categoryMeta(c.id);
-          return (
-            <li key={c.id}>
-              <button type="button" aria-pressed={active === c.id} onClick={() => onSelect(c.id)}>
-                <CategoryIcon category={c.id} />
-                <span className="arank-label">
-                  <span><b>{meta.label}</b><small className="muted">{c.count} {c.count === 1 ? "expense" : "expenses"}</small></span>
-                  <span className="arank-bar"><span style={{ inlineSize: `${(c.amount / max) * 100}%`, background: meta.color }} /></span>
-                </span>
-                <span className="arank-value"><b className="num">{format(c.amount)}</b><small className="muted">{c.percent}%</small></span>
-              </button>
-            </li>
-          );
-        })}
-      </ul>
+      <CategoryDonut compact categories={data.categories} total={data.total} format={format} active={active} onSelect={onSelect} />
     </section>
   );
 }
@@ -373,25 +367,25 @@ function CurrencyChart({ data, home, format, active, onSelect }: {
 }) {
   const max = Math.max(1, ...data.currencies.map((c) => c.home ?? 0));
   return (
-    <section className="card analytics-card" aria-labelledby="analytics-fx-title">
+    <section className="card analytics-card analytics-currencies" aria-labelledby="analytics-fx-title">
       <header className="analytics-card-head">
         <div>
           <h3 id="analytics-fx-title">By currency</h3>
           <p className="muted">{data.currencies.length === 1 ? `Every expense was paid in ${data.currencies[0].currency}` : `Paid in ${data.currencies.length} currencies, totalled in ${home}`}</p>
         </div>
       </header>
-      <ul className="arank">
+      <ul className="acur-grid">
         {data.currencies.map((c) => (
           <li key={c.currency}>
             <button type="button" aria-pressed={active === c.currency} onClick={() => onSelect(c.currency)}>
               <span className="acur-code">{c.currency}</span>
               <span className="arank-label">
-                <span><b>{moneyCompact(c.original, c.currency)}</b><small className="muted">{c.count} {c.count === 1 ? "expense" : "expenses"}</small></span>
+                <span><b>{moneyCompact(c.original, c.currency)}</b><small className="muted">{c.count} {c.count === 1 ? "entry" : "entries"}</small></span>
                 <span className="arank-bar"><span style={{ inlineSize: `${((c.home ?? 0) / max) * 100}%`, background: "var(--primary)" }} /></span>
               </span>
               <span className="arank-value">
                 <b className="num">{c.home === null ? "Rate unavailable" : c.currency === home ? format(c.home, false) : format(c.home, true)}</b>
-                <small className="muted">{c.home === null ? "" : `${c.percent}%`}</small>
+                <small className="muted num">{c.home === null ? "" : `${c.percent}%`}</small>
               </span>
             </button>
           </li>

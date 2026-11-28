@@ -19,7 +19,7 @@ export interface ExtraColumn {
  * `pageSize` rows, and an optional link to the full ledger. It never grows past its frame.
  */
 export function TransactionTable({
-  g, entries, all = entries, label, pageSize = 50, inspectedID, onInspect, extra, viewAll, empty = "No transactions yet.", size = "full",
+  g, entries, all = entries, label, pageSize = 50, inspectedID, onInspect, extra, viewAll, header, empty = "No transactions yet.", size = "full",
 }: {
   g: Group;
   entries: Expense[];
@@ -31,6 +31,7 @@ export function TransactionTable({
   onInspect: (id: string) => void;
   extra?: ExtraColumn;
   viewAll?: { to: string; label: string };
+  header?: ReactNode;
   empty?: string;
   /** `compact` uses a shorter frame for panels on the Overview and Analytics tabs. */
   size?: "full" | "compact";
@@ -51,6 +52,7 @@ export function TransactionTable({
   if (!entries.length) {
     return (
       <div className="card txn-card">
+        {header && <div className="card-head txn-head">{header}</div>}
         <p className="txn-empty muted">{empty}</p>
         {viewAll && <footer className="txn-foot"><Link className="txn-all" to={viewAll.to}>{viewAll.label}</Link></footer>}
       </div>
@@ -59,6 +61,7 @@ export function TransactionTable({
 
   return (
     <div className={"card txn-card txn-" + size}>
+      {header && <div className="card-head txn-head">{header}</div>}
       <div ref={frame} className="txn-frame" tabIndex={0} role="region" aria-label={label}>
         <table className="ledger-table transaction-table txn-table">
           <thead>

@@ -132,8 +132,52 @@ enum Consumption {
         return BillConsumption(items: items, people: people)
     }
 
+    /// Swift port of the Worker's `itemRefund`: what refunding specific receipt items credits each
+    /// person, their full item portion including tax and tip, in first-seen order. Zero credits drop out.
+    static func itemRefund(_ original: LedgerEntry, itemIDs: [String]) throws -> (amount: Int64, splits: [Portion]) {
+        guard let bill = original.bill else { throw LedgerError.invalid("Only an itemized expense can refund specific items.") }
+        guard !itemIDs.isEmpty, Set(itemIDs).count == itemIDs.count else { throw LedgerError.invalid("Choose the items to refund.") }
+        let items = try Consumption.bill(bill, payer: original.paidBy).items
+        let chosen = try itemIDs.map { id -> ItemConsumption in
+            guard let item = items.first(where: { $0.id == id }) else { throw LedgerError.invalid("Choose items from the original receipt.") }
+            return item
+        }
+        var splits: [Portion] = []
+        for part in chosen.flatMap(\.portions) {
+            if let index = splits.firstIndex(where: { $0.memberID == part.memberID }) {
+                splits[index].amount += part.amount
+            } else {
+                splits.append(Portion(memberID: part.memberID, amount: part.amount))
+            }
+        }
+        splits.removeAll { $0.amount == 0 }
+        return (splits.reduce(0) { $0 + $1.amount }, splits)
+    }
+
     /// Receipt items for itemized expenses, otherwise one line per person equal to their split.
-    static func lines(_ entry: LedgerEntry) throws -> [ConsumptionLine] {
+    /// Refunds give consumption back as negative lines: an item refund returns exactly those items'
+    /// portions (item, tax and tip) when they match its credits, any other refund one line per credited person.
+    static func lines(_ entry: LedgerEntry, all: [LedgerEntry] = []) throws -> [ConsumptionLine] {
+        if entry.isRefund {
+            if let ids = entry.refundItems,
+               let original = all.first(where: { $0.id == entry.refundOf && $0.kind == "expense" }), let bill = original.bill {
+                let items = try Consumption.bill(bill, payer: original.paidBy).items.filter { ids.contains($0.id) }
+                let lines = items.flatMap { item in
+                    item.portions.filter { $0.amount != 0 }.map {
+                        ConsumptionLine(part: ConsumptionPart(memberID: $0.memberID, amount: -$0.amount, items: -$0.items, tax: -$0.tax, tip: -$0.tip),
+                                        entryID: entry.id, itemID: item.id, title: "Refund: " + item.title)
+                    }
+                }
+                let exact = entry.splits.allSatisfy { s in
+                    lines.filter { $0.part.memberID == s.memberID }.reduce(Int64(0)) { $0 - $1.part.amount } == s.amount
+                } && lines.allSatisfy { l in entry.splits.contains { $0.memberID == l.part.memberID } }
+                if exact { return lines }
+            }
+            return entry.splits.filter { $0.amount != 0 }.map {
+                ConsumptionLine(part: ConsumptionPart(memberID: $0.memberID, amount: -$0.amount, items: -$0.amount, tax: 0, tip: 0),
+                                entryID: entry.id, itemID: nil, title: entry.title)
+            }
+        }
         if let bill = entry.bill {
             return try Consumption.bill(bill, payer: entry.paidBy).items.flatMap { item in
                 item.portions.map { ConsumptionLine(part: $0, entryID: entry.id, itemID: item.id, title: item.title) }
@@ -145,11 +189,14 @@ enum Consumption {
         }
     }
 
-    /// Consumption by person across the expenses recorded in one currency, in first-seen order.
+    /// Consumption by person across the expenses and refunds recorded in one currency, oldest
+    /// first (then by ID), with people in first-seen order. Refunds net out what they gave back.
     static func report(_ entries: [LedgerEntry], currency: String) throws -> [PersonConsumption] {
         var people: [PersonConsumption] = []
-        for entry in entries where entry.kind == "expense" && entry.currency == currency {
-            for line in try lines(entry) {
+        let spending = entries.filter { ($0.kind == "expense" || $0.kind == "refund") && $0.currency == currency }
+            .sorted { ($0.createdAt, $0.id) < ($1.createdAt, $1.id) }
+        for entry in spending {
+            for line in try lines(entry, all: entries) {
                 if let index = people.firstIndex(where: { $0.total.memberID == line.part.memberID }) {
                     people[index].total.amount += line.part.amount
                     people[index].total.items += line.part.items

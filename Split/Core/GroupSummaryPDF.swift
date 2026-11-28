@@ -198,8 +198,9 @@ enum GroupSummaryPDF {
             writer.text("No expenses recorded.", .body)
             return
         }
-        writer.text("Receipt items include each person’s share of tax and tip. Other expenses show the person’s share.", .detail)
+        writer.text("Receipt items include each person’s share of tax and tip. Other expenses show the person’s share. Refunds subtract what they gave back.", .detail)
         let titles = Dictionary(entries.map { ($0.id, $0.title) }, uniquingKeysWith: { first, _ in first })
+        let refunds = Set(entries.filter(\.isRefund).map(\.id))
         let currencies = Set(entries.map(\.currency)).sorted()
         for currency in currencies {
             guard let people = try? Consumption.report(entries, currency: currency), !people.isEmpty else { continue }
@@ -212,7 +213,8 @@ enum GroupSummaryPDF {
                                             Money.text(total.tip, currency), Money.text(total.amount, currency)]))
                 for line in person.lines {
                     let entry = titles[line.entryID] ?? "Expense"
-                    let label = line.itemID == nil ? "    \(entry)" : "    \(entry): \(line.title)"
+                    // Item refund lines already read "Refund: <item>".
+                    let label = line.itemID == nil ? "    \(entry)" : refunds.contains(line.entryID) ? "    \(line.title)" : "    \(entry): \(line.title)"
                     writer.draw(writer.columns([label, Money.text(line.part.items, currency), Money.text(line.part.tax, currency),
                                                 Money.text(line.part.tip, currency), Money.text(line.part.amount, currency)], style: .detail))
                 }

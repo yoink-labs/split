@@ -89,9 +89,9 @@ final class ConsumptionTests: XCTestCase {
             Purchase(id: "s", title: "Soda", amount: 200, memberIDs: ["b"])
         ], tax: 120, tip: 0)
         let dinner = LedgerEntry(id: "dinner", groupID: "g", title: "Dinner", amount: 1320, currency: "USD", paidBy: "a",
-                                 splits: try bill.split(payer: "a"), bill: bill)
+                                 splits: try bill.split(payer: "a"), bill: bill, createdAt: "2026-11-01T10:00:00Z")
         let cab = LedgerEntry(id: "cab", groupID: "g", title: "Cab", amount: 1001, currency: "USD", paidBy: "b",
-                              splits: [Portion(memberID: "a", amount: 501), Portion(memberID: "b", amount: 500)])
+                              splits: [Portion(memberID: "a", amount: 501), Portion(memberID: "b", amount: 500)], createdAt: "2026-11-02T10:00:00Z")
         let museum = LedgerEntry(id: "museum", groupID: "g", title: "Museum", amount: 900, currency: "EUR", paidBy: "a",
                                  splits: [Portion(memberID: "a", amount: 900)])
         let payment = LedgerEntry(id: "pay", groupID: "g", title: "Payback", amount: 300, currency: "USD", paidBy: "b",
@@ -155,5 +155,117 @@ final class ConsumptionTests: XCTestCase {
         }
         let report = try Consumption.report([dinner, cab], currency: "USD")
         for person in report { XCTAssertTrue(text.contains(Money.text(person.total.amount, "USD"))) }
+    }
+
+    // MARK: Item refunds. Expected values come from `itemRefund` in `worker/src/items.ts` on the same bill.
+
+    private func dinner() -> LedgerEntry {
+        let bill = ReceiptBill(items: [
+            Purchase(id: "w", title: "Wine", amount: 1001, memberIDs: ["a", "b"]),
+            Purchase(id: "f", title: "Fries", amount: 333, memberIDs: ["b", "c"], shares: ["b": 200]),
+            Purchase(id: "d", title: "Dessert", amount: 999, memberIDs: ["c"]),
+            Purchase(id: "o", title: "Open", amount: 500)
+        ], tax: 187, tip: 350)
+        var entry = LedgerEntry(id: "dinner-12345678", groupID: "g", title: "Dinner", amount: bill.total, currency: "USD", paidBy: "c",
+                                splits: (try? bill.split(payer: "c")) ?? [])
+        entry.bill = bill
+        return entry
+    }
+
+    func testItemRefundMatchesTheWorker() throws {
+        let original = dinner()
+        let use = try Consumption.bill(original.bill!, payer: "c")
+        XCTAssertEqual(use.items.map(\.gross), [1191, 396, 1188, 595])
+
+        let one = try Consumption.itemRefund(original, itemIDs: ["w"])
+        XCTAssertEqual(one.amount, 1191)
+        XCTAssertEqual(one.splits, [Portion(memberID: "a", amount: 596), Portion(memberID: "b", amount: 595)])
+
+        // b shares Wine and Fries, so b gets both portions back.
+        let two = try Consumption.itemRefund(original, itemIDs: ["w", "f"])
+        XCTAssertEqual(two.amount, 1191 + 396)
+        XCTAssertEqual(two.splits, [Portion(memberID: "a", amount: 596), Portion(memberID: "b", amount: 859), Portion(memberID: "c", amount: 132)])
+
+        // An open item belongs to the payer.
+        let three = try Consumption.itemRefund(original, itemIDs: ["f", "d", "o"])
+        XCTAssertEqual(three.amount, 2179)
+        XCTAssertEqual(three.splits, [Portion(memberID: "b", amount: 264), Portion(memberID: "c", amount: 1915)])
+
+        for result in [one, two, three] {
+            XCTAssertEqual(result.splits.reduce(0) { $0 + $1.amount }, result.amount)
+            XCTAssertTrue(result.splits.allSatisfy { $0.amount > 0 })
+        }
+        let all = try Consumption.itemRefund(original, itemIDs: ["w", "f", "d", "o"])
+        XCTAssertEqual(all.amount, original.amount)
+        XCTAssertEqual(Set(all.splits.map(\.memberID)), Set(original.splits.map(\.memberID)))
+        for share in original.splits { XCTAssertEqual(all.splits.first { $0.memberID == share.memberID }?.amount, share.amount) }
+    }
+
+    func testItemRefundRejectsUnknownDuplicateOrMissingItems() {
+        let original = dinner()
+        XCTAssertThrowsError(try Consumption.itemRefund(original, itemIDs: ["nope"]))
+        XCTAssertThrowsError(try Consumption.itemRefund(original, itemIDs: []))
+        XCTAssertThrowsError(try Consumption.itemRefund(original, itemIDs: ["w", "w"]))
+        var plain = original
+        plain.bill = nil
+        XCTAssertThrowsError(try Consumption.itemRefund(plain, itemIDs: ["w"]))
+    }
+
+    func testItemRefundPassesRefundChecksAndRoundTripsItsItems() throws {
+        let original = dinner()
+        let credit = try Consumption.itemRefund(original, itemIDs: ["w", "f"])
+        var refund = Refunds.make(id: "refund-12345678", original: original, title: "Refund: Wine, Fries", credits: credit.splits, receiver: "c")
+        refund.refundItems = ["w", "f"]
+        XCTAssertEqual(refund.amount, credit.amount)
+        XCTAssertEqual(refund.splitMode, .exact)
+        XCTAssertNoThrow(try Refunds.validate(refund, original: original, others: []))
+
+        let encoded = try XCTUnwrap(String(data: JSONEncoder().encode(refund), encoding: .utf8))
+        XCTAssertTrue(encoded.contains("\"refundItems\":[\"w\",\"f\"]"))
+        XCTAssertEqual(try JSONDecoder().decode(LedgerEntry.self, from: Data(encoded.utf8)), refund)
+
+        refund.refundItems = nil
+        let plain = try XCTUnwrap(String(data: JSONEncoder().encode(refund), encoding: .utf8))
+        XCTAssertFalse(plain.contains("refundItems"))
+        XCTAssertNil(try JSONDecoder().decode(LedgerEntry.self, from: Data(plain.utf8)).refundItems)
+    }
+
+    func testReportNetsOutItemRefundsAndCredits() throws {
+        var original = dinner()
+        original.createdAt = "2026-11-01T10:00:00Z"
+        let wine = try Consumption.itemRefund(original, itemIDs: ["w"])
+        var refund = Refunds.make(id: "refund-wine", original: original, title: "Refund: Wine", credits: wine.splits, receiver: "c",
+                                  createdAt: "2026-11-02T10:00:00Z")
+        refund.refundItems = ["w"]
+        let credit = LedgerEntry(id: "credit-1", groupID: "g", title: "Overcharge", amount: 100, currency: "USD", paidBy: "c",
+                                 splits: [Portion(memberID: "b", amount: 100)], kind: "refund", splitMode: .exact, createdAt: "2026-11-03T10:00:00Z")
+
+        let lines = try Consumption.lines(refund, all: [original, refund])
+        XCTAssertEqual(lines.map(\.title), ["Refund: Wine", "Refund: Wine"])
+        XCTAssertEqual(lines.map(\.itemID), ["w", "w"])
+        let use = try Consumption.bill(original.bill!, payer: "c")
+        XCTAssertEqual(lines.map(\.part), use.items[0].portions.map { part($0.memberID, -$0.amount, -$0.items, -$0.tax, -$0.tip) })
+        // Without the original, or when the credits don't match the items, it falls back to one line per credit.
+        XCTAssertEqual(try Consumption.lines(refund).map(\.part), [part("a", -596, -596, 0, 0), part("b", -595, -595, 0, 0)])
+        XCTAssertEqual(try Consumption.lines(credit).map(\.part), [part("b", -100, -100, 0, 0)])
+        XCTAssertEqual(try Consumption.lines(credit).map(\.title), ["Overcharge"])
+
+        // Entries arrive out of order; the report sorts them by date.
+        let report = try Consumption.report([credit, refund, original], currency: "USD")
+        let a = try XCTUnwrap(report.first { $0.total.memberID == "a" })
+        XCTAssertEqual(a.total, part("a", 0, 0, 0, 0))
+        let b = try XCTUnwrap(report.first { $0.total.memberID == "b" })
+        let fries = use.items[1].portions[0]
+        XCTAssertEqual(b.total.amount, fries.amount - 100)
+        XCTAssertEqual(b.total.tax, fries.tax)
+        XCTAssertEqual(b.total.tip, fries.tip)
+        XCTAssertEqual(b.lines.map(\.title), ["Wine", "Fries", "Refund: Wine", "Overcharge"])
+        XCTAssertEqual(b.lines.last?.part.amount, -100)
+        // Worker `consumptionReport` on the same entries.
+        XCTAssertEqual(b.total, part("b", 164, 122, 15, 27))
+        XCTAssertEqual(report.first { $0.total.memberID == "c" }?.total, part("c", 1915, 1610, 106, 199))
+        let c = try XCTUnwrap(report.first { $0.total.memberID == "c" })
+        XCTAssertEqual(c.total, use.people.first { $0.memberID == "c" })
+        XCTAssertEqual(report.reduce(0) { $0 + $1.total.amount }, original.amount - refund.amount - credit.amount)
     }
 }

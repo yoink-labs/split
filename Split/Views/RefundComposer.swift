@@ -21,6 +21,9 @@ struct RefundComposer: View {
     @State private var selected = Set<String>()
     @State private var custom = false
     @State private var values: [String: String] = [:]
+    /// Refund specific receipt items: each person gets back exactly what those items cost them.
+    @State private var byItems = false
+    @State private var itemIDs: [String] = []
     @State private var pending = false
     @State private var pendingNote = ""
     @State private var saving = false
@@ -39,10 +42,28 @@ struct RefundComposer: View {
         }
         return current.members.filter { $0.removed != true }
     }
-    private var total: Int64? { Money.parse(amount).flatMap { $0 > 0 ? $0 : nil } }
     private var people: [String] { eligible.map(\.id).filter(selected.contains) }
 
+    /// Receipt items of the original not yet given back by another refund.
+    private var refundable: [ItemConsumption] {
+        guard let original, let bill = original.bill, let use = try? Consumption.bill(bill, payer: original.paidBy) else { return [] }
+        let done = Refunds.refundedItems(others)
+        return use.items.filter { !done.contains($0.id) }
+    }
+    private var itemCredit: (amount: Int64, splits: [Portion])? {
+        guard byItems, let original, !itemIDs.isEmpty else { return nil }
+        return try? Consumption.itemRefund(original, itemIDs: itemIDs)
+    }
+    private var total: Int64? {
+        if byItems { return itemCredit.flatMap { $0.amount > 0 ? $0.amount : nil } }
+        return Money.parse(amount).flatMap { $0 > 0 ? $0 : nil }
+    }
+
     private func credits() throws -> [Portion] {
+        if byItems {
+            guard let itemCredit, itemCredit.amount > 0 else { throw LedgerError.invalid("Choose the items that were refunded.") }
+            return itemCredit.splits
+        }
         if custom {
             let portions = try people.map { id -> Portion in
                 guard let value = Money.parse(values[id] ?? "0") else { throw LedgerError.invalid("Use a number with up to two decimal places for each credit.") }
@@ -75,7 +96,22 @@ struct RefundComposer: View {
                 Section("Refund") {
                     TextField("Description", text: $title)
                         .accessibilityIdentifier("refund-title")
-                    if !custom {
+                    if !refundable.isEmpty {
+                        Picker("Refund", selection: $byItems.animation(.snappy)) {
+                            Text("Amount").tag(false)
+                            Text("Items").tag(true)
+                        }
+                        .pickerStyle(.segmented)
+                        .accessibilityIdentifier("refund-mode")
+                    }
+                    if byItems {
+                        LabeledContent("Amount") {
+                            Text(total.map { Money.text($0, currency) } ?? "Choose items")
+                                .font(.splitAmount(20))
+                                .foregroundStyle(total == nil ? Color.secondary : Palette.ink)
+                        }
+                        .accessibilityIdentifier("refund-amount")
+                    } else if !custom {
                         HStack {
                             Text(currency).foregroundStyle(.secondary)
                             TextField("0.00", text: $amount)
@@ -98,19 +134,45 @@ struct RefundComposer: View {
                     }
                     .accessibilityIdentifier("refund-receiver")
                 }
+                if byItems {
+                    Section {
+                        ForEach(refundable) { item in
+                            Button { toggle(item.id) } label: {
+                                HStack(alignment: .firstTextBaseline) {
+                                    Image(systemName: itemIDs.contains(item.id) ? "checkmark.circle.fill" : "circle")
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(item.title)
+                                        Text(item.open ? "Unclaimed" : item.portions.map { claimant($0.memberID) }.joined(separator: ", "))
+                                            .font(.caption).foregroundStyle(.secondary)
+                                    }
+                                    Spacer()
+                                    Text(Money.text(item.gross, currency)).font(.splitAmount(15))
+                                }
+                                .foregroundStyle(Palette.ink)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityIdentifier("refund-item-\(item.id)")
+                        }
+                    } header: {
+                        Text("Items refunded")
+                    } footer: {
+                        Text("Each person gets back what the item cost them, tax and tip included.")
+                    }
+                }
                 Section {
-                    Toggle("Enter each credit", isOn: $custom.animation(.snappy))
-                    ForEach(eligible) { person in
+                    if !byItems { Toggle("Enter each credit", isOn: $custom.animation(.snappy)) }
+                    ForEach(byItems ? eligible.filter { person in preview.contains { $0.memberID == person.id } } : eligible) { person in
                         HStack {
                             Button {
                                 if selected.contains(person.id) { selected.remove(person.id) } else { selected.insert(person.id) }
                             } label: {
-                                Label(name(person), systemImage: selected.contains(person.id) ? "checkmark.circle.fill" : "circle")
+                                Label(name(person), systemImage: byItems || selected.contains(person.id) ? "checkmark.circle.fill" : "circle")
                                     .foregroundStyle(Palette.ink)
                             }
                             .buttonStyle(.plain)
+                            .disabled(byItems)
                             Spacer()
-                            if custom && selected.contains(person.id) {
+                            if custom && !byItems && selected.contains(person.id) {
                                 TextField("0.00", text: Binding(get: { values[person.id] ?? "" }, set: { values[person.id] = $0 }))
                                     .keyboardType(.decimalPad).multilineTextAlignment(.trailing).frame(maxWidth: 110)
                             } else if let credit = preview.first(where: { $0.memberID == person.id }) {
@@ -126,6 +188,7 @@ struct RefundComposer: View {
                 } footer: {
                     Text(original == nil
                          ? "Each person’s balance goes up by their credit, and the person giving it owes the total."
+                         : byItems ? (itemIDs.isEmpty ? "Choose the items that were refunded." : "Exactly what the chosen items cost each person.")
                          : "Split in proportion to what each person paid toward the original, to the cent.")
                 }
                 if !resolving {
@@ -151,6 +214,15 @@ struct RefundComposer: View {
     }
 
     private func name(_ person: Person) -> String { person.userID == session.userID ? "You" : person.name }
+    private func claimant(_ id: String) -> String { current.members.first { $0.id == id }.map(name) ?? "Someone" }
+
+    /// Adds or removes an item, keeping a default "Refund: …" title in step with the chosen items.
+    private func toggle(_ id: String) {
+        if let index = itemIDs.firstIndex(of: id) { itemIDs.remove(at: index) } else { itemIDs.append(id) }
+        guard let original, title.hasPrefix("Refund") else { return }
+        let names = (original.bill?.items ?? []).filter { itemIDs.contains($0.id) }.map(\.title).joined(separator: ", ")
+        title = String("Refund: \(names.isEmpty ? original.title : names)".prefix(120))
+    }
 
     private func setUp() {
         guard !initialized else { return }
@@ -174,6 +246,7 @@ struct RefundComposer: View {
             var refund: LedgerEntry
             if let original {
                 refund = Refunds.make(original: original, title: label, credits: portions, receiver: receiver)
+                if byItems { refund.refundItems = itemIDs }
             } else {
                 refund = LedgerEntry(groupID: current.id, title: label, amount: portions.reduce(0) { $0 + $1.amount }, currency: currency,
                                      paidBy: receiver, splits: portions, kind: "refund", splitMode: custom ? .exact : .equal)

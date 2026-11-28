@@ -101,6 +101,8 @@ struct LedgerEntry: Codable, Identifiable, Equatable {
     var handled: Bool? = nil
     /// The original expense a refund gives money back for. Absent for standalone credits.
     var refundOf: String? = nil
+    /// Receipt item IDs of the original's bill that this refund gives back, each exactly once.
+    var refundItems: [String]? = nil
     /// Pending entries count toward balances by default but may still change.
     var pending: Bool? = nil
     var pendingNote: String? = nil

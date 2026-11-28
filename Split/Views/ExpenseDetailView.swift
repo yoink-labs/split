@@ -74,7 +74,7 @@ struct EntryDetails: View {
     private var canEdit: Bool { editable && entry.kind == "expense" }
     private var repeatAllowed: Bool {
         guard editable, !store.isDemo else { return false }
-        return entry.kind == "expense" && entry.bill == nil && entry.exchange == nil
+        return entry.kind == "expense" && entry.bill == nil && entry.exchange == nil && entry.spread == nil
     }
     private var liked: Bool { optimisticLike ?? (entry.likedByMe == true) }
     private var likeCount: Int {

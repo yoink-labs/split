@@ -325,6 +325,7 @@ export async function operate(name: string, input: unknown, env: Env, user: stri
   const expenseDetails = (entry: Entry) => ({
     date: new Date(entry.createdAt).toISOString().slice(0,10),
     payerNames: entryPayers(entry).map(p => ({...p, name: nameOf(p.memberID)})),
+    ...(entry.splits.some(s => s.nights !== undefined) ? {splitMode: 'nights', nightRate: nightRate(entry)} : {}),
     ...(entry.exchange ? { settlementAmount: settlementEntry(entry).amount } : {})
   });
   if(name==='groups_default_split') {
@@ -510,7 +511,7 @@ export async function operate(name: string, input: unknown, env: Env, user: stri
     if (!e) throw new HTTPError(404, 'Expense not found.');
     const path = '/v1/entries/' + e.id;
     if (name === 'expenses_show') {
-      return { ...e, ...expenseDetails(e), ...(e.splits.some(s => s.nights !== undefined) ? {nightRate: nightRate(e)} : {}),
+      return { ...e, ...expenseDetails(e),
         splitNames: e.splits.map(p => ({ ...p, name: nameOf(p.memberID) })),
         items: entryItems(e).map(i => ({ id: i.id, title: i.title, gross: i.gross, members: i.portions.filter(p => !i.open).map(p => nameOf(p.memberID)), shares: multipliers(e.bill?.items.find(item => item.id === i.id)?.shares), open: i.open, portions: i.portions })),
         comments: (await ledger<{comments:unknown[]}>(path + '/comments')).comments };

@@ -72,11 +72,12 @@ it('round-trips dates and counts through editing after settlement and undo', asy
 
 it('uses the existing membership-protected CLI and MCP paths for daily costs', async () => {
   await handle(request('/v1/groups', group), env, owner);
-  await operate('expenses_add', {
+  const added = await operate('expenses_add', {
     group: group.id, title: 'Airbnb', amount: '1094.62', payer: ids[0], mode: 'nights',
     participants: ids, values: ['3', '3', '3', '4'],
     spreadStart: '2026-11-12', spreadEnd: '2026-11-16',
   }, env, owner, handle);
+  expect(added).toMatchObject({splitMode: 'nights', nightRate: 8420});
   const args = {group: group.id, member: ids[3]};
   const costs = await operate('groups_daily', args, env, owner, handle);
   expect(costs).toMatchObject([{memberID: ids[3], days: [{day: '2026-11-15', amount: 8420}, {}, {}, {}]}]);

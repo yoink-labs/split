@@ -14,7 +14,8 @@ struct GroupsView: View {
     @State private var showArchived = false
 
     private var summaries: [GroupSummary] {
-        let all = store.dashboard.groups.filter { !$0.group.isFriend }
+        let all = Analytics.groupSummaries(groups: store.groups, entries: store.entries, userID: store.currentUserID)
+            .filter { !$0.group.isFriend }
         guard !query.trimmingCharacters(in: .whitespaces).isEmpty else { return all }
         return all.filter { $0.group.name.localizedCaseInsensitiveContains(query) || $0.group.members.contains { $0.name.localizedCaseInsensitiveContains(query) } }
     }

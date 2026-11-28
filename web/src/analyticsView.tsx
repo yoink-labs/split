@@ -265,7 +265,7 @@ export function GroupAnalytics({ g, entries, onInspect, inspectedID }: {
   );
 }
 
-function TimeChart({ data, grain, onGrain, format, active, onSelect }: {
+export function TimeChart({ data, grain, onGrain, format, active, onSelect }: {
   data: Analytics;
   grain: Granularity;
   onGrain: (grain: Granularity) => void;
@@ -395,7 +395,7 @@ function TimeChart({ data, grain, onGrain, format, active, onSelect }: {
   );
 }
 
-function CategoryChart({ data, format, active, onSelect }: {
+export function CategoryChart({ data, format, active, onSelect }: {
   data: Analytics;
   format: (amount: number) => string;
   active: string;

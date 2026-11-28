@@ -3,7 +3,6 @@ import { balanceLine } from "../../worker/src/ledger";
 import { GroupTypePicker } from "./tripFields";
 import { DiscoverySetting } from "./people";
 import { PaymentEditor, PaymentOptions, personPaymentMethods } from "./paymentMethods";
-import { PendingPayments } from "./settlements";
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { AVATAR_PRESETS } from "./categories";
@@ -21,180 +20,13 @@ import {
   money,
   settlementEntry,
   shortDate,
-  tripRangeText,
   type Expense,
-  type Group,
 } from "./data";
-import { fx, useHomeCurrency } from "./fx";
-import { memberBalances, useHomeMoney } from "./homeMoney";
-import { Avatar, AvatarStack, BalanceBadge, CategoryIcon, EmptyState, TIP_URL } from "./ui";
+import { useHomeCurrency } from "./fx";
+import { useHomeMoney } from "./homeMoney";
+import { Avatar, CategoryIcon, TIP_URL } from "./ui";
 
-export function HomeOverview() {
-  const { data, user } = useLedger();
-  const [target] = useHomeCurrency();
-  const homeMoney = useHomeMoney();
-  const activeGroups = data.groups.filter((group) => !group.archived);
-  const owed: Record<string, number> = {};
-  const owe: Record<string, number> = {};
-
-  for (const g of activeGroups) {
-    const me = g.members.find((p) => p.userID === user);
-    if (!me) continue;
-    const entries = data.entries.filter((e) => e.groupID === g.id);
-    for (const currency of new Set(entries.map((entry) => settlementEntry(entry).currency))) {
-      const amount = balances(entries, currency)[me.id] ?? 0;
-      if (amount > 0) owed[currency] = (owed[currency] ?? 0) + amount;
-      if (amount < 0) owe[currency] = (owe[currency] ?? 0) - amount;
-    }
-  }
-
-  const incoming = fx.total(owed, target);
-  const outgoing = fx.total(owe, target);
-  const incomingApproximate = Object.keys(owed).some((currency) => currency !== target);
-  const outgoingApproximate = Object.keys(owe).some((currency) => currency !== target);
-  const approximate = incomingApproximate || outgoingApproximate;
-  const missing = incoming.missing.length > 0 || outgoing.missing.length > 0;
-  const net = incoming.amount - outgoing.amount;
-  const formatBalance = (amount: number, estimate: boolean) =>
-    (estimate ? "≈ " : "") + money(amount, target);
-
-  const openReceipts = data.entries.filter(
-    (e) => e.bill && !e.bill.closed && e.bill.items.some((i) => !i.memberIDs.length),
-  );
-  const trips = activeGroups.filter((g) => g.kind === "trip");
-  const longTerm = activeGroups.filter((g) => g.kind !== "trip" && g.kind !== "friend");
-
-  const renderGroupCard = (g: Group) => {
-    const entries = data.entries.filter((e) => e.groupID === g.id);
-    const me = g.members.find((p) => p.userID === user);
-    const amounts = me ? memberBalances(entries, me.id) : {};
-    const bal = homeMoney.total(amounts);
-    const openCount = entries.filter((e) => e.bill && !e.bill.closed && e.bill.items.some((i) => !i.memberIDs.length)).length;
-    const range = g.kind === "trip" ? tripRangeText(g.startDate, g.endDate) : "";
-    const activeMembers = g.members.filter((m) => !m.removed);
-
-    return (
-      <Link key={g.id} to={`/g/${g.id}`} className="card card-pad" style={{ color: "var(--ink)", display: "flex", flexDirection: "column", gap: 12 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
-          <div style={{ minWidth: 0 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
-              <strong style={{ fontSize: 15.5 }}>{g.name}</strong>
-              <span className="tag mono">{g.currency}</span>
-            </div>
-            {range && <p className="muted" style={{ fontSize: 12, marginTop: 3 }}>{range}</p>}
-            {g.description && (
-              <p className="muted" style={{ fontSize: 12.5, marginTop: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {g.description}
-              </p>
-            )}
-          </div>
-          <BalanceBadge amount={bal.amount} currency={target} display={Object.values(amounts).some(Boolean) ? homeMoney.totalText(amounts, true) : undefined} positive="owed" negative="you owe" />
-        </div>
-
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: 10, borderTop: "1px solid var(--border)" }}>
-          <AvatarStack people={activeMembers} size={24} />
-          <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5 }}>
-            {openCount > 0 && <span className="tag tag-warn">{openCount} open receipt</span>}
-            <span className="muted num">Spent <b style={{ color: "var(--ink)" }}>{homeMoney.spend(entries)}</b></span>
-          </div>
-        </div>
-      </Link>
-    );
-  };
-
-  return (
-    <>
-      <div className="page-head">
-        <div>
-          <h1 className="page-title">Overview</h1>
-          <p className="page-sub">
-            All your trips, ongoing shared spaces, and pending receipt claims in one place.
-          </p>
-        </div>
-        <div className="head-actions">
-          <Link className="btn btn-sm" to="/import/splitwise">
-            Import Splitwise
-          </Link>
-          <Link className="btn btn-sm btn-primary" to="/new">
-            + New trip or group
-          </Link>
-        </div>
-      </div>
-
-      {!data.groups.length ? (
-        <EmptyState
-          title="No trips or groups yet"
-          message="Start a trip, set up an ongoing apartment ledger, join with a code, or import your existing groups from Splitwise for free."
-          action={{ label: "Create your first group", to: "/new" }}
-        />
-      ) : (
-        <div className="form-stack" style={{ gap: 22 }}>
-          <PendingPayments />
-          <div className="kpi-grid">
-            <div className="kpi">
-              <div className="kpi-label">Overall net balance</div>
-              <div className={"kpi-val " + (!missing && net < 0 ? "neg" : "")}>
-                {missing ? "Unavailable" : formatBalance(net, approximate)}
-              </div>
-              {approximate && (
-                <div className="kpi-sub">
-                  {missing
-                    ? "Some exchange rates are unavailable."
-                    : (fx.offline ? "Approximate · Using saved rates" : "Approximate · Available exchange rates")}
-                </div>
-              )}
-            </div>
-            <div className="kpi">
-              <div className="kpi-label">You’re owed</div>
-              <div className="kpi-val pos">
-                {incoming.missing.length ? "Unavailable" : formatBalance(incoming.amount, incomingApproximate)}
-              </div>
-            </div>
-            <div className="kpi">
-              <div className="kpi-label">You owe</div>
-              <div className="kpi-val neg">
-                {outgoing.missing.length ? "Unavailable" : formatBalance(outgoing.amount, outgoingApproximate)}
-              </div>
-            </div>
-            <div className="kpi">
-              <div className="kpi-label">Open receipts</div>
-              <div className={"kpi-val " + (openReceipts.length ? "warn" : "pos")}>
-                {openReceipts.length ? `${openReceipts.length} need claims` : "None open"}
-              </div>
-              <div className="kpi-sub">
-                {openReceipts[0] ? (
-                  <Link to={`/g/${openReceipts[0].groupID}?tab=receipts`}>Review {openReceipts[0].title} ›</Link>
-                ) : (
-                  "All itemized bills settled"
-                )}
-              </div>
-            </div>
-          </div>
-
-          {trips.length > 0 && (
-            <section>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-                <h2 style={{ fontSize: 15, fontWeight: 700 }}>Trips ({trips.length})</h2>
-                <Link to="/new?kind=trip" style={{ fontSize: 12.5, fontWeight: 600 }}>+ New trip</Link>
-              </div>
-              <div className="grid-2">{trips.map(renderGroupCard)}</div>
-            </section>
-          )}
-
-          {longTerm.length > 0 && (
-            <section>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-                <h2 style={{ fontSize: 15, fontWeight: 700 }}>Long-term & Home ({longTerm.length})</h2>
-                <Link to="/new?kind=home" style={{ fontSize: 12.5, fontWeight: 600 }}>+ New group</Link>
-              </div>
-              <div className="grid-2">{longTerm.map(renderGroupCard)}</div>
-            </section>
-          )}
-        </div>
-      )}
-    </>
-  );
-}
+export { HomeOverview } from "./homeDashboard";
 
 export function NewGroup() {
   const { user, userName, save } = useLedger();

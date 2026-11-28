@@ -44,6 +44,34 @@ final class AnalyticsTests: XCTestCase {
         }
     }
 
+    func testPersonalDashboardUsesActiveSeatsAndReconcilesAcrossGroups() {
+        let groups = ["home", "trip", "removed"].map { id in
+            ExpenseGroup(id: id, name: id, kind: "trip", currency: "USD", members: [
+                Person(id: id + "-me", groupID: id, userID: "viewer", name: "Me", removed: id == "removed"),
+                Person(id: id + "-other", groupID: id, userID: "friend", name: "Jordan"),
+            ])
+        }
+        let paid = LedgerEntry(id: "paid", groupID: "home", title: "Shop", amount: 401, currency: "USD", paidBy: "home-me",
+                               splits: [.init(memberID: "home-me", amount: 200), .init(memberID: "home-other", amount: 201)])
+        let shared = LedgerEntry(id: "shared", groupID: "trip", title: "Dinner", amount: 301, currency: "EUR", paidBy: "trip-other",
+                                 splits: [.init(memberID: "trip-me", amount: 150), .init(memberID: "trip-other", amount: 151)])
+        let unrelated = LedgerEntry(id: "unrelated", groupID: "trip", title: "Snack", amount: 100, currency: "EUR", paidBy: "trip-other",
+                                    splits: [.init(memberID: "trip-other", amount: 100)])
+        var inaccessible = paid
+        inaccessible.groupID = "removed"
+        inaccessible.paidBy = "removed-me"
+        inaccessible.splits = [.init(memberID: "removed-other", amount: 401)]
+        let dashboard = DashboardModel(groups: groups, entries: [paid, shared, unrelated, inaccessible], userID: "viewer")
+        XCTAssertEqual(Set(dashboard.groups.map(\.id)), Set(["home", "trip"]))
+        XCTAssertEqual(dashboard.owed, ["USD": 201])
+        XCTAssertEqual(dashboard.owe, ["EUR": 150])
+        XCTAssertEqual(dashboard.people.count, 1)
+        XCTAssertEqual(dashboard.people.first?.amounts, ["USD": 201, "EUR": -150])
+        XCTAssertEqual(dashboard.transfers["u:friend"]?.count, 2)
+        XCTAssertEqual(Set(dashboard.transactions.map(\.id)), Set(["paid", "shared"]))
+        XCTAssertEqual(dashboard.transactions.first { $0.id == "paid" }?.share, 200)
+    }
+
     func testDashboardKeepsIncomingAndOutgoingAmountsEvenWhenTheyOffset() {
         let totals = Analytics.balanceDirections([["USD": 1200, "EUR": -400], ["USD": -1200, "ARS": 2000]])
         XCTAssertEqual(totals.owed, ["USD": 1200, "ARS": 2000])

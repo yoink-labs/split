@@ -356,7 +356,7 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
       const updated=validateEntry(legacyOriginal!==b.original ? preserveStatementAmount(b.entry,canonical) : b.entry,ids,canonical.bill,{reconcileBill:true});
       if (updated.bill || old.bill) await requireActiveMember(env,saved.group_id,userID);
       replacement=updated;
-      if(updated.id!==revise[1] || updated.groupID!==saved.group_id || updated.createdAt!==old.createdAt || updated.kind!==old.kind || updated.refundOf!==old.refundOf)
+      if(updated.id!==revise[1] || updated.groupID!==saved.group_id || updated.kind!==old.kind || updated.refundOf!==old.refundOf)
         throw new InputError('Invalid edit.');
       guard=updated.kind==='refund' ? await refundGuard(env.DB,updated,aliases) : await refundedExpenseGuard(env.DB,updated,aliases);
       if(Boolean(updated.handled)!==Boolean(canonical.handled)) {

@@ -47,12 +47,30 @@ BEGIN
   LEFT JOIN split_profiles p ON p.user_id=c.actor;
 END;
 
--- The earlier charged-amount history contains no verified actor or reason.
-INSERT INTO change_history(group_id,timestamp,type,entity,expense,action,title,previous,current)
-SELECT e.group_id,h.changed_at,'expense',e.id,e.id,'edit',json_extract(e.payload,'$.title'),
-  json_object('chargedAmount',h.previous_amount,'chargedCurrency',h.previous_currency),
-  json_object('chargedAmount',h.charged_amount,'chargedCurrency',h.charged_currency)
-FROM charged_amount_history h JOIN entries e ON e.id=h.entry_id ORDER BY h.changed_at,h.id;
+-- Preserve legacy records that have their original timestamp and entity.
+-- Earlier charged-amount changes have no verified actor or reason.
+INSERT INTO change_history(group_id,actor,member,actor_name,timestamp,type,entity,expense,action,title,previous,current)
+SELECT * FROM (
+  SELECT e.group_id,NULL,NULL,NULL,h.changed_at,'expense',e.id,e.id,'edit',json_extract(e.payload,'$.title'),
+    json_object('chargedAmount',h.previous_amount,'chargedCurrency',h.previous_currency),
+    json_object('chargedAmount',h.charged_amount,'chargedCurrency',h.charged_currency)
+  FROM charged_amount_history h JOIN entries e ON e.id=h.entry_id
+  UNION ALL
+  SELECT l.group_id,l.actor,m.id,m.name,strftime('%Y-%m-%dT%H:%M:%fZ',l.created_at / 1000.0,'unixepoch'),
+    'member',l.member_id,NULL,'link',l.member_name,json_object('linkedAccount',NULL),json_object('linkedAccount',l.recipient)
+  FROM member_links l LEFT JOIN members m ON m.group_id=l.group_id AND m.user_id=l.actor
+  UNION ALL
+  SELECT e.group_id,c.combined_by,m.id,m.name,c.combined_at,'expense',e.id,e.id,'combine',json_extract(e.payload,'$.title'),
+    NULL,json_object('sources',json(c.sources))
+  FROM expense_combinations c JOIN entries e ON e.id=c.entry_id
+  LEFT JOIN members m ON m.group_id=e.group_id AND m.user_id=c.combined_by
+  UNION ALL
+  SELECT e.group_id,c.undone_by,m.id,m.name,c.undone_at,'expense',e.id,e.id,'undo-combine',json_extract(e.payload,'$.title'),
+    json_object('sources',json(c.sources)),NULL
+  FROM expense_combinations c JOIN entries e ON e.id=c.entry_id
+  LEFT JOIN members m ON m.group_id=e.group_id AND m.user_id=c.undone_by
+  WHERE c.undone_at IS NOT NULL
+) ORDER BY 5;
 
 CREATE TRIGGER history_entries_insert AFTER INSERT ON entries
 WHEN EXISTS (SELECT 1 FROM history_context)
@@ -153,17 +171,17 @@ BEGIN
   INSERT INTO history_event(group_id,type,entity,expense,action,title,previous,current)
   SELECT NEW.group_id, 'member', NEW.id, NULL, 'add', NEW.name,
     NULL,
-    json_object('name',NEW.name,'linked',NEW.user_id IS NOT NULL,'removedAt',NEW.removed_at);
+    json_object('name',NEW.name,'linkedAccount',NEW.user_id,'removedAt',NEW.removed_at);
 END;
 
 CREATE TRIGGER history_members_update AFTER UPDATE ON members
 WHEN EXISTS (SELECT 1 FROM history_context)
-  AND json_object('name',OLD.name,'linked',OLD.user_id IS NOT NULL,'removedAt',OLD.removed_at) IS NOT json_object('name',NEW.name,'linked',NEW.user_id IS NOT NULL,'removedAt',NEW.removed_at)
+  AND json_object('name',OLD.name,'linkedAccount',OLD.user_id,'removedAt',OLD.removed_at) IS NOT json_object('name',NEW.name,'linkedAccount',NEW.user_id,'removedAt',NEW.removed_at)
 BEGIN
   INSERT INTO history_event(group_id,type,entity,expense,action,title,previous,current)
   SELECT NEW.group_id, 'member', NEW.id, NULL, CASE WHEN OLD.user_id IS NOT NEW.user_id THEN 'link' WHEN NEW.removed_at IS NOT NULL THEN 'remove' WHEN OLD.removed_at IS NOT NULL THEN 'restore' ELSE 'rename' END, NEW.name,
-    json_object('name',OLD.name,'linked',OLD.user_id IS NOT NULL,'removedAt',OLD.removed_at),
-    json_object('name',NEW.name,'linked',NEW.user_id IS NOT NULL,'removedAt',NEW.removed_at);
+    json_object('name',OLD.name,'linkedAccount',OLD.user_id,'removedAt',OLD.removed_at),
+    json_object('name',NEW.name,'linkedAccount',NEW.user_id,'removedAt',NEW.removed_at);
 END;
 
 CREATE TRIGGER history_members_delete BEFORE DELETE ON members
@@ -171,7 +189,7 @@ WHEN EXISTS (SELECT 1 FROM history_context)
 BEGIN
   INSERT INTO history_event(group_id,type,entity,expense,action,title,previous,current)
   SELECT OLD.group_id, 'member', OLD.id, NULL, 'remove', OLD.name,
-    json_object('name',OLD.name,'linked',OLD.user_id IS NOT NULL,'removedAt',OLD.removed_at),
+    json_object('name',OLD.name,'linkedAccount',OLD.user_id,'removedAt',OLD.removed_at),
     NULL;
 END;
 
@@ -348,7 +366,8 @@ CREATE TRIGGER history_inbox_receipts_delete AFTER DELETE ON inbox_receipts
 WHEN EXISTS (SELECT 1 FROM history_context)
 BEGIN
   INSERT INTO history_event(group_id,type,entity,expense,action,title,previous,current)
-  SELECT OLD.group_id, 'receipt', OLD.id, NULL, 'delete', OLD.note,
+  SELECT OLD.group_id, 'receipt', OLD.id, NULL,
+    CASE WHEN (SELECT action FROM history_context)='pair' THEN 'pair' ELSE 'delete' END, OLD.note,
     json_object('note',OLD.note,'uploadedBy',OLD.uploaded_by),
     NULL;
 END;
@@ -376,4 +395,28 @@ BEGIN
   SELECT e.group_id,'expense',e.id,e.id,'undo-combine',json_extract(e.payload,'$.title'),
     json_set(e.payload,'$.sources',json(OLD.sources)),NULL
   FROM entries e WHERE e.id=NEW.entry_id;
+END;
+
+
+CREATE TRIGGER history_group_payment_insert AFTER INSERT ON payment_profiles
+WHEN EXISTS (SELECT 1 FROM history_context)
+BEGIN
+  INSERT INTO history_event(group_id,type,entity,action,title,current)
+  SELECT m.group_id,'member',m.id,'payment-methods',m.name,json_object('paymentMethods','Configured')
+  FROM members m WHERE m.id=NEW.member_id;
+END;
+CREATE TRIGGER history_group_payment_update AFTER UPDATE OF details ON payment_profiles
+WHEN OLD.details IS NOT NEW.details AND EXISTS (SELECT 1 FROM history_context)
+BEGIN
+  INSERT INTO history_event(group_id,type,entity,action,title,previous,current)
+  SELECT m.group_id,'member',m.id,'payment-methods',m.name,
+    json_object('paymentMethods','Previously configured'),json_object('paymentMethods','Configured')
+  FROM members m WHERE m.id=NEW.member_id;
+END;
+CREATE TRIGGER history_group_payment_delete AFTER DELETE ON payment_profiles
+WHEN EXISTS (SELECT 1 FROM history_context)
+BEGIN
+  INSERT INTO history_event(group_id,type,entity,action,title,previous)
+  SELECT m.group_id,'member',m.id,'payment-methods',m.name,json_object('paymentMethods','Previously configured')
+  FROM members m WHERE m.id=OLD.member_id;
 END;

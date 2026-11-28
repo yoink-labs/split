@@ -22,7 +22,7 @@ const actions: Record<string, string> = {
   decline: "declined", cancel: "canceled", combine: "combined", "undo-combine": "undid the combination of",
   close: "closed", reopen: "reopened", claim: "changed the claims on", unclaim: "unclaimed items on",
   pair: "paired", move: "moved", detach: "detached", schedule: "updated the schedule for",
-  recurring: "recorded", resolve: "resolved",
+  recurring: "recorded", resolve: "resolved", "payment-methods": "updated group payment methods for",
 };
 const labels: Record<string, string> = {
   paidBy: "payer", splits: "shares", createdAt: "date", chargedAmount: "charged amount",
@@ -41,10 +41,11 @@ function format(field: string, side: "before" | "after", event: Event, group: Gr
     return money(value, code);
   }
   if (field === "paidBy" || field === "canonicalMember") return name(String(value));
+  if (field === "linkedAccount") return group.members.find(member => member.userID === value)?.name ?? "Linked account";
   if (field === "createdAt") return String(value).slice(0,10);
   if (field === "participants") return (value as string[]).map(name).join(", ");
   if (field === "splits" || field === "payers") {
-    return (value as { memberID: string; amount: number }[]).map(p => name(p.memberID) + " " + money(p.amount, currency)).join(", ");
+    return (value as { memberID: string; amount: number; nights?: number }[]).map(p => name(p.memberID) + " " + money(p.amount, currency) + (p.nights === undefined ? "" : " (" + p.nights + " nights)")).join(", ");
   }
   if (field === "bill") {
     const bill = value as { closed: boolean; tax: number; tip: number; items: {title: string; amount: number; memberIDs: string[]; shares?: Record<string, number>}[] };

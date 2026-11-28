@@ -136,7 +136,7 @@ function makeExpense(a: Args, group: Group, old?: Entry): Entry {
     splits = participants.map((memberID,i) => ({ memberID, amount: portions[i], ...(nights ? { nights: nights[i] } : {}), ...(stays[i] ? {stay: stays[i]} : {}) }));
   }
   const date = optionalDay(a.date, 'expense date');
-  const createdAt = old?.createdAt ?? (date ? date + 'T12:00:00Z' : timestamp());
+  const createdAt = date && date !== old?.createdAt.slice(0,10) ? date + 'T12:00:00Z' : old?.createdAt ?? timestamp();
   const currency = a.currency ?? old?.currency ?? group.currency;
   const previous = currency === old?.currency ? old.exchange : undefined;
   const clearing = a.chargedAmount === 'none';
@@ -537,7 +537,7 @@ export async function operate(name: string, input: unknown, env: Env, user: stri
     if (!before) throw new HTTPError(404,'Your expense was not found.');
     if (before.kind === 'settlement' || (before.kind === 'refund' && name === 'expenses_edit')) throw new InputError(before.kind === 'refund' ? 'Delete the refund and record it again to change it.' : 'Select an expense.');
     const after = name === 'expenses_edit' ? makeExpense(a, group, before) : null;
-    const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify([name,before,after])));
+    const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify([name,before,after,a.reason ?? null])));
     const revision = Array.from(new Uint8Array(bytes), b => b.toString(16).padStart(2,'0')).join('');
     if (!a.yes) {
       // These fields are stored outside the editable entry payload.

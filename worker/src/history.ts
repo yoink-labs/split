@@ -71,7 +71,9 @@ function fieldsOf(payload: string | null): Record<string, unknown> {
     delete fields.id;
     delete fields.groupID;
     delete fields.kind;
-    fields.participants = fields.splits.map((split: { memberID: string }) => split.memberID);
+    const splits = fields.splits as { memberID: string; nights?: number }[];
+    fields.participants = splits.map(split => split.memberID);
+    if (splits.some(split => split.nights !== undefined)) fields.splitMode = 'nights';
     fields.chargedAmount = fields.exchange?.statementAmount ?? null;
     fields.chargedCurrency = fields.chargedAmount === null ? null : fields.exchange?.target;
   }
@@ -85,6 +87,12 @@ export async function readHistory(db: D1Database, group: string, user: string, q
     const value = query.get(key);
     if (value === null) continue;
     if (key === 'type' ? !['expense','refund','credit','settlement','receipt','member','group'].includes(value) : !validID(value)) throw new InputError('Invalid history filter.');
+    if (key === 'member') {
+      where.push(`(member=? OR (member IS NULL AND actor=(SELECT user_id FROM members
+        WHERE id=? AND group_id=change_history.group_id)))`);
+      args.push(value,value);
+      continue;
+    }
     where.push(key === 'type' && value === 'receipt'
       ? "(type=? OR (type='expense' AND json_extract(previous,'$.bill') IS NOT json_extract(current,'$.bill')))"
       : key + '=?');

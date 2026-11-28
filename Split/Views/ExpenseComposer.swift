@@ -82,7 +82,7 @@ struct AddExpenseView: View {
     }
     private var showExchange: Bool { !currency.isEmpty && currency != settlementCurrency }
     private var quoteDate: String {
-        original.map { String($0.createdAt.prefix(10)) } ?? Exchange.localDay(purchaseDate)
+        Exchange.localDay(purchaseDate)
     }
     private var people: [String] {
         let available = availableMembers.map(\.id)
@@ -402,13 +402,7 @@ struct AddExpenseView: View {
                 Divider()
                 DatePicker("Date", selection: $purchaseDate, in: ...Date(), displayedComponents: .date)
                     .font(.subheadline.weight(.medium))
-                    .disabled(original != nil)
                     .accessibilityLabel("Expense date")
-                if original != nil {
-                    Text("The original date is kept when you edit an expense.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
                 Divider()
                 Toggle(isOn: $handled.animation(.snappy)) {
                     VStack(alignment: .leading, spacing: 3) {
@@ -1261,7 +1255,8 @@ struct AddExpenseView: View {
         }
 
         let created: String
-        if let original {
+        if let original, let previous = ISO8601DateFormatter().date(from: original.createdAt),
+           Calendar.current.isDate(previous, inSameDayAs: purchaseDate) {
             created = original.createdAt
         } else if currency != settlementCurrency {
             created = quoteDate + "T12:00:00Z"

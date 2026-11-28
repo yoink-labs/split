@@ -25,7 +25,8 @@ it('records authorized edits atomically, keeps cents exact, and exposes a read-o
   expect((await call('/v1/groups', { id: groupID, name: 'Trip', kind: 'trip', currency: 'USD',
     members: [{ id: memberID, name: 'Amine', userID: actor }] })).status).toBe(201);
   await call('/v1/entries', entry);
-  const updated = { ...entry, amount: 81_000, splits: [{ memberID, amount: 81_000 }] };
+  const updated = { ...entry, amount: 81_000, createdAt: '2026-09-02T12:00:00Z', splitMode: 'nights',
+    splits: [{ memberID, amount: 81_000, nights: 2 }] };
   const edit = { original: entry, entry: updated, reason: ' partial refund ', actor: 'forged' };
   await call(entryPath + '/edit', edit);
   await call(entryPath + '/edit', edit); // Idempotent retry.
@@ -39,18 +40,31 @@ it('records authorized edits atomically, keeps cents exact, and exposes a read-o
   expect(next).toBeNull();
   expect(events[0]).toMatchObject({
     actor, member: memberID, actorName: 'Amine', entity: entry.id, expense: entry.id,
-    reason: 'partial refund', changes: { amount: { before: 90_000, after: 81_000 } },
+    reason: 'partial refund', changes: {
+      amount: { before: 90_000, after: 81_000 },
+      createdAt: { before: entry.createdAt, after: updated.createdAt },
+      splitMode: { before: 'equal', after: 'nights' },
+      splits: { after: [{ memberID, amount: 81_000, nights: 2 }] },
+    },
   });
   expect(events[0].timestamp).toEqual(expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/));
   await expect(call(timeline, undefined, 'other-account-history')).rejects.toMatchObject({ status: 403 });
   for (const method of ['POST','PATCH','PUT','DELETE']) {
     await expect(call(history, undefined, actor, method)).rejects.toMatchObject({ status: 405 });
   }
+  const day = String(events[0].timestamp).slice(0,10);
+  const dated = await (await call(timeline + '&from=' + day + '&to=' + day)).json<{events:unknown[]}>();
+  expect(dated.events).toHaveLength(2);
+  const beforeTracking = await (await call(timeline + '&to=2000-01-01')).json<{events:unknown[]}>();
+  expect(beforeTracking.events).toHaveLength(0);
   const id = events[0].id;
   await expect(env.DB.prepare('UPDATE change_history SET reason=? WHERE id=?').bind('forged',id).run())
     .rejects.toThrow('append-only');
   await expect(env.DB.prepare('DELETE FROM change_history WHERE id=?').bind(id).run())
     .rejects.toThrow('append-only');
+
+  await expect(env.DB.prepare(`INSERT OR REPLACE INTO change_history
+    SELECT * FROM change_history WHERE id=?`).bind(id).run()).rejects.toThrow('append-only');
 
   await call(entryPath + '/delete', { original: updated, reason: 'Duplicate' });
   await expect(call(entryPath + '/restore', {}, 'other-account-history')).rejects.toMatchObject({ status: 404 });

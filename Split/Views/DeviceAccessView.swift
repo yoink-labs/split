@@ -6,16 +6,20 @@ private struct ConnectedComputer: Decodable, Identifiable {
     let last_used: Double?
     let scope: String?
     let is_remote: Int?
+    let capabilities: [String]?
 
     /// The web's access label, so you know what a token can reach before revoking it.
     var access: String {
-        scope == "finance" ? "Finance (read-only)" : is_remote == 1 ? "Remote MCP token" : "CLI & local MCP"
+        scope == "finance"
+            ? (capabilities?.contains("charges:write") == true ? "Finance (reads expenses, updates card charges)" : "Finance (read-only)")
+            : is_remote == 1 ? "Remote MCP token" : "CLI & local MCP"
     }
 }
 
 private struct ComputerReview: Decodable {
     let name: String
     let scope: String?
+    let capabilities: [String]?
 }
 
 struct DeviceAccessView: View {
@@ -54,7 +58,9 @@ struct DeviceAccessView: View {
                     .accessibilityIdentifier("device-code")
                     .onChange(of: code) { review = nil }
                 if let review {
-                    if review.scope == "finance" {
+                    if review.scope == "finance", review.capabilities?.contains("charges:write") == true {
+                        Text("Allow Finance to view your shares, payments, and receipts, and to set the amount your card actually charged on foreign expenses you recorded and paid? Everyone’s converted shares follow that amount, and each change is kept in the expense’s charged amount history.")
+                    } else if review.scope == "finance" {
                         Text("Allow Finance to view your shares, payments, and receipts?")
                     } else {
                         Text("Allow \(review.name) to read and change your Split groups and expenses?")

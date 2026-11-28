@@ -549,7 +549,7 @@ export default {
    if (device) userID = device.user_id;
    else try{const {payload}=await jwtVerify(token,jwks,{issuer:env.CLERK_ISSUER,algorithms:['RS256'],requiredClaims:['exp','sub','iat']});if(!payload.sub || !validParty(payload.azp, env.WEB_URL))throw 0;userID=payload.sub;}catch{throw new HTTPError(401,'Your session expired. Sign in again.');}
    if (url.pathname.startsWith('/v1/device/')) return await manageDevices(request, env, userID, device?.id);
-   if (device?.scope === 'finance') return await financeRoute(request, env, userID, handle);
+   if (device?.scope === 'finance') return await financeRoute(request, env, userID, handle, device);
    if (url.pathname === '/mcp' || url.pathname === '/v1/cli') {
      if (!device) throw new HTTPError(403, 'Sign in with a Split device token.');
      if (device.is_remote && url.pathname === '/v1/cli') throw new HTTPError(403, 'Use the MCP endpoint with a remote token.');

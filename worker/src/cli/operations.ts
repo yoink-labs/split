@@ -25,7 +25,7 @@ interface Args {
   text?: string; comment?: string; avatar?: string;
   csv?: string; file?: string; me?: string; mapping?: Record<string,string>;
   photos?: string[]; items?: string[]; expenses?: string[];
-  from: string; to: string; category?:string; item:string; photo:string; action?:string; mode?: 'equal'|'exact'|'percent'|'shares'|'nights'|'adjustment'|'archive'|'restore'|'delete'; participants?: string[]; values?: string[];
+  from: string; to: string; category?:string; item:string; photo:string; action?:string; mode?: 'equal'|'exact'|'percent'|'shares'|'nights'|'adjustment'|'archive'|'restore'|'delete'; participants?: string[]; add?: string[]; remove?: string[]; values?: string[];
   yes?: boolean; revision?: string; preview?: boolean; settlement?: string; state?: 'handled'|'unhandled'|'pending'|'confirmed'; reset?: boolean;
   disputeReply?: string;
   pending?: boolean; pendingNote?: string; receiver?: string; note?: string;
@@ -587,6 +587,8 @@ export async function operate(name: string, input: unknown, env: Env, user: stri
     const e=entries.find(e=>e.id===a.expense);
     if(!e) throw new HTTPError(404,'Expense not found.');
     const path='/v1/entries/'+e.id;
+    if(name==='receipts_reopen') return ledger(path+'/reopen',{});
+    if(name==='receipts_people') return ledger(path+'/receipt-people',{add:a.add??[],remove:a.remove??[]});
     if(name==='receipts_list') return e.receiptIDs??[];
     if(name==='items_list') {
       return {expense:e.id,title:e.title,currency:e.currency,payer:e.paidBy,closed:e.bill?.closed ?? true,tax:e.bill?.tax ?? 0,tip:e.bill?.tip ?? 0,receiptIDs:e.receiptIDs??[],

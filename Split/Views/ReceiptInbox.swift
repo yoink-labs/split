@@ -20,6 +20,7 @@ struct ReceiptInboxSection: View {
     @State private var error: String?
 
     private var me: Person? { Analytics.me(in: group, userID: session.userID) }
+    private var canPair: Bool { store.isDemo || me.map { $0.removed != true } == true }
     private var visible: [InboxReceipt] {
         search.isEmpty ? receipts : receipts.filter { ($0.note ?? "").localizedStandardContains(search) || uploader($0).localizedStandardContains(search) }
     }
@@ -55,7 +56,7 @@ struct ReceiptInboxSection: View {
     }
 
     private func row(_ receipt: InboxReceipt) -> some View {
-        HStack(spacing: 12) {
+        HStack(alignment: .top, spacing: 12) {
             InboxThumbnail(groupID: group.id, id: receipt.id) { image in
                 gallery = ReceiptPresentation(images: [image], index: 0)
             }
@@ -67,16 +68,18 @@ struct ReceiptInboxSection: View {
                 Text([uploader(receipt), receipt.date?.formatted(date: .abbreviated, time: .shortened)].compactMap { $0 }.joined(separator: " · "))
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                if canPair {
+                    Button("Pair with expense", systemImage: "link") { pairing = receipt }
+                        .buttonStyle(GhostButton())
+                        .disabled(working == receipt.id)
+                }
             }
-            Spacer(minLength: 8)
+            Spacer(minLength: 0)
             if working == receipt.id {
                 ProgressView().frame(width: 44, height: 44)
-            } else {
+            } else if canPair && receipt.uploadedBy == me?.id {
                 Menu {
-                    Button { pairing = receipt } label: { Label("Add to expense…", systemImage: "arrow.right.doc.on.clipboard") }
-                    if receipt.uploadedBy == me?.id {
-                        Button(role: .destructive) { deleting = receipt } label: { Label("Delete", systemImage: "trash") }
-                    }
+                    Button("Delete", systemImage: "trash", role: .destructive) { deleting = receipt }
                 } label: {
                     Image(systemName: "ellipsis.circle")
                         .font(.system(size: 20))

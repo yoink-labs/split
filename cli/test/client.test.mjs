@@ -27,9 +27,10 @@ test('credentials are private, origin-bound and forgotten independently of env o
   assert.throws(()=>apiOrigin('https://user@example.test'));
   assert.equal(apiOrigin('http://127.0.0.1:3000/'),'http://127.0.0.1:3000');
 });
-test('offline version, help and per-command flags work through the installed launcher', () => {
+test('offline version, help and per-command flags work through the installed launcher', async () => {
   const run = args => spawnSync(fileURLToPath(new URL('../bin/split',import.meta.url)),args,{encoding:'utf8'});
-  assert.equal(run(['--version']).stdout.trim(),'split 0.3.0');
+  const version = JSON.parse(await readFile(new URL('../release/version.json', import.meta.url), 'utf8'));
+  assert.equal(run(['--version']).stdout.trim(),`split ${version}`);
   assert.match(run(['--help']).stdout,/members lookup/);
   assert.match(run(['--help']).stdout,/github\.com\/yoink-labs\/split/);
   assert.match(run(['expenses','edit','--help']).stdout,/--revision/);
@@ -38,16 +39,26 @@ test('offline version, help and per-command flags work through the installed lau
   assert.match(run(['groups','create','--placeholders','nonsense','--json']).stderr,/JSON array/);
   assert.equal(run(['groups','list','--unknown']).status,1);
 });
-test('the release archive and npm package include every module the CLI imports', async () => {
+test('the release archive contains every CLI module and reports its automatic release version', async t => {
   const { readdir } = await import('node:fs/promises');
   const root = fileURLToPath(new URL('..', import.meta.url));
-  const script = await readFile(join(root, 'release/package.sh'), 'utf8');
   const pkg = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
-  const version = JSON.parse(await readFile(join(root, 'release/version.json'), 'utf8'));
-  assert.equal(pkg.version, version);
-  for (const file of ['split.mjs', ...(await readdir(join(root, 'lib'))).map(f => 'lib/' + f)]) {
-    assert.match(script, new RegExp('cli/' + file.replace('.', '\\.')), file + ' is missing from package.sh');
+  const declared = JSON.parse(await readFile(join(root, 'release/version.json'), 'utf8'));
+  assert.equal(pkg.version, declared);
+
+  const [major, minor, patch] = declared.split('.').map(Number);
+  const version = `${major}.${minor}.${patch + 1}`;
+  const dir = await mkdtemp(join(tmpdir(), 'split-cli-archive-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const run = promisify(execFile);
+  await run('bash', ['cli/release/package.sh', `split-v${version}`, dir], { cwd: join(root, '..') });
+  await run('tar', ['-xzf', join(dir, `split-${version}.tar.gz`), '-C', dir]);
+  const archived = join(dir, `split-${version}`, 'cli');
+  for (const file of (await readdir(join(root, 'lib'))).filter(file => file.endsWith('.mjs'))) {
+    assert.ok((await stat(join(archived, 'lib', file))).isFile());
   }
+  const { stdout } = await run(join(archived, 'bin', 'split'), ['--version']);
+  assert.equal(stdout.trim(), `split ${version}`);
 });
 test('photo paths become receipt JPEGs and base64 passes through untouched', async () => {
   const { resolvePhotos } = await import('../lib/photos.mjs');

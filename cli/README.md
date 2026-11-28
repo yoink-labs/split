@@ -190,7 +190,9 @@ Choose one transport per server entry. The Worker handles each request independe
 
 From a checkout use `cli/bin/split`. The launcher lives under `cli/bin` so it can coexist with the `Split/` app directory on case-insensitive macOS volumes.
 
-Update `cli/release/version.json` and `cli/package.json`, then merge to main. The release workflow tags the merge commit `split-vX.Y.Z`, builds an allowlisted tarball, publishes it in both repositories and updates the public formula with its SHA-256. Configure the Split repository Actions secret `HOMEBREW_TAP_TOKEN` with Contents write access scoped to `yoink-labs/homebrew-tap`. The workflow can be rerun for an existing tag and verifies any previously uploaded asset byte for byte.
+Changes to the CLI or its package on `main` trigger a patch release after the CLI tests pass. The workflow tags the source commit, embeds that version in the tarball, publishes it to Split and the Homebrew tap, and updates the formula with its SHA-256. For a planned minor or major release, set the matching version in `cli/release/version.json` and `cli/package.json` before merging.
+
+The Split repository Actions secret `HOMEBREW_TAP_TOKEN` grants Contents write access to `yoink-labs/homebrew-tap`. To retry publishing a release, run **Release Split CLI** with its existing `split-vX.Y.Z` tag. The workflow verifies previously uploaded assets byte for byte and keeps the newest Homebrew formula in place.
 
 ```sh
 node --test cli/test/*.test.mjs

@@ -76,7 +76,7 @@ it('emails a claim link to the selected address and requires current verified ow
     expect(init?.headers).toMatchObject({ Authorization: 'Bearer mock-resend', 'Idempotency-Key': expect.any(String) });
     const send = JSON.parse(String(init?.body));
     expect(send.to).toEqual([address]);
-    const token = send.text.split('/join/').at(-1);
+    const token = send.text.match(/\/join\/(\w+)/)[1];
     expect(token).toMatch(/^[A-HJ-NP-Z2-9]{12}$/);
     expect((await invitations())[0]).toMatchObject({ memberID: seat, recipientEmail: address });
     expect(JSON.stringify(await invitations())).not.toContain(token);
@@ -125,7 +125,7 @@ it('resends to the original recipient, preserves the old invite on rejection, an
     expect(updated.id).not.toBe(original.id);
     expect(await invitations()).toHaveLength(1);
     await call(groupPath + '/invites/' + updated.id + '/revoke', {});
-    await expect(call('/v1/join', { token: outgoing.text.split('/join/').at(-1) }, guest)).rejects.toMatchObject({ status: 404 });
+    await expect(call('/v1/join', { token: outgoing.text.match(/\/join\/(\w+)/)[1] }, guest)).rejects.toMatchObject({ status: 404 });
   } finally { fetch.mockRestore(); }
 });
 

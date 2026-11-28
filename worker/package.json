@@ -10,7 +10,8 @@
     "test": "vitest run",
     "types": "wrangler types",
     "db:local": "wrangler d1 migrations apply split --local",
-    "db:remote": "wrangler d1 migrations apply split --remote"
+    "db:remote": "wrangler d1 migrations apply split --remote",
+    "email:preview": "node scripts/email-preview.ts"
   },
   "dependencies": {
     "@cfworker/json-schema": "^4.1.6",

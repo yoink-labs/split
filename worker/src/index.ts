@@ -10,10 +10,12 @@ import { deviceRoute, deviceIdentity, manageDevices } from './cli/devices';
 import { cliRoute } from './cli/routes';
 import { financeRoute } from './finance';
 import { createRemoteJWKSet, jwtVerify } from 'jose';
-import { currencies, entryPayers, InputError, validID, validateEntry } from './ledger';
+import { currencies, entryPayers, InputError, validID, validateEntry, type Entry } from './ledger';
 import { importSplitwise } from './splitwiseImport';
 import { groupAliases, hasRefunds, pendingRoute, refundedExpenseGuard, refundGuard } from './refunds';
 import { pendingSettlements, recordSettlement, respondToSettlement } from './settlements';
+import { deliverDigests, emailGroupInvite, emailLinkRoute, notifyActivity, preferencesRoute, type ActivityEvent } from './notifications';
+import { renderSignInReminder } from './emailTemplate';
 const jwks = createRemoteJWKSet(new URL('https://clerk.yoinklabs.dev/.well-known/jwks.json'));
 interface Member {id:string; groupID:string; userID:string|null; name:string; email?:string; phone?:string; payment?:string; accountPayment?:string; viewerRemoved?:string|null; removedAt?:string|null; avatarURL?:string|null}
 export function validParty(azp: unknown, webOrigin: string) {
@@ -41,6 +43,25 @@ async function member(env:Env,groupID:string,userID:string) {
   if(!row) throw new HTTPError(403,'You are not a member of this group.');
 }
 async function members(env:Env,groupID:string):Promise<Member[]> {return (await env.DB.prepare('SELECT id, group_id AS groupID, user_id AS userID, name FROM members WHERE group_id=? ORDER BY id').bind(groupID).all<Member>()).results;}
+/** Who hears about a new entry: refunds and credits tell the people credited; expenses tell everyone who shares or paid. */
+function entryActivity(e:Entry,userID:string,kind:'expenses'|'pendingResolved'='expenses'):ActivityEvent {
+  const base={groupID:e.groupID,actorUserID:userID,title:e.title,amount:e.amount,currency:e.currency};
+  if(e.kind==='refund') return {...base,kind:kind==='pendingResolved'?kind:'credits',refID:e.id+(kind==='pendingResolved'?':resolved:'+e.amount:''),
+    recipients:e.splits.filter(s=>s.amount>0 && s.memberID!==e.paidBy).map(s=>({memberID:s.memberID,share:s.amount,variant:e.refundOf?'refund':'credit'}))};
+  return {...base,kind,refID:kind==='pendingResolved'?e.id+':resolved:'+e.amount:e.id,
+    recipients:[...e.splits.filter(s=>s.amount>0).map(s=>({memberID:s.memberID,share:s.amount})),
+      ...entryPayers(e).map(p=>({memberID:p.memberID,share:0}))]};
+}
+/** After a pending entry is confirmed, adjusted or turned into a refund. */
+async function notifyResolved(env:Env,id:string,userID:string) {
+  const rows=(await env.DB.prepare(`SELECT payload FROM entries WHERE (id=? OR (json_extract(payload,'$.refundOf')=? AND author=?))
+    AND id NOT IN (SELECT entry_id FROM deleted_entries)`).bind(id,id,userID).all<{payload:string}>()).results.map(r=>JSON.parse(r.payload) as Entry);
+  const entry=rows.find(e=>e.id===id);
+  if(!entry || entry.pending) return;
+  await notifyActivity(env,entryActivity(entry,userID,'pendingResolved'));
+  // A refund recorded while resolving is a credit to the people it pays back.
+  for(const refund of rows.filter(e=>e.id!==id && e.kind==='refund')) await notifyActivity(env,entryActivity(refund,userID));
+}
 export async function handle(request:Request,env:Env,userID:string):Promise<Response> {
   const url=new URL(request.url), path=url.pathname;
   const extra=await groupTools(request,env,userID);
@@ -50,7 +71,13 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
   const social=await socialRoute(request,env,userID);
   if(social) return social;
   const pending=await pendingRoute(request,env,userID);
-  if(pending) return pending;
+  if(pending) {
+    const resolved=path.match(/^\/v1\/entries\/([\w-]+)\/resolve$/);
+    if(resolved && pending.ok) await notifyResolved(env,resolved[1],userID);
+    return pending;
+  }
+  const preferences=await preferencesRoute(request,env,userID);
+  if(preferences) return preferences;
   if(path==='/v1/profile/payment-methods' && request.method==='POST')
     return saveAccountPayments(request,env.DB,userID);
   if(path==='/v1/snapshot' && request.method==='GET') {
@@ -175,7 +202,18 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
   const settlementResponse=path.match(/^\/v1\/settlements\/([\w-]+)\/(approve|decline|cancel)$/);
   if(settlementResponse && request.method==='POST') {
     const [,id,action]=settlementResponse;
-    if(action==='approve' || action==='decline' || action==='cancel') return respondToSettlement(env.DB,id,action,userID);
+    if(action==='approve' || action==='decline' || action==='cancel') {
+      const response=await respondToSettlement(env.DB,id,action,userID);
+      if(action!=='cancel') {
+        const row=await env.DB.prepare('SELECT group_id,payer_id,payload FROM settlement_requests WHERE id=?').bind(id).first<{group_id:string;payer_id:string;payload:string}>();
+        if(row) {
+          const e=JSON.parse(row.payload);
+          await notifyActivity(env,{groupID:row.group_id,kind:'payments',refID:id+':'+action,actorUserID:userID,
+            recipients:[{memberID:row.payer_id,variant:action==='approve'?'confirmed':'declined'}],amount:e.amount,currency:e.currency});
+        }
+      }
+      return response;
+    }
   }
   if((path==='/v1/entries' || path==='/v1/settlements') && request.method==='POST') {
     const b=await body(request,1_650_000); if(!validID(b.groupID)) throw new InputError('Invalid group.');
@@ -186,16 +224,26 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
     if(e.exchange && e.exchange.target!==await env.DB.prepare('SELECT currency FROM groups WHERE id=?').bind(e.groupID).first('currency')) throw new InputError('Use the group settlement currency.');
     if(e.kind==='settlement') {
       if(b.photos!==undefined) throw new InputError('Attach receipt photos to an expense.');
-      return recordSettlement(env.DB,e,userID);
+      const response=await recordSettlement(env.DB,e,userID);
+      const {status}=await response.clone().json<{status:string}>();
+      const payer=await env.DB.prepare('SELECT user_id FROM members WHERE id=? AND group_id=?').bind(e.paidBy,e.groupID).first<string>('user_id');
+      const recipient=e.splits[0].memberID, recordedByPayer=payer===userID;
+      // A pending payment asks the recipient to confirm it; a confirmed one tells the other side.
+      await notifyActivity(env,status==='pending'
+        ? {groupID:e.groupID,kind:'settleRequests',refID:e.id,actorUserID:userID,recipients:[{memberID:recipient}],amount:e.amount,currency:e.currency}
+        : {groupID:e.groupID,kind:'payments',refID:e.id,actorUserID:userID,amount:e.amount,currency:e.currency,
+          recipients:[recordedByPayer?{memberID:recipient,variant:'paidYou'}:{memberID:e.paidBy,variant:'receivedYours'}]});
+      return response;
     }
     const prior=e.kind==='refund' && e.refundOf ? await env.DB.prepare('SELECT author,payload FROM entries WHERE id=?').bind(e.id).first<{author:string;payload:string}>() : null;
     if(prior?.author===userID && prior.payload===payload) return json({ok:true});
     const guard=prior ? undefined : await refundGuard(env.DB,e,await groupAliases(env.DB,e.groupID));
     // Reserve pending payment IDs so approval can never collide with an expense.
-    await env.DB.batch([env.DB.prepare(`INSERT INTO entries SELECT ?,?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM settlement_requests WHERE id=?)${guard?' AND '+guard.sql:''} ON CONFLICT(id) DO NOTHING`).bind(e.id,e.groupID,userID,payload,new Date().toISOString(),e.id,...(guard?.binds??[])), ...attachments(env.DB,e,userID,payload,b.photos)]);
+    const [inserted]=await env.DB.batch([env.DB.prepare(`INSERT INTO entries SELECT ?,?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM settlement_requests WHERE id=?)${guard?' AND '+guard.sql:''} ON CONFLICT(id) DO NOTHING`).bind(e.id,e.groupID,userID,payload,new Date().toISOString(),e.id,...(guard?.binds??[])), ...attachments(env.DB,e,userID,payload,b.photos)]);
     const saved=await env.DB.prepare('SELECT author,payload FROM entries WHERE id=?').bind(e.id).first<{author:string;payload:string}>();
     if(!saved && guard) throw new HTTPError(409,'The original expense or its refunds changed. Refresh and try again.');
     if(saved?.author!==userID||saved.payload!==payload)throw new HTTPError(409,'An entry already uses this ID.');
+    if(inserted.meta.changes && !e.handled) await notifyActivity(env,entryActivity(e,userID));
     return json({ok:true});
   }
   if (path==='/v1/people/search' && request.method==='POST') {
@@ -311,8 +359,8 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
       const profile = await fetchVerifiedProfile(env,target);
       if (!profile) throw new HTTPError(503,'Could not look up the member’s sign-in address. Try again later.');
       if (!profile.email) throw new HTTPError(422,'This member has no verified sign-in email.');
-      await sendMemberEmail(env,sendID,profile.email,'Sign in to Split',
-        `A member of your group sent you a reminder to sign in to Split.\n\n${env.WEB_URL}/g/${groupID}`);
+      const group = await env.DB.prepare('SELECT name FROM groups WHERE id=?').bind(groupID).first<string>('name');
+      await sendMemberEmail(env,sendID,profile.email,renderSignInReminder({group:group??'your group',url:`${env.WEB_URL}/g/${groupID}`,logoURL:`${env.WEB_URL}/icon.png`}));
     }
     return json({ok:true});
   }
@@ -343,6 +391,7 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
       env.DB.prepare('INSERT INTO members(id,group_id,user_id,name) VALUES (?,?,?,?)').bind(b.id,groupID,target?.user_id??null,target?.name??name),
       ...(email || phone ? [env.DB.prepare('INSERT INTO member_contacts VALUES (?,?,?)').bind(b.id,email||null,phone||null)] : [])
     ]);
+    if (target) await emailGroupInvite(env,{groupID,inviterUserID:userID,inviteeUserID:target.user_id,added:true});
     return json({id:b.id},201);
   }
   const editMemberEmail=path.match(/^\/v1\/groups\/([\w-]+)\/members\/([\w-]+)\/email$/);
@@ -422,7 +471,11 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
   throw new HTTPError(404,'Not found.');
 }
 export default {
- async scheduled(event,env) { await generateRecurring(env.DB,new Date(event.scheduledTime).toISOString().slice(0,10)); },
+ async scheduled(event,env) {
+   await generateRecurring(env.DB,new Date(event.scheduledTime).toISOString().slice(0,10));
+   try { await deliverDigests(env,event.scheduledTime); }
+   catch (error) { console.error(JSON.stringify({event:'digest_run_failed',type:error instanceof Error?error.name:'unknown'})); }
+ },
  async fetch(request,env):Promise<Response> {
   try {
    const url=new URL(request.url);
@@ -430,6 +483,8 @@ export default {
    if(url.pathname==='/.well-known/apple-app-site-association') return json({applinks:{details:[{appIDs:['64PUT29XZ8.com.yoinklabs.split'],components:[{'/':'/join/*'}]}]}});
    const invite=url.pathname.match(/^\/join\/((?:[a-f0-9-]{72}|[A-HJ-NP-Z2-9]{12}))$/);
    if(invite && request.method==='GET') return new Response(`<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><title>Join your group · Split</title><style>body{font:20px system-ui;background:#f4f3ee;color:#172e27;max-width:480px;margin:5vh auto;padding:28px}a{display:block;background:#183f34;color:white;padding:18px;border-radius:18px;text-align:center;text-decoration:none}p{line-height:1.6}@media(prefers-color-scheme:dark){body{background:#101b17;color:#edf3ea}}</style><svg role="img" aria-label="Split logo" width="72" height="72" viewBox="0 0 1024 1024"><rect width="1024" height="1024" rx="240" fill="#d1f091"/><g fill="#12382b"><rect x="222" y="340" width="580" height="142" rx="71"/><rect x="222" y="542" width="580" height="142" rx="71"/></g><path d="M518 744H622L506 280H402Z" fill="#d1f091"/></svg><h1>Join a group on Split</h1><p>Join this group on the web or in the iOS app.</p><a href="https://split.yoinklabs.dev/invite/${invite[1]}">Continue on the web</a><br><a href="com.yoinklabs.split://join/${invite[1]}">Open Split</a><p><a href="https://testflight.apple.com/join/YX8W6bCx">Get Split on TestFlight</a></p><p>${invite[1].length===12 ? `You can also choose <b>Join group</b> in Split and enter <strong>${invite[1]}</strong>.` : "After installing Split, open this invitation again to claim your place."}</p>`,{headers:{'Content-Type':'text/html; charset=utf-8','Referrer-Policy':'no-referrer','Content-Security-Policy':"default-src 'none'; style-src 'unsafe-inline'"}});
+   const emailLink = await emailLinkRoute(request, env);
+   if (emailLink) return emailLink;
    const publicDevice = await deviceRoute(request, env);
    if (publicDevice) return publicDevice;
    const token=request.headers.get('Authorization')?.match(/^Bearer (.+)$/)?.[1];if(!token)throw new HTTPError(401,'Sign in to sync your expenses.');

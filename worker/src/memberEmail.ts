@@ -1,4 +1,5 @@
 import { HTTPError } from './http';
+import { renderSignupInvite, type RenderedEmail } from './emailTemplate';
 
 declare global {
   interface Env {
@@ -41,7 +42,7 @@ class RejectedEmail extends HTTPError {
   constructor() { super(502, 'Could not send the email. Try again later.'); }
 }
 
-export async function sendMemberEmail(env: Env, id: string, to: string, subject: string, message: string) {
+export async function sendMemberEmail(env: Env, id: string, to: string, email: RenderedEmail, headers?: Record<string, string>) {
   let response: Response;
   try {
     response = await fetch('https://api.resend.com/emails', {
@@ -53,7 +54,8 @@ export async function sendMemberEmail(env: Env, id: string, to: string, subject:
         'Content-Type': 'application/json',
         'Idempotency-Key': id,
       },
-      body: JSON.stringify({ from: env.EMAIL_FROM, to: [to], subject, text: message }),
+      body: JSON.stringify({ from: env.EMAIL_FROM, to: [to], subject: email.subject, html: email.html, text: email.text,
+        ...(headers ? { headers } : {}) }),
     });
   } catch {
     // The provider may already have accepted the message when the connection dropped.
@@ -96,8 +98,10 @@ export async function emailInvitation(env: Env, groupID: string, memberID: strin
     AND NOT EXISTS (SELECT 1 FROM invites WHERE group_id=? AND token_hash=?)`)
     .bind(groupID, digest, groupID, previousID) : undefined;
   try {
-    await sendMemberEmail(env, sendID, email, 'You’re invited to a group on Split',
-      `Open this invitation within seven days and sign in to Split with this email address to claim your place.\n\n${env.APP_URL}/join/${code}`);
+    const names = await env.DB.prepare(`SELECT g.name AS grp, m.name AS inviter FROM groups g
+      LEFT JOIN members m ON m.group_id=g.id AND m.user_id=? WHERE g.id=?`).bind(userID, groupID).first<{ grp: string; inviter: string | null }>();
+    await sendMemberEmail(env, sendID, email, renderSignupInvite({ inviter: names?.inviter ?? 'A Split member',
+      group: names?.grp ?? 'a group', url: `${env.APP_URL}/join/${code}`, days: 7, logoURL: `${env.WEB_URL}/icon.png` }));
   } catch (error) {
     if (error instanceof RejectedEmail) {
       await env.DB.prepare('DELETE FROM invites WHERE group_id=? AND token_hash=?').bind(groupID, digest).run();

@@ -12,6 +12,8 @@ is noted next to each release. The CLI is versioned separately with
 
 ### Added
 
+- Open the Transactions tab on web and iOS to see each expense or settlement and its payment split.
+- Customize group PDFs with spending breakdowns by category, month, and person.
 - Group creators can permanently delete groups on iOS and the web.
 - Set preferred payment methods in your profile, override them per group, and use payment handles and provider links when settling up.
 

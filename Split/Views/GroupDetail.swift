@@ -6,6 +6,7 @@ enum GroupDetailSheet: Identifiable {
     case settlement(ExpenseGroup)
     case balances(ExpenseGroup)
     case receipt(LedgerEntry)
+    case transaction(LedgerEntry)
 
     var id: String {
         switch self {
@@ -14,6 +15,7 @@ enum GroupDetailSheet: Identifiable {
         case .settlement(let group): "settlement-\(group.id)"
         case .balances(let group): "balances-\(group.id)"
         case .receipt(let entry): "receipt-\(entry.id)"
+        case .transaction(let entry): "transaction-\(entry.id)"
         }
     }
 
@@ -24,11 +26,13 @@ enum GroupDetailSheet: Identifiable {
         case .settlement(let group): SettleUpView(group: group)
         case .balances(let group): GroupBalancesView(groupID: group.id)
         case .receipt(let entry): EntrySheet(entry: entry)
+        case .transaction(let entry): EntrySheet(entry: entry, showsBreakdownFirst: true)
         }
     }
 }
 
 struct GroupDetail: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @EnvironmentObject private var fx: FXStore
     var groupID: String
     var onPresentSheet: ((GroupDetailSheet) -> Void)? = nil
@@ -38,6 +42,7 @@ struct GroupDetail: View {
     @State private var inviting = false
     @State private var settings = false
     @State private var insights = false
+    @State private var exportingPDF = false
     @State private var section: Section = .overview
     @State private var filter: LedgerFilter = .all
     @State private var query = ""
@@ -46,7 +51,7 @@ struct GroupDetail: View {
     @State private var participant = ""
 
     private enum Section: String, CaseIterable {
-        case overview = "Overview", ledger = "Ledger", receipts = "Receipts"
+        case overview = "Overview", transactions = "Transactions", ledger = "Ledger", receipts = "Receipts"
     }
 
     private enum LedgerFilter: String, CaseIterable {
@@ -86,21 +91,24 @@ struct GroupDetail: View {
         Group {
             if let group {
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 18) {
+                    LazyVStack(alignment: .leading, spacing: 18) {
                         header(group)
                         if store.isDemo { Label("Sample group · changes stay in this preview", systemImage: "sparkles").font(.caption).foregroundStyle(.secondary) }
                         if store.pending > 0 { Label("\(store.pending) pending · saved on this device", systemImage: "arrow.triangle.2.circlepath").font(.caption).foregroundStyle(.secondary) }
                         if let error = store.error { InlineError(text: error) }
-                        Picker("Group workspace", selection: $section) {
-                            ForEach(Section.allCases, id: \.self) { tab in Text(tab.rawValue).tag(tab) }
-                        }
-                        .pickerStyle(.segmented)
-                        .accessibilityIdentifier("group-workspace")
-                        .frame(minHeight: HitTarget.minimum)
-                        if section != .receipts { expenseActions(group) }
+                        workspacePicker
+                            .accessibilityIdentifier("group-workspace")
+                            .frame(minHeight: HitTarget.minimum)
+                        if section == .overview || section == .ledger { expenseActions(group) }
                         switch section {
                         case .overview:
                             overview(group)
+                        case .transactions:
+                            GroupTransactionsView(group: group, entries: entries) {
+                                present(.transaction($0))
+                            } exportPDF: {
+                                exportingPDF = true
+                            }
                         case .ledger:
                             expensesSection(group)
                         case .receipts:
@@ -130,6 +138,12 @@ struct GroupDetail: View {
                 }
                 .sheet(isPresented: $inviting) { InviteView(group: group) }
                 .sheet(isPresented: $settings) { GroupTools(group: group) }
+                .sheet(isPresented: $exportingPDF) {
+                    NavigationStack {
+                        GroupPDFExportView(groupID: group.id)
+                            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { exportingPDF = false } } }
+                    }
+                }
                 .sheet(isPresented: $insights) {
                     NavigationStack {
                         InsightsView(group: group)
@@ -154,6 +168,23 @@ struct GroupDetail: View {
             ToolbarItem(placement: .principal) {
                 Color.clear.frame(width: 1, height: 1).accessibilityHidden(true)
             }
+        }
+    }
+
+    @ViewBuilder private var workspacePicker: some View {
+        if dynamicTypeSize.isAccessibilitySize {
+            sectionPicker.pickerStyle(.menu)
+        } else {
+            ViewThatFits(in: .horizontal) {
+                sectionPicker.pickerStyle(.segmented).frame(minWidth: 330)
+                sectionPicker.pickerStyle(.menu)
+            }
+        }
+    }
+
+    private var sectionPicker: some View {
+        Picker("Group workspace", selection: $section) {
+            ForEach(Section.allCases, id: \.self) { tab in Text(tab.rawValue).tag(tab) }
         }
     }
 

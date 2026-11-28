@@ -4,6 +4,7 @@
 // instead, so the document never depends on an estimate.
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
+import { categoryMeta } from "./categories";
 import { useLedger } from "./context";
 import {
   allocate,
@@ -25,10 +26,28 @@ import { homeRate, memberBalances, useHomeMoney } from "./homeMoney";
 
 type Mode = "summary" | "detailed" | "receipts";
 const MODES: { id: Mode; label: string; title: string }[] = [
-  { id: "summary", label: "Summary", title: "Totals, balances, settle-up and a table of expenses" },
+  { id: "summary", label: "Summary", title: "Tables of expenses and recorded payments" },
   { id: "detailed", label: "Detailed ledger", title: "Every entry with who paid and each person’s share" },
   { id: "receipts", label: "Itemized receipts", title: "Each receipt item, who had it and each person’s share" },
 ];
+const REPORT_SECTIONS = [
+  { id: "totals", label: "Expense totals" },
+  { id: "balances", label: "Balances and suggested payments" },
+  { id: "history", label: "Transaction history" },
+] as const;
+const BREAKDOWNS = [
+  { id: "categories", label: "By category" },
+  { id: "months", label: "By month" },
+  { id: "people", label: "By person" },
+] as const;
+type ReportSection = (typeof REPORT_SECTIONS | typeof BREAKDOWNS)[number]["id"];
+
+function sectionEnabled(query: URLSearchParams, mode: Mode, id: ReportSection) {
+  const value = query.get(id);
+  if (value === "on" || value === "off") return value === "on";
+  return id === "history" || (mode !== "receipts" && (id === "totals" || id === "balances"));
+}
+
 const REPORT_TITLE: Record<Mode, string> = {
   summary: "Expense summary",
   detailed: "Detailed ledger",
@@ -167,10 +186,13 @@ export function GroupSummary() {
   const homeMoney = useHomeMoney();
   const home = homeMoney.home;
   const mode: Mode = MODES.some((m) => m.id === query.get("view")) ? (query.get("view") as Mode) : "summary";
+  const included = (id: ReportSection) => sectionEnabled(query, mode, id);
+  const hasSections = [...REPORT_SECTIONS, ...BREAKDOWNS].some(({ id }) => included(id));
+  const reportTitle = included("history") ? REPORT_TITLE[mode] : "Expense report";
   const me = g?.members.find((member) => member.userID === user && !member.removed);
   const personal = query.get("audience") === "personal" ? me : undefined;
   const audienceTitle = personal ? "Personal" : "Group";
-  const title = g ? `${g.name} – ${REPORT_TITLE[mode]} – ${audienceTitle}` : undefined;
+  const title = g ? `${g.name} – ${reportTitle} – ${audienceTitle}` : undefined;
   const report = useRef<HTMLElement>(null);
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState(false);
@@ -204,7 +226,7 @@ export function GroupSummary() {
   }
 
   async function download() {
-    if (!report.current || !title || downloading) return;
+    if (!report.current || !title || downloading || !hasSections) return;
     setDownloading(true);
     setDownloadError(false);
     try {
@@ -216,7 +238,7 @@ export function GroupSummary() {
     }
   }
 
-  function setReportOption(key: "view" | "audience", value?: string) {
+  function setReportOption(key: "view" | "audience" | ReportSection, value?: string) {
     const next = new URLSearchParams(query);
     if (value) next.set(key, value);
     else next.delete(key);
@@ -228,7 +250,7 @@ export function GroupSummary() {
   const payments = entries.filter((e) => e.kind !== "expense");
   const receipts = expenses.filter((e) => e.bill);
   const projected = new Map(entries.map((e) => [e.id, homeMoney.project(e)] as const));
-  const visibleEntries = mode === "receipts" ? receipts : entries;
+  const visibleEntries = !included("history") ? [] : mode === "receipts" ? receipts : entries;
   const unrated = visibleEntries.filter((e) => !projected.get(e.id));
   const spendRated = expenses.every((e) => projected.get(e.id));
   const foreign = visibleEntries.some((e) => e.currency !== home);
@@ -279,7 +301,7 @@ export function GroupSummary() {
 
   const overview = (
     <>
-      <section className="sum-section">
+      {included("totals") && <section className="sum-section">
         <h2 className="sum-h2">Totals</h2>
         <div className="sum-figures">
           <div className="sum-figure">
@@ -294,9 +316,9 @@ export function GroupSummary() {
           <Figure label="Payments">{payments.length}</Figure>
           <Figure label="Transfers due">{transfers.length || "None"}</Figure>
         </div>
-      </section>
+      </section>}
 
-      <section className="sum-section">
+      {included("balances") && <section className="sum-section">
         <h2 className="sum-h2">Balances</h2>
         <table className="sum-table">
           <colgroup>
@@ -342,9 +364,9 @@ export function GroupSummary() {
           </tbody>
         </table>
         <p className="sum-small">Paid and share count expenses only. Balance includes payments and leaves out entries marked as already handled.</p>
-      </section>
+      </section>}
 
-      <section className="sum-section">
+      {included("balances") && <section className="sum-section">
         <h2 className="sum-h2">Settle up</h2>
         {transfers.length ? (
           <table className="sum-table">
@@ -388,9 +410,9 @@ export function GroupSummary() {
             {codes.length > 1 && " Each transfer is paid in its settlement currency."}
           </p>
         )}
-      </section>
+      </section>}
 
-      {payments.length > 0 && (
+      {included("history") && mode === "summary" && payments.length > 0 && (
         <section className="sum-section">
           <h2 className="sum-h2">Payments recorded</h2>
           <table className="sum-table">
@@ -435,7 +457,7 @@ export function GroupSummary() {
         <Link className="btn btn-sm btn-ghost" to={`/g/${g.id}`}>
           ← Back to {g.name}
         </Link>
-        <div className="sum-modes" role="group" aria-label="Report type">
+        <div className="sum-modes" role="group" aria-label="History detail">
           {MODES.map((m) => (
             <button
               key={m.id}
@@ -457,19 +479,44 @@ export function GroupSummary() {
             </div>
           )}
           <button type="button" className="btn btn-primary btn-icon" onClick={download}
-            aria-label="Download PDF" title="Download PDF" disabled={downloading} aria-busy={downloading}>
+            aria-label="Download PDF" title="Download PDF" disabled={downloading || !hasSections} aria-busy={downloading}>
             <DownloadIcon />
           </button>
-          <button type="button" className="btn btn-icon" onClick={() => window.print()} aria-label="Print" title="Print">
+          <button type="button" className="btn btn-icon" onClick={() => window.print()} aria-label="Print" title="Print" disabled={!hasSections}>
             <PrintIcon />
           </button>
         </div>
       </div>
 
+      <details className="card sum-options no-print">
+        <summary>Customize report</summary>
+        <div className="sum-option-groups">
+          <fieldset>
+            <legend>Report sections</legend>
+            {REPORT_SECTIONS.map(({ id, label }) => (
+              <label key={id}>
+                <input type="checkbox" checked={included(id)} onChange={(event) => setReportOption(id, event.target.checked ? "on" : "off")} />
+                {label}
+              </label>
+            ))}
+          </fieldset>
+          <fieldset>
+            <legend>Spending breakdowns</legend>
+            {BREAKDOWNS.map(({ id, label }) => (
+              <label key={id}>
+                <input type="checkbox" checked={included(id)} onChange={(event) => setReportOption(id, event.target.checked ? "on" : "off")} />
+                {label}
+              </label>
+            ))}
+            <small className="muted">Spending breakdowns use the recorded currencies.</small>
+          </fieldset>
+        </div>
+      </details>
+      {!hasSections && <p className="sum-alert no-print" role="status">Choose at least one section to export the report.</p>}
       {downloadError && <p className="sum-alert no-print" role="alert">Couldn’t download the PDF. Try again.</p>}
       <article ref={report} className="sum-paper" aria-label={title}>
         <header className="sum-head">
-          <div className="sum-kicker">Split · {REPORT_TITLE[mode]}</div>
+          <div className="sum-kicker">Split · {reportTitle}</div>
           <h1 className="sum-title">{g.name}</h1>
           {personal && <p className="sum-for">Personal report for {person(personal.id)}</p>}
           {g.description && <p className="sum-desc">{g.description}</p>}
@@ -478,7 +525,7 @@ export function GroupSummary() {
             {range && <Meta label="Dates">{range}</Meta>}
             <Meta label="People">{people.length}</Meta>
             <Meta label="Group currency">{g.currency}</Meta>
-            <Meta label="Shown in">{home}</Meta>
+            {(included("totals") || included("balances") || included("history")) && <Meta label="Preferred currency">{home}</Meta>}
             <Meta label="Generated">{generated}</Meta>
           </dl>
         </header>
@@ -490,9 +537,18 @@ export function GroupSummary() {
           </p>
         )}
 
-        {mode !== "receipts" && overview}
+        {overview}
+        {included("categories") && (
+          <SpendingTotals title="Spending by category" label="Category" expenses={expenses}
+            groupBy={(entry) => categoryMeta(entry.category).label} />
+        )}
+        {included("months") && (
+          <SpendingTotals title="Spending by month" label="Month" expenses={expenses}
+            groupBy={(entry) => entry.createdAt.slice(0, 7)} />
+        )}
+        {included("people") && <PeopleSpending expenses={expenses} person={person} />}
 
-        {mode === "summary" && (
+        {included("history") && mode === "summary" && (
           <section className="sum-section">
             <h2 className="sum-h2">Expenses</h2>
             {expenses.length ? (
@@ -540,7 +596,7 @@ export function GroupSummary() {
           </section>
         )}
 
-        {mode === "detailed" && (
+        {included("history") && mode === "detailed" && (
           <section className="sum-section">
             <h2 className="sum-h2">Ledger</h2>
             {entries.length === 0 && <p className="sum-small">No entries yet.</p>}
@@ -550,7 +606,7 @@ export function GroupSummary() {
           </section>
         )}
 
-        {mode === "receipts" && (
+        {included("history") && mode === "receipts" && (
           <section className="sum-section">
             <h2 className="sum-h2">Itemized receipts</h2>
             {receipts.length === 0 && <p className="sum-small">No expenses in this group have itemized receipts.</p>}
@@ -561,18 +617,91 @@ export function GroupSummary() {
         )}
 
         <footer className="sum-foot">
-          {foreign && (
+          {(foreign || ((included("totals") || included("balances")) && foreignSpend)) && (
             <p className="sum-fine">≈ marks amounts converted using available exchange rates.</p>
           )}
           <div className="sum-foot-row">
             <span>
-              {g.name} · {REPORT_TITLE[mode]}
+              {g.name} · {reportTitle}
             </span>
             <span>Made with Split</span>
           </div>
         </footer>
       </article>
     </div>
+  );
+}
+
+function SpendingTotals({ title, label, expenses, groupBy }: {
+  title: string;
+  label: string;
+  expenses: Expense[];
+  groupBy: (entry: Expense) => string;
+}) {
+  const totals = new Map<string, Record<string, number>>();
+  for (const entry of expenses) {
+    const key = groupBy(entry);
+    const amounts = totals.get(key) ?? {};
+    amounts[entry.currency] = (amounts[entry.currency] ?? 0) + entry.amount;
+    totals.set(key, amounts);
+  }
+  return (
+    <section className="sum-section">
+      <h2 className="sum-h2">{title}</h2>
+      {totals.size ? (
+        <table className="sum-table">
+          <thead><tr><th>{label}</th><th className="r">Recorded amount</th></tr></thead>
+          <tbody>
+            {[...totals].sort(([a], [b]) => a.localeCompare(b)).flatMap(([key, amounts]) =>
+              Object.entries(amounts).sort(([a], [b]) => a.localeCompare(b)).map(([currency, amount]) => (
+                <tr key={key + ":" + currency}>
+                  <td>{key}</td>
+                  <td className="r">{money(amount, currency)}</td>
+                </tr>
+              )),
+            )}
+          </tbody>
+        </table>
+      ) : <p className="sum-small">No expenses yet.</p>}
+    </section>
+  );
+}
+
+function PeopleSpending({ expenses, person }: { expenses: Expense[]; person: PersonLabel }) {
+  const amounts = new Map<string, Map<string, { paid: number; share: number }>>();
+  function add(parts: Part[], currency: string, column: "paid" | "share") {
+    for (const part of parts) {
+      const currencies = amounts.get(part.memberID) ?? new Map<string, { paid: number; share: number }>();
+      const amount = currencies.get(currency) ?? { paid: 0, share: 0 };
+      amount[column] += part.amount;
+      currencies.set(currency, amount);
+      amounts.set(part.memberID, currencies);
+    }
+  }
+  for (const entry of expenses) {
+    add(entryPayers(entry), entry.currency, "paid");
+    add(entry.splits, entry.currency, "share");
+  }
+  return (
+    <section className="sum-section">
+      <h2 className="sum-h2">Spending by person</h2>
+      {amounts.size ? (
+        <table className="sum-table">
+          <thead><tr><th>Person</th><th className="r">Paid</th><th className="r">Share</th></tr></thead>
+          <tbody>
+            {[...amounts].flatMap(([id, currencies]) =>
+              [...currencies].sort(([a], [b]) => a.localeCompare(b)).map(([currency, { paid, share }]) => (
+                <tr key={id + ":" + currency}>
+                  <td>{person(id)}</td>
+                  <td className="r">{money(paid, currency)}</td>
+                  <td className="r">{money(share, currency)}</td>
+                </tr>
+              )),
+            )}
+          </tbody>
+        </table>
+      ) : <p className="sum-small">No expenses yet.</p>}
+    </section>
   );
 }
 

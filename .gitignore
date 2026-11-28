@@ -33,3 +33,6 @@ xcuserdata/
 *.tar.gz
 
 web/dist/
+
+# Email previews
+worker/.email-preview/

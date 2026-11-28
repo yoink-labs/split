@@ -4,6 +4,6 @@ await applyD1Migrations(env.DB, env.TEST_MIGRATIONS);
 // This Vitest integration reuses a D1 instance across tests in a file.
 import { beforeEach } from 'vitest';
 beforeEach(async () => {
-  for (const table of ['account_payment_profiles','settlement_requests','user_avatars','entry_comments','entry_reactions','deleted_entries','member_email_attempts','invites','group_invites','member_aliases','member_contacts','entries','members','groups','lookup_limits','split_profiles'])
+  for (const table of ['email_preferences','email_activity','email_digest_sends','account_payment_profiles','settlement_requests','user_avatars','entry_comments','entry_reactions','deleted_entries','member_email_attempts','invites','group_invites','member_aliases','member_contacts','entries','members','groups','lookup_limits','split_profiles'])
     await env.DB.prepare('DELETE FROM '+table).run();
 });

@@ -61,13 +61,22 @@ const confirmation = {
   yes: { type: 'boolean', description: 'Apply the reviewed change.' },
   revision: text('Fingerprint returned by the preview. Required when confirming.', 64)
 };
+const paymentMethods = {type:'array',description:'Payment methods, e.g. [{"platform":"Venmo","handle":"maya-r","preferred":true}]. An empty array clears them. Replaces the older handles.',maxItems:20,
+      items:{type:'object',properties:{platform:text('Platform name.',60),handle:text('Username, link or account.',500),preferred:{type:'boolean',description:'Mark one method as preferred.'}},required:['platform','handle'],additionalProperties:false}};
 function op(name, description, properties = {}, required = [], readOnly = false, destructive = false) {
   return { name, description, inputSchema: { type: 'object', properties, required, additionalProperties: false },
     annotations: { readOnlyHint: readOnly, destructiveHint: destructive, openWorldHint: false } };
 }
 export const tools = [
   op('groups_default_split','Set default weights in member order. Supply empty arrays to restore equal splits.',{group,participants:{type:'array',items:member,maxItems:50,uniqueItems:true},weights:{type:'array',items:{type:'integer',minimum:1,maximum:1000},maxItems:50}},['group','participants','weights']),
-  op('members_payment','Replace your own payment profile for a group. Omitted handles are cleared.',{group,paypal:text('PayPal.Me username',40),venmo:text('Venmo username',40),mercado:text('Mercado Pago payment link'),alias:text('Argentine alias or CVU',22)},['group']),
+  op('members_payment','Replace your own payment profile for a group. Pass methods for any platform, or the older paypal, venmo, mercado and alias handles. Omitted handles are cleared. Pass reset to use your account methods again.',{group,paypal:text('PayPal.Me username',40),venmo:text('Venmo username',40),mercado:text('Mercado Pago payment link'),alias:text('Argentine alias or CVU',22),
+    methods:paymentMethods,
+    reset:{type:'boolean',description:'Remove your group override and use your account payment methods here again.'}},['group']),
+  op('profile_payment','Show your account payment methods, used in every group without its own override, or replace them with methods.',{methods:paymentMethods},[]),
+  op('groups_rate','Set the exchange rate a trip uses for a foreign currency, or "none" to clear it. Only active trip members can change it.',{group,
+    currency:enumeration('Foreign currency to convert from.',['USD','ARS','EUR','GBP','BRL','CAD','AUD','MXN']),
+    rate:{...text('Trip currency units per one foreign unit, e.g. "1050.5", or "none".',17),pattern:'^(none|(0|[1-9][0-9]{0,6})([.][0-9]{1,8})?)$'}},['group','currency','rate']),
+  op('expenses_handled','Mark an expense you paid as already handled outside Split, or unhandled again.',{group,expense,state:enumeration('Defaults to handled.',['handled','unhandled'])},['group','expense']),
   op('expenses_repeat','Set or cancel the schedule for your fixed-currency expense.',{group,expense,cadence:enumeration('UTC schedule.',['off','daily','weekly','monthly','yearly'])},['group','expense','cadence']),
   op('groups_breakdown','Spending, categories, months, paid, shares, balances and suggested transfers by currency. Provide a member ID for their expense detail.',{group,member},['group'],true),
   op('items_open','List open purchases with tax and tip included in each gross amount.',{group},['group'],true),
@@ -92,6 +101,7 @@ export const tools = [
   }, ['group']),
   op('groups_archive','Archive a settled group, or restore it.', { group, action: enumeration('Defaults to archive.', ['archive','restore']) }, ['group']),
   op('groups_leave','Preview leaving a group. Confirm with yes. The group and its history are deleted when the last member leaves.', { group, yes: confirmation.yes }, ['group'], false, true),
+  op('groups_delete','Preview deleting a group you created, with everything in it, for every member. Confirm with yes and the revision from the preview. Archive or leave instead to keep history.', { group, ...confirmation }, ['group'], false, true),
   op('groups_export','Export a group. ledger: one CSV row per expense with each member’s net effect. summary: CSV of paid, share and net per member and currency. json: everything, including items, comments and settlements.', {
     group, format: enumeration('Defaults to ledger.', ['ledger','summary','json'])
   }, ['group'], true),
@@ -100,14 +110,15 @@ export const tools = [
   }, ['group','member'], false, true),
   op('invites_list','List open group and member invites.', { group }, ['group'], true),
   op('invites_revoke','Revoke an invite by the ID from invites list.', { group, invite: { ...text('Invite ID.', 64), pattern: '^[a-f0-9]{64}$' } }, ['group','invite'], false, true),
-  op('import_splitwise','Import a Splitwise “Export as spreadsheet” CSV into a new group or an existing one. Omit me to see the names in the file.', {
+  op('import_splitwise','Import a Splitwise “Export as spreadsheet” CSV into a new group or an existing one. Step 1: omit me to see the names in the file. Step 2: set me (and group or mapping) with preview to review who becomes whom. Step 3: run without preview to import. Imports are all-or-nothing and repeat imports skip duplicates.', {
     csv: text('CSV file contents. On the command line, pass --file PATH instead.', 1_500_000),
     file: text('File name, used for the default group name.', 200),
     me: text('Your name as it appears in the Splitwise file.', 60),
     group: id('Existing group to import into. Omit to create a new group.'),
     name: text('New group name. Defaults to the file name.', 80),
     kind: enumeration('New group type, defaults to trip.', ['trip','home','friend']),
-    mapping: { type: 'object', description: 'Map Splitwise names to existing member IDs, e.g. {"Maya R":"MEMBER_ID"}. Unmapped names become placeholders.', additionalProperties: member, maxProperties: 50 }
+    mapping: { type: 'object', description: 'Map Splitwise names to existing member IDs in group, e.g. {"Maya R":"MEMBER_ID"}. Unmapped names become placeholders. Split only suggests exact name matches; it never links them for you.', additionalProperties: member, maxProperties: 50 },
+    preview: { type: 'boolean', description: 'Show the import plan without saving anything.' }
   }, ['csv']),
   op('profile_avatar','Set your avatar to a preset (preset:NAME), an https image URL, or "none" to reset.', { avatar: text('preset:NAME, https URL or none.', 500) }, ['avatar']),
   op('members_list','List claimed and placeholder member IDs.', { group }, ['group'], true),
@@ -140,6 +151,10 @@ export const tools = [
   op('expenses_edit','Preview changes to your expense. Review the preview before confirming with yes and revision.', { group, expense, ...allocation, ...confirmation }, ['group','expense'], false, true),
   op('expenses_delete','Preview deletion of your expense. Review the preview before confirming with yes and revision.', { group, expense, ...confirmation }, ['group','expense'], false, true),
   op('balances','Show each member’s net balance and suggested settlements, separately by currency, in minor units.', { group }, ['group'], true),
+  op('settlements_pending','List payments waiting for approval in a group, who made them and what you can do.', { group }, ['group'], true),
+  op('settlements_respond','Approve or decline a payment someone recorded to you, or cancel one you recorded. The ID comes from settlements pending.', {
+    group, settlement: id('Pending payment ID.'), action: enumeration('approve or decline as the recipient; cancel as the payer.', ['approve','decline','cancel'])
+  }, ['group','settlement','action']),
   op('settle_up','Request approval for a payment you made. The recipient confirms it in Split.', { group, from: member, to: member, amount: money, currency }, ['group','from','to','amount']),
   op('activity','List expenses and settlements newest first, optionally filtered by group.', { group }, [], true)
 ];

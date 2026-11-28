@@ -384,6 +384,7 @@ export default {
    if (device?.scope === 'finance') return await financeRoute(request, env, userID, handle);
    if (url.pathname === '/mcp' || url.pathname === '/v1/cli') {
      if (!device) throw new HTTPError(403, 'Sign in with a Split device token.');
+     if (device.is_remote && url.pathname === '/v1/cli') throw new HTTPError(403, 'Use the MCP endpoint with a remote token.');
      return await cliRoute(request, env, userID, handle);
    }
    if (device) throw new HTTPError(403, 'Use the CLI or MCP endpoint with a device token.');

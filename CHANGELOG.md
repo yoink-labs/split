@@ -18,12 +18,18 @@ is noted next to each release. The CLI is versioned separately with
 - Split CLI 0.3.0 creates personal invitations and can set, correct, or clear a placeholder member’s email for verified account linking.
 - Review or import several Splitwise CSV exports in one CLI command by repeating `--file`.
 - Connect Finance with read-only access to your Split expense shares and receipts.
+- Delete groups you created and respond to pending payments from the CLI or MCP.
+- Set trip exchange rates and payment methods, and mark expenses as handled from the CLI or MCP.
+- Create remote MCP tokens and revoke AI, CLI, and Finance access from the Split web app.
 
 ### Changed
 
 - Enter web expenses with searchable pickers and a live split preview, and explore daily or monthly spending by category, person, and housing.
 - Redesigned Splitwise import on the web with drag-and-drop CSV selection, clearer balance checks, and a mobile layout for matching people and reviewing entries.
 - On web and iOS, claim your Splitwise history, match people to Split accounts or prepare email invites, and preview and import expenses and payments in your Home currency using historical exchange rates.
+- The CLI previews Splitwise imports, including how each person maps to a Split member, and asks for confirmation in an interactive terminal.
+- CLI changes on main publish a new Homebrew release automatically.
+- The web AI & CLI page shows copyable setup for the selected client.
 
 ### Changed
 

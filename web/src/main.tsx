@@ -10,6 +10,7 @@ import {
   useLocation,
 } from "react-router-dom";
 import { LedgerContext } from "./context";
+import { LocalAIScreen, type Connection } from "./ai";
 import {
   api,
   itemSplit,
@@ -30,7 +31,6 @@ import {
   Account,
   HomeOverview,
   Join,
-  LocalAIScreen,
   MemberScreen,
   NewGroup,
 } from "./screens";
@@ -85,6 +85,10 @@ function DemoLedger({ onExit }: { onExit: () => void }) {
   const commentsRef = useRef<Record<string, ExpenseComment[]>>(initial.comments);
   const invitesRef = useRef<Record<string, ActiveInvite[]>>(initial.invites);
   const photosRef = useRef<Record<string, Blob>>(initial.photos);
+  const connections = useRef<Connection[]>([{
+    id: "demo-computer", name: "Sample laptop", created_at: Date.now() - 3 * 86_400_000,
+    last_used: Date.now() - 600_000, scope: "cli", is_remote: 0,
+  }]);
 
   function storePhotos(photos: { id: string; data: string }[] = []) {
     const decoded = photos.map(({ id, data }) => ({
@@ -97,6 +101,25 @@ function DemoLedger({ onExit }: { onExit: () => void }) {
 
   const request = useCallback(
     async <T,>(path: string, body?: unknown, photo = false): Promise<T> => {
+      if (path === "/v1/device/tokens" && body === undefined) return connections.current as T;
+      if (path === "/v1/device/tokens" || path === "/v1/device/approve") {
+        const isRemote = path === "/v1/device/tokens";
+        const name = isRemote ? (body as { name: string }).name : "Sample computer";
+        if (!name) throw new Error("Enter a token name.");
+        const connection: Connection = {
+          id: crypto.randomUUID(), name, created_at: Date.now(), last_used: null,
+          scope: "cli", is_remote: isRemote ? 1 : 0,
+        };
+        connections.current = [connection, ...connections.current];
+        return (isRemote ? { connection, token: `demo-${connection.id}` } : { name }) as T;
+      }
+      if (path === "/v1/device/review") return { name: "Sample computer" } as T;
+      if (path === "/v1/device/revoke") {
+        const { id } = body as { id: string };
+        connections.current = connections.current.filter((connection) => connection.id !== id);
+        return { revoked: true } as T;
+      }
+
       // Photo download
       const photoMatch = path.match(/^\/v1\/entries\/([\w-]+)\/receipts\/([\w-]+)$/);
       if (photoMatch && photo) {
@@ -547,9 +570,11 @@ function SignIn({ onDemo }: { onDemo: () => void }) {
     const el = node.current;
     if (!el || !window.Clerk) return;
     setClerkLoaded(true);
+    const search = new URLSearchParams(location.search);
+    if (search.get("demo") === "1") search.delete("demo");
     window.Clerk.mountSignIn(el, {
       routing: "virtual",
-      fallbackRedirectUrl: location.pathname,
+      fallbackRedirectUrl: location.pathname + (location.pathname === "/ai" && search.size ? `?${search}` : ""),
     });
     return () => window.Clerk.unmountSignIn(el);
   }, []);

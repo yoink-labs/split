@@ -21,6 +21,7 @@ function usage(tool) {
     return required.includes(key) ? flag : '[' + flag + ']';
   });
   if (properties.photos) args.push('[--photo PATH ...]');
+  if (tool.name === 'import_splitwise') args.push('[--yes]');
   if (outputs.has(tool.name)) args.push('[--out PATH]');
   return 'split ' + [spelling(tool), ...args].join(' ');
 }
@@ -31,6 +32,47 @@ const help = ['Split by Yoink Labs', 'Usage: split [--json] COMMAND [flags]', ''
   ...tools.map(usage), '', 'Use split COMMAND --help for argument details. JSON arrays must be shell-quoted.',
   'SPLIT_API_URL selects a server. SPLIT_TOKEN supplies a device credential.', '',
   'Source, issues and contributing: https://github.com/yoink-labs/split'].join('\n');
+// Names in previews come from CSV files and other members. Strip terminal controls (C0, DEL, C1)
+// and bidirectional overrides so they cannot move the cursor, recolor, retitle or reorder the screen.
+const unsafe = /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g;
+export const clean = value => typeof value === 'string' ? value.replace(unsafe, '\uFFFD')
+  : Array.isArray(value) ? value.map(clean)
+  : value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).map(([k, v]) => [clean(k), clean(v)])) : value;
+const quote = value => "'" + String(value).replaceAll("'", "'\\''") + "'";
+// Plain-language summaries for people at a terminal. Scripts and --json keep the JSON result.
+export function describeImport(raw) {
+  // Older Workers return only group, members, rows and skipped; print what is there and nothing undefined.
+  const plan = clean(raw ?? {});
+  const count = (n, word) => Number.isSafeInteger(n) ? n + ' ' + word : null;
+  const parts = [count(plan.expenses, 'expenses'), count(plan.payments, 'payments')].filter(Boolean);
+  const lines = [(plan.group ? 'Splitwise export "' + plan.group + '"' : 'Splitwise export') +
+    (Number.isSafeInteger(plan.rows) ? ': ' + plan.rows + ' entries' + (parts.length ? ' (' + parts.join(', ') + ')' : '') : '') +
+    (plan.dates?.from && plan.dates?.to ? ' from ' + plan.dates.from + ' to ' + plan.dates.to : '') + '.'];
+  const currencies = plan.currencies && typeof plan.currencies === 'object' ? Object.entries(plan.currencies) : [];
+  if (currencies.length) lines.push('Currencies: ' + currencies.map(([c, n]) => c + ' ' + n).join(', ') + '.');
+  if (Array.isArray(plan.skipped) && plan.skipped.length)
+    lines.push('Skipped ' + plan.skipped.length + ' rows Split cannot import: ' + plan.skipped.map(String).join('; ') + '.');
+  const target = plan.target;
+  if (target === 'new group') lines.push('Into: a new group.');
+  else if (target?.id) lines.push('Into: your group "' + target.name + '".');
+  else if (target?.name) lines.push('Into: a new ' + (target.kind ?? '') + ' group "' + target.name + '"' + (target.currency ? ' in ' + target.currency : '') + '.');
+  if (Array.isArray(plan.people)) {
+    lines.push('People:');
+    for (const p of plan.people) lines.push('  ' + p.name + ' → ' + p.becomes);
+  } else if (Array.isArray(plan.members)) lines.push('People in this file: ' + plan.members.join(', ') + '.');
+  if (plan.suggestedMapping) lines.push('Possible matches are not linked unless you ask. To link them add: --mapping ' + quote(JSON.stringify(plan.suggestedMapping)));
+  if (plan.ambiguous) lines.push('Several members share these names, so pick one ID each with --mapping: ' + Object.keys(plan.ambiguous).join(', ') + '.');
+  if (plan.note) lines.push(plan.note);
+  lines.push(Array.isArray(plan.people) ? 'Nothing is saved yet. Run the same command without --preview to import.'
+    : 'Next: add --me with your name from the list above, plus --preview to review who becomes whom.');
+  return lines.join('\n');
+}
+export function describeGroupDelete(raw) {
+  const p = clean(raw);
+  return [p.action, 'Members: ' + p.members.join(', ') + '.', p.expenses + ' expenses, ' + p.settlements + ' settlements and ' + p.receipts + ' receipt photos will be deleted.',
+    'Export a copy first with: split groups export --group ' + p.group + ' --format json --out backup.json',
+    'To delete without a prompt: split groups delete --group ' + p.group + ' --yes --revision ' + p.revision].join('\n');
+}
 const print = (value, compact) => console.log(JSON.stringify(value, null, compact ? undefined : 2));
 
 async function csvFile(path) {
@@ -56,7 +98,15 @@ async function login(c, options) {
   throw new Error('Approval expired. Run split login again.');
 }
 
-export async function main(argv = process.argv.slice(2)) {
+const upgradeImport = 'This Split server cannot show an import plan yet. Nothing was imported. Try again later, or pass --yes to import without reviewing the plan.';
+async function askLine(question) {
+  const { createInterface } = await import('node:readline/promises');
+  const rl = createInterface({ input: process.stdin, output: process.stderr });
+  try { return await rl.question(question); } finally { rl.close(); }
+}
+const terminal = () => ({ interactive: Boolean(process.stdin.isTTY && process.stdout.isTTY && process.stderr.isTTY), ask: askLine });
+
+export async function main(argv = process.argv.slice(2), io = terminal()) {
   const compact = argv.includes('--json');
   const words = argv.filter(x => !['--json','--help','-h'].includes(x));
   const wantsHelp = argv.includes('--help') || argv.includes('-h');
@@ -96,8 +146,12 @@ export async function main(argv = process.argv.slice(2)) {
     if (tool.inputSchema.properties.photos) options.photo = { type:'string', multiple:true };
     if (tool.inputSchema.properties.csv) options.file = { type:'string', multiple:true };
     if (outputs.has(tool.name)) options.out = { type:'string' };
+    if (tool.name === 'import_splitwise') options.yes = { type:'boolean' };
     const parsed = parseArgs({ args: words.slice(spelling(tool).split(' ').length), options });
     const { photo: paths, file: files, out, ...values } = parsed.values;
+    const confirmed = tool.name === 'import_splitwise' && values.yes;
+    if (tool.name === 'import_splitwise') delete values.yes;
+    const guided = io.interactive && !compact;
     for (const [key,value] of Object.entries(values)) {
       const type = tool.inputSchema.properties[key].type;
       if (type === 'array' || type === 'object') {
@@ -133,12 +187,44 @@ export async function main(argv = process.argv.slice(2)) {
       if (values.csv) values.file = path;
       else Object.assign(values, await csvFile(path));
     }
-    if (tool.annotations.destructiveHint && values.yes) {
+    if (tool.name === 'groups_delete' && values.yes && !values.revision) {
+      // A whole group is never deleted from a fingerprint fetched in the same breath.
+      if (!guided) throw new Error('Deleting a group needs the revision from its preview. Run split groups delete --group ' + values.group + ' first, then add --yes --revision VALUE.');
+      const preview = await run({ ...values, yes:false });
+      console.error(describeGroupDelete(preview));
+      const typed = await io.ask('Type the group name to delete it for everyone: ');
+      if (typed.trim() !== clean(preview.name)) throw new Error('The name did not match. Nothing was deleted.');
+      values.revision = preview.revision;
+    } else if (tool.annotations.destructiveHint && values.yes) {
       const preview = await run({ ...values, yes:false });
       console.error(JSON.stringify(preview));
       values.revision ??= preview.revision;
     }
-    const result = await run(values);
+    if (tool.name === 'import_splitwise' && guided && !values.preview && !confirmed && (values.me || values.group)) {
+      let plan;
+      try { plan = await run({ ...values, preview:true }); }
+      catch (error) {
+        // A Worker without the preview flag rejects it before reading the file. Never fall back to importing.
+        if (error.status === 422 && /additional propert|preview/i.test(error.message)) throw new Error(upgradeImport);
+        throw error;
+      }
+      if (!plan?.preview) throw new Error(upgradeImport);
+      console.error(describeImport(plan));
+      if (!Array.isArray(plan.people)) {
+        if (values.me) throw new Error(upgradeImport);
+        return;
+      }
+      const answer = await io.ask('Import ' + plan.rows + ' entries now? [y/N] ');
+      if (!/^y(es)?$/i.test(answer.trim())) return console.error('Nothing was imported.');
+    }
+    let result;
+    try { result = await run(values); }
+    catch (error) {
+      if (tool.name === 'import_splitwise' && values.preview && error.status === 422 && /additional propert|preview/i.test(error.message)) throw new Error(upgradeImport);
+      throw error;
+    }
+    if (tool.name === 'import_splitwise' && result?.preview && guided) return console.log(describeImport(result));
+    if (tool.name === 'groups_delete' && result?.preview && guided) return console.log(describeGroupDelete(result));
     if (tool.name === 'groups_export' && !compact) {
       if (out) { await writeFile(out, result.content); return console.log('Wrote ' + out); }
       return process.stdout.write(result.content);
@@ -149,7 +235,7 @@ export async function main(argv = process.argv.slice(2)) {
     }
     print(result,compact);
   } catch (error) {
-    console.error(compact ? JSON.stringify({ error:error.message }) : 'split: ' + error.message);
+    console.error(compact ? JSON.stringify({ error:error.message }) : 'split: ' + clean(String(error.message)));
     process.exitCode = 1;
   }
 }

@@ -7,7 +7,7 @@ import { SplitLogo, Avatar } from "./ui";
 
 const accountLinks = [
   { to: "/you", label: "Account & avatar", hint: "Profile, theme, payment handles" },
-  { to: "/ai", label: "Connect AI & CLI", hint: "Let your assistant upload receipts" },
+  { to: "/ai", label: "AI & CLI", hint: "Setup, connections, and tokens" },
   { to: "/import/splitwise", label: "Import from Splitwise", hint: "Bring over a CSV export" },
   { to: "/convert", label: "Currency converter", hint: "Daily and manual rates" },
   { to: "/join", label: "Join with a code", hint: "Accept an invite" },

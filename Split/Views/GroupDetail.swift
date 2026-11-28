@@ -136,7 +136,7 @@ struct GroupDetail: View {
                         Button { present(.balances(group)) } label: { Label("Balances", systemImage: "chart.pie") }
                         Menu {
                             Button { present(.credit(group)) } label: { Label("Record a credit", systemImage: "arrow.uturn.backward") }
-                            Button { insights = true } label: { Label("Insights", systemImage: "chart.bar.xaxis") }
+                            Button { insights = true } label: { Label("Analytics", systemImage: "chart.bar.xaxis") }
                             Button { settings = true } label: { Label("Group settings", systemImage: "slider.horizontal.3") }
                         } label: {
                             Label("More", systemImage: "ellipsis.circle")
@@ -152,7 +152,7 @@ struct GroupDetail: View {
                 }
                 .sheet(isPresented: $insights) {
                     NavigationStack {
-                        InsightsView(group: group)
+                        AnalyticsView(groupID: group.id)
                             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { insights = false } } }
                     }
                 }

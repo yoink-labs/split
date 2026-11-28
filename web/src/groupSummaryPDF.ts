@@ -50,6 +50,10 @@ function tableBlock(table: HTMLTableElement): ContentTable | undefined {
       keepWithHeaderRows: !itemized && headerRows > 0 && rows.length > headerRows ? 1 : 0,
       dontBreakRows: !itemized,
       body: rows.map((row) => Array.from(row.cells, (cell): TableCell => {
+        // Item and person rows that head a group of portion lines are bold on a light wash.
+        const subhead = row.classList.contains("sum-subhead");
+        const fill = subhead && !itemized ? { fillColor: "#f4f1ec" } : {};
+        const indent = cell.querySelector(":scope > .sum-indent") ? 12 : 0;
         const claims = Array.from(cell.querySelectorAll(".sum-claims > li"), (claim, index) => {
           const [person, amount] = Array.from(claim.children) as HTMLElement[];
           return [
@@ -60,19 +64,21 @@ function tableBlock(table: HTMLTableElement): ContentTable | undefined {
         });
         if (cell.classList.contains("r") && cell.tagName !== "TH") {
           return {
-            stack: amountLines(cell, 9),
+            stack: amountLines(cell, 9).map((line, index) => (index === 0 && subhead ? { ...line, bold: true } : line)),
             alignment: "right",
-            margin: [0, 4],
+            margin: [0, subhead ? 4 : 3],
+            ...fill,
           };
         }
         return {
           text: claims.length > 0 ? claims.flat() : textRuns(cell),
           alignment: cell.classList.contains("r") ? "right" : "left",
           fontSize: 9,
-          bold: cell.tagName === "TH",
+          bold: cell.tagName === "TH" || subhead,
           color: cell.tagName === "TH" ? muted : ink,
           wordBreak: "break-all",
-          margin: [0, 4],
+          margin: [indent, subhead ? 4 : 3, 0, subhead ? 4 : 3],
+          ...fill,
         };
       })),
     },

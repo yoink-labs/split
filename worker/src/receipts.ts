@@ -7,17 +7,24 @@ export function attachments(db:D1Database,entry:Entry,user:string,payload:string
   if(photos===undefined) return [];
   if(entry.kind!=='expense' || !Array.isArray(photos) || photos.length>4) throw new InputError('Choose up to four receipt photos.');
   return photos.map(photo=>{
-    if(!photo || !validID(photo.id) || typeof photo.data!=='string' || photo.data.length>327680) throw new InputError('Choose a JPEG up to 240 KiB.');
-    let binary:string;
-    try {binary=atob(photo.data);} catch {throw new InputError('Invalid receipt image.');}
-    if(binary.startsWith('%PDF-')) throw new InputError('PDF receipts are unsupported. Convert the PDF to a JPEG and try again.');
-    const bytes=Uint8Array.from(binary,c=>c.charCodeAt(0));
-    if(bytes.length<4 || bytes[0]!==255 || bytes[1]!==216 || bytes[2]!==255 || bytes.at(-2)!==255 || bytes.at(-1)!==217) throw new InputError('Choose a JPEG receipt.');
+    if(!photo || !validID(photo.id)) throw new InputError('Choose a JPEG up to 240 KiB.');
+    const bytes=jpegBytes(photo.data);
     return db.prepare(`INSERT INTO receipts(entry_id,id,image) SELECT id,?,? FROM entries
       WHERE id=? AND author=? AND payload=? AND id NOT IN (SELECT entry_id FROM deleted_entries)
       ON CONFLICT(entry_id,id) DO NOTHING`).bind(photo.id,bytes.buffer,entry.id,user,payload);
   });
 }
+/** Decodes a base64 JPEG receipt of up to 240 KiB. */
+export function jpegBytes(data:unknown) {
+  if(typeof data!=='string' || data.length>327680) throw new InputError('Choose a JPEG up to 240 KiB.');
+  let binary:string;
+  try {binary=atob(data);} catch {throw new InputError('Invalid receipt image.');}
+  if(binary.startsWith('%PDF-')) throw new InputError('PDF receipts are unsupported. Convert the PDF to a JPEG and try again.');
+  const bytes=Uint8Array.from(binary,c=>c.charCodeAt(0));
+  if(bytes.length<4 || bytes[0]!==255 || bytes[1]!==216 || bytes[2]!==255 || bytes.at(-2)!==255 || bytes.at(-1)!==217) throw new InputError('Choose a JPEG receipt.');
+  return bytes;
+}
+export const jpegResponse=(image:number[]|ArrayBuffer)=>new Response(new Uint8Array(image),{headers:{'Content-Type':'image/jpeg','Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'}});
 export function viewerAmounts(entry:Entry, viewer:string) {
   const paid = entryPayers(entry).reduce((sum,payer)=>sum+(payer.memberID===viewer ? payer.amount : 0),0);
   const share = entry.splits.reduce((sum,split)=>sum+(split.memberID===viewer ? split.amount : 0),0);
@@ -42,7 +49,7 @@ export async function purchaseRoute(req:Request,env:Env,user:string,ownExpensesO
     }
     const result=await env.DB.prepare('SELECT image FROM receipts WHERE entry_id=? AND id=?').bind(id,photo).first<number[] | ArrayBuffer>('image');
     if(!result) throw new HTTPError(404,'Receipt not found.');
-    return new Response(new Uint8Array(result),{headers:{'Content-Type':'image/jpeg','Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'}});
+    return jpegResponse(result);
   }
   if(req.method!=='POST' || photo || action==='receipts') throw new HTTPError(404,'Unknown receipt action.');
   const raw:Entry=JSON.parse(row.payload);
@@ -50,6 +57,9 @@ export async function purchaseRoute(req:Request,env:Env,user:string,ownExpensesO
   const entry=resolveEntry(raw,new Map(seats.filter(s=>s.canonical_id).map(s=>[s.id,s.canonical_id!])));
   const bill=entry.bill;
   if(!bill || bill.closed) throw new HTTPError(409,'This receipt is closed or has no items.');
+  const refunded=new Set((await env.DB.prepare(`SELECT j.value FROM entries r, json_each(json_extract(r.payload,'$.refundItems')) j
+    WHERE r.group_id=? AND json_extract(r.payload,'$.refundOf')=? AND r.id NOT IN (SELECT entry_id FROM deleted_entries)`)
+    .bind(raw.groupID,id).all<{value:string}>()).results.map(r=>r.value));
   const b=await body(req);
   const ids=b.memberIDs;
   if(!Array.isArray(ids) || ids.length>50 || new Set(ids).size!==ids.length || ids.some(id=>!seats.some(s=>s.id===id && !s.canonical_id))) throw new InputError('Choose group members.');
@@ -57,11 +67,13 @@ export async function purchaseRoute(req:Request,env:Env,user:string,ownExpensesO
     const payer=seats.find(s=>s.id===entry.paidBy);
     if(row.viewer!==entry.paidBy && !(payer?.user_id===null && row.author===user)) throw new HTTPError(403,'Only the payer can close this receipt.');
     if(!ids.length && bill.items.some(i=>!i.memberIDs.length)) throw new InputError('Choose who will cover the open items.');
+    if(bill.items.some(i=>!i.memberIDs.length && refunded.has(i.id))) throw new HTTPError(409,'An open item was refunded. Delete its refund before closing this receipt.');
     for(const i of bill.items) if(!i.memberIDs.length) i.memberIDs=ids;
     bill.closed=true;
   } else {
     const item=bill.items.find(i=>i.id===b.itemID);
     if(!item) throw new HTTPError(404,'Item not found.');
+    if(refunded.has(item.id)) throw new HTTPError(409,'This item was refunded. Delete its refund before changing who had it.');
     if(!Array.isArray(b.original) || b.original.length>50 || new Set(b.original).size!==b.original.length || b.original.some(id=>!validID(id))) throw new InputError('Include the original claimants.');
     if(b.mergeEdits!==undefined && typeof b.mergeEdits!=='boolean') throw new InputError('Choose whether to merge edits.');
     let next=ids;

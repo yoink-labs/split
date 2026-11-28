@@ -16,8 +16,10 @@ enum GroupSummaryPDF {
         var categories = false
         var months = false
         var people = false
+        /// Who consumed what: receipt items with their tax and tip, and every other expense as one line.
+        var consumption = true
 
-        var isEmpty: Bool { !(totals || balances || history || categories || months || people) }
+        var isEmpty: Bool { !(totals || balances || history || categories || months || people || consumption) }
     }
 
     @MainActor
@@ -84,6 +86,9 @@ enum GroupSummaryPDF {
         }
         if sections.people {
             renderPeople(entries: recordedExpenses, writer: writer, name: name)
+        }
+        if sections.consumption {
+            renderConsumption(entries: recordedExpenses, writer: writer, name: name)
         }
         guard sections.history else { return writer.finish(showRateNote: showsConversion) }
 
@@ -185,6 +190,39 @@ enum GroupSummaryPDF {
         }
     }
 
+    /// Consumption by person for every expense, per recorded currency. Receipt items show their
+    /// tax and tip; other expenses are one line equal to the person's share.
+    private static func renderConsumption(entries: [LedgerEntry], writer: PDFWriter, name: (String) -> String) {
+        writer.section("Consumption by person")
+        guard !entries.isEmpty else {
+            writer.text("No expenses recorded.", .body)
+            return
+        }
+        writer.text("Receipt items include each person’s share of tax and tip. Other expenses show the person’s share. Refunds subtract what they gave back.", .detail)
+        let titles = Dictionary(entries.map { ($0.id, $0.title) }, uniquingKeysWith: { first, _ in first })
+        let refunds = Set(entries.filter(\.isRefund).map(\.id))
+        let currencies = Set(entries.map(\.currency)).sorted()
+        for currency in currencies {
+            guard let people = try? Consumption.report(entries, currency: currency), !people.isEmpty else { continue }
+            if currencies.count > 1 { writer.space(4); writer.text("Recorded in \(currency)", .heading) }
+            writer.draw(writer.columns(["Person", "Items", "Tax", "Tip", "Total"], style: .detail))
+            writer.rule()
+            for person in people.sorted(by: { (name($0.total.memberID), $0.total.memberID) < (name($1.total.memberID), $1.total.memberID) }) {
+                let total = person.total
+                writer.draw(writer.columns([name(total.memberID), Money.text(total.items, currency), Money.text(total.tax, currency),
+                                            Money.text(total.tip, currency), Money.text(total.amount, currency)]))
+                for line in person.lines {
+                    let entry = titles[line.entryID] ?? "Expense"
+                    // Item refund lines already read "Refund: <item>".
+                    let label = line.itemID == nil ? "    \(entry)" : refunds.contains(line.entryID) ? "    \(line.title)" : "    \(entry): \(line.title)"
+                    writer.draw(writer.columns([label, Money.text(line.part.items, currency), Money.text(line.part.tax, currency),
+                                                Money.text(line.part.tip, currency), Money.text(line.part.amount, currency)], style: .detail))
+                }
+            }
+            writer.rule()
+        }
+    }
+
     private static func renderHistory(_ rows: [(recorded: LedgerEntry, preferred: LedgerEntry?)], layout: Layout,
                                       home: String, writer: PDFWriter, name: (String) -> String) {
         if layout == .summary, !rows.isEmpty {
@@ -249,11 +287,18 @@ enum GroupSummaryPDF {
                     return Dictionary(parts.map { ($0.memberID, $0.amount) }, uniquingKeysWith: +)
                 }
                 let converted = projected == nil ? [:] : receiptShares(itemShares, recorded: shares, preferred: preferredShares)
+                let consumption = try? Consumption.bill(bill, payer: entry.paidBy)
                 let itemized = writer.tableRow("Itemized receipt", "", "Share incl. tax & tip", style: .detail)
                 detailRows.append(itemized)
                 for (index, item) in bill.items.enumerated() {
                     let itemPreferred = converted[index]
                     detailRows.append(line(item.title, gross[index], itemPreferred.map { $0.values.reduce(0, +) }))
+                    if let use = consumption?.items[index], use.tax > 0 || use.tip > 0 {
+                        let parts = ["Item \(Money.text(use.amount, entry.currency))"]
+                            + (use.tax > 0 ? ["tax \(Money.text(use.tax, entry.currency))"] : [])
+                            + (use.tip > 0 ? ["tip \(Money.text(use.tip, entry.currency))"] : [])
+                        detailRows.append(writer.makeRow("", amount: "", detail: parts.joined(separator: " + ")))
+                    }
                     for id in itemShares[index].keys.sorted(by: { (name($0), $0) < (name($1), $1) }) {
                         let label = item.memberIDs.isEmpty ? "    Unclaimed · \(name(id))" : "    \(name(id))"
                         detailRows.append(line(label, itemShares[index][id, default: 0], itemPreferred?[id]))
@@ -263,6 +308,14 @@ enum GroupSummaryPDF {
                     let includes = [(bill.tax, "tax"), (bill.tip, "tip")].filter { $0.0 > 0 }
                         .map { "\(Money.text($0.0, entry.currency)) \($0.1)" }
                     detailRows.append(writer.makeRow("Included on receipt", amount: "", detail: includes.joined(separator: "  /  ")))
+                }
+                if let consumption, !consumption.people.isEmpty {
+                    let currency = entry.currency
+                    detailRows.append(writer.columns(["Receipt by person (\(currency))", "Items", "Tax", "Tip", "Total"], style: .detail))
+                    for part in consumption.people.sorted(by: { (name($0.memberID), $0.memberID) < (name($1.memberID), $1.memberID) }) {
+                        detailRows.append(writer.columns([name(part.memberID), Money.text(part.items, currency), Money.text(part.tax, currency),
+                                                          Money.text(part.tip, currency), Money.text(part.amount, currency)]))
+                    }
                 }
             }
             let notes = writer.lines(entry.notes ?? "", .detail)
@@ -430,6 +483,17 @@ private final class PDFWriter {
             cell(middle, detail: middleDetail, style: style, x: firstWidth, width: middleWidth - 12, rightAligned: middleAlignedRight),
             cell(last, detail: rightDetail, style: style, x: lastX, width: width - lastX, rightAligned: true)
         ])
+    }
+
+    /// A left label and right-aligned amount columns (Person, Items, Tax, Tip, Total).
+    func columns(_ values: [String], style: Style = .body) -> Row {
+        guard let first = values.first else { return Row(cells: []) }
+        let firstWidth = width * 0.36
+        let rest = values.dropFirst()
+        let each = rest.isEmpty ? 0 : (width - firstWidth) / CGFloat(rest.count)
+        return Row(cells: [cell(first, style: style, x: 0, width: firstWidth - 8)] + rest.enumerated().map { index, value in
+            cell(value, style: style, x: firstWidth + CGFloat(index) * each, width: each - 4, rightAligned: true)
+        })
     }
 
     private func cell(_ value: String, detail: String? = nil, style: Style = .body,

@@ -66,3 +66,89 @@ export function breakdown(entries:Entry[],members:{id:string;name:string}[],curr
       share:expenses.reduce((s,e)=>s+entrySign(e)*(e.splits.find(p=>p.memberID===m.id)?.amount??0),0),net:net[m.id]??0,
       expenses:expenses.filter(e=>entryPayers(e).some(p=>p.memberID===m.id) || e.splits.some(p=>p.memberID===m.id)).map(e=>e.id)}))};
 }
+
+/** Spread total over weights by largest remainder; all zeros when there is nothing to spread. */
+function spread(total:number,weights:number[]) {
+  return total>0 && weights.some(w=>w>0) ? allocate(total,weights,Number.MAX_SAFE_INTEGER) : weights.map(()=>0);
+}
+export interface ConsumptionPart { memberID:string; amount:number; items:number; tax:number; tip:number }
+export interface ItemConsumption { id:string; title:string; amount:number; gross:number; tax:number; tip:number; open:boolean; portions:ConsumptionPart[] }
+/**
+ * Who consumed what on an itemized bill, exact to the cent. Each portion is the same amount
+ * `itemSplit` charges, broken into its item price, tax and tip. Item price, tax and tip are each
+ * spread by largest remainder, so every column adds up to the receipt and every person's three
+ * parts add up to their share. No part is ever negative.
+ */
+export function billConsumption(b:Bill,payer:string) {
+  const gross=grossItems(b);
+  const extras=gross.map(i=>i.gross-i.amount);
+  const taxes=spread(b.tax,extras);
+  const items:ItemConsumption[]=gross.map((i,index)=>{
+    const raw=itemPortions(i,payer);
+    const ids=[...new Set(raw.map(p=>p.memberID))];
+    const amounts=ids.map(id=>raw.filter(p=>p.memberID===id).reduce((s,p)=>s+p.amount,0));
+    const base=spread(i.amount,amounts);
+    const rest=amounts.map((a,k)=>a-base[k]);
+    const tax=spread(taxes[index],rest);
+    return {id:i.id,title:i.title,amount:i.amount,gross:i.gross,tax:taxes[index],tip:extras[index]-taxes[index],open:!i.memberIDs.length,
+      portions:ids.map((memberID,k)=>({memberID,amount:amounts[k],items:base[k],tax:tax[k],tip:rest[k]-tax[k]}))};
+  });
+  const people=new Map<string,ConsumptionPart>();
+  for(const p of items.flatMap(i=>i.portions)) {
+    const sum=people.get(p.memberID)??{memberID:p.memberID,amount:0,items:0,tax:0,tip:0};
+    sum.amount+=p.amount; sum.items+=p.items; sum.tax+=p.tax; sum.tip+=p.tip;
+    people.set(p.memberID,sum);
+  }
+  return {items,people:[...people.values()]};
+}
+/**
+ * One consumption line per person: receipt items for itemized expenses, otherwise the expense itself.
+ * Refunds give consumption back as negative lines: an item refund returns exactly those items'
+ * portions (item, tax and tip), any other refund one line per credited person.
+ */
+export function entryConsumption(e:Entry,all:Entry[]=[]) {
+  if(e.kind==='refund') {
+    const original=e.refundItems && all.find(o=>o.id===e.refundOf && o.kind==='expense');
+    if(original && original.bill) {
+      const items=billConsumption(original.bill,original.paidBy).items.filter(i=>e.refundItems!.includes(i.id));
+      const lines=items.flatMap(i=>i.portions.filter(p=>p.amount).map(p=>({memberID:p.memberID,amount:-p.amount,items:-p.items,tax:-p.tax,tip:-p.tip,
+        entryID:e.id,itemID:i.id as string|null,title:'Refund: '+i.title})));
+      const exact=e.splits.every(s=>lines.filter(l=>l.memberID===s.memberID).reduce((n,l)=>n-l.amount,0)===s.amount) &&
+        lines.every(l=>e.splits.some(s=>s.memberID===l.memberID));
+      if(exact) return lines;
+    }
+    return e.splits.filter(s=>s.amount).map(s=>({memberID:s.memberID,amount:-s.amount,items:-s.amount,tax:0,tip:0,entryID:e.id,itemID:null as string|null,title:e.title}));
+  }
+  if(e.bill) return billConsumption(e.bill,e.paidBy).items.flatMap(i=>i.portions.map(p=>({...p,entryID:e.id,itemID:i.id as string|null,title:i.title})));
+  return e.splits.filter(s=>s.amount).map(s=>({memberID:s.memberID,amount:s.amount,items:s.amount,tax:0,tip:0,entryID:e.id,itemID:null as string|null,title:e.title}));
+}
+/** Consumption by person across expenses and refunds in one currency: their lines and item, tax and tip totals. */
+export function consumptionReport(entries:Entry[],currency:string) {
+  const expenses=entries.filter(e=>(e.kind==='expense' || e.kind==='refund') && e.currency===currency)
+    .sort((a,b)=>a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
+  const people=new Map<string,{memberID:string;amount:number;items:number;tax:number;tip:number;lines:ReturnType<typeof entryConsumption>}>();
+  for(const line of expenses.flatMap(e=>entryConsumption(e,entries))) {
+    const p=people.get(line.memberID)??{memberID:line.memberID,amount:0,items:0,tax:0,tip:0,lines:[]};
+    p.amount+=line.amount; p.items+=line.items; p.tax+=line.tax; p.tip+=line.tip; p.lines.push(line);
+    people.set(line.memberID,p);
+  }
+  return {currency,people:[...people.values()]};
+}
+/**
+ * Refunding specific receipt items gives each person back exactly what those items cost them,
+ * tax and tip included, using the same portions the expense charged.
+ */
+export function itemRefund(original:Entry,itemIDs:string[]) {
+  if(!original.bill) throw new InputError('Only an itemized expense can refund specific items.');
+  if(!itemIDs.length || new Set(itemIDs).size!==itemIDs.length) throw new InputError('Choose the items to refund.');
+  const {items}=billConsumption(original.bill,original.paidBy);
+  const chosen=itemIDs.map(id=>{
+    const item=items.find(i=>i.id===id);
+    if(!item) throw new InputError('Choose items from the original receipt.');
+    return item;
+  });
+  const totals=new Map<string,number>();
+  for(const p of chosen.flatMap(i=>i.portions)) totals.set(p.memberID,(totals.get(p.memberID)??0)+p.amount);
+  const splits=[...totals].map(([memberID,amount])=>({memberID,amount})).filter(s=>s.amount);
+  return {amount:splits.reduce((s,p)=>s+p.amount,0),splits};
+}

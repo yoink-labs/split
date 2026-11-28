@@ -11,6 +11,9 @@ struct GroupReceiptsView: View {
     @State private var editingDraft: ReceiptDraft?
     @State private var pendingDraft: ReceiptDraft?
     @State private var query = ""
+    @State private var uploading = false
+    @State private var inboxReload = 0
+    @State private var inboxCount = 0
 
     private var drafts: [ReceiptDraft] { store.receiptDrafts(in: group.id) }
     private var receipts: [LedgerEntry] { entries.filter(\.hasReceipt) }
@@ -22,12 +25,17 @@ struct GroupReceiptsView: View {
                 SplitActionButton(title: "Capture receipt", symbol: "camera", prominent: true) {
                     editingDraft = ReceiptDraft(groupID: group.id)
                 }
+                SplitActionButton(title: "Upload to inbox", symbol: "tray.and.arrow.down") { uploading = true }
                 SplitActionButton(title: "Add expense", symbol: "plus", action: addExpense)
             }
 
+            ReceiptInboxSection(group: group, entries: entries, reload: inboxReload, search: search) { inboxCount = $0 }
+
             if receipts.isEmpty && drafts.isEmpty {
-                Card {
-                    EmptyPanel(title: "No receipts yet", message: "Capture and name a photo to save it for later, or add a receipt to an expense.", symbol: "receipt")
+                if inboxCount == 0 {
+                    Card {
+                        EmptyPanel(title: "No receipts yet", message: "Upload a photo to the group inbox to pair with an expense later, or add a receipt to an expense.", symbol: "receipt")
+                    }
                 }
             } else {
                 TextField("Find a receipt", text: $query)
@@ -63,10 +71,13 @@ struct GroupReceiptsView: View {
                 receiptSection("Open receipts", matchingReceipts.filter { $0.bill?.closed == false })
                 receiptSection("Closed receipts & photos", matchingReceipts.filter { $0.bill?.closed != false })
 
-                if matchingDrafts.isEmpty && matchingReceipts.isEmpty {
+                if matchingDrafts.isEmpty && matchingReceipts.isEmpty && !search.isEmpty {
                     ContentUnavailableView.search(text: search)
                 }
             }
+        }
+        .sheet(isPresented: $uploading) {
+            InboxUploadView(group: group) { inboxReload += 1 }
         }
         .sheet(item: $editingDraft, onDismiss: {
             if let draft = pendingDraft {

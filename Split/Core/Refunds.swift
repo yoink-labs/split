@@ -11,6 +11,9 @@ enum Refunds {
             .sorted { $0.createdAt < $1.createdAt }
     }
 
+    /// Receipt item IDs already given back by these refunds. Each item can be refunded once.
+    static func refundedItems(_ refunds: [LedgerEntry]) -> Set<String> { Set(refunds.flatMap { $0.refundItems ?? [] }) }
+
     static func refundedTotal(_ refunds: [LedgerEntry]) -> Int64 { refunds.reduce(0) { $0 + $1.amount } }
 
     /// What each person who shared the original can still be credited.
@@ -56,6 +59,17 @@ enum Refunds {
         guard (refund.exchange == nil) == (original.exchange == nil),
               refund.exchange == nil || refund.exchange?.target == original.exchange?.target else {
             throw LedgerError.invalid("Use the original expense’s settlement currency.")
+        }
+        if let ids = refund.refundItems {
+            guard others.allSatisfy({ ($0.refundItems ?? []).allSatisfy { !ids.contains($0) } }) else {
+                throw LedgerError.invalid("One of these items has already been refunded.")
+            }
+            let exact = try Consumption.itemRefund(original, itemIDs: ids)
+            let credits = refund.splits.filter { $0.amount != 0 }
+            guard refund.amount == exact.amount, credits.count == exact.splits.count,
+                  exact.splits.allSatisfy({ p in credits.contains { $0.memberID == p.memberID && $0.amount == p.amount } }) else {
+                throw LedgerError.invalid("Refresh the item refund: credits must match what each person paid for these items.")
+            }
         }
         guard refundedTotal(others) + refund.amount <= original.amount else {
             throw LedgerError.invalid("Refunds can’t exceed the original expense of \(Money.text(original.amount, original.currency)).")

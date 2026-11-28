@@ -20,7 +20,7 @@ export interface Payer { memberID: string; amount: number }
 /** kind 'refund': paidBy received the money back (from a vendor, or holds it for a credit) and splits are the credits
  * owed to each person. Its balance effect is the mirror image of an expense. refundOf links the original expense. */
 export type EntryKind = 'expense' | 'settlement' | 'refund';
-export interface Entry { handled?: boolean; pending?: boolean; pendingNote?: string; refundOf?: string; exchange?:Exchange; bill?:Bill; category?:string; receiptIDs?:string[]; payers?:Payer[]; notes?:string; id: string; groupID: string; title: string; amount: number; currency: string; paidBy: string; splits: Portion[]; kind: EntryKind; splitMode: SplitMode; createdAt: string }
+export interface Entry { handled?: boolean; pending?: boolean; pendingNote?: string; refundOf?: string; refundItems?: string[]; exchange?:Exchange; bill?:Bill; category?:string; receiptIDs?:string[]; payers?:Payer[]; notes?:string; id: string; groupID: string; title: string; amount: number; currency: string; paidBy: string; splits: Portion[]; kind: EntryKind; splitMode: SplitMode; createdAt: string }
 export class InputError extends Error {}
 export function allocate(total: number, weights: number[], maximumTotal = 100_000_000_000): number[] {
   if (!Number.isSafeInteger(total) || total <= 0 || total > maximumTotal || !weights.length || weights.length > 50 || weights.some(w => !Number.isSafeInteger(w) || w < 0 || w > 100_000_000_000) || weights.every(w => w === 0)) throw new InputError('Enter valid amounts and at least one participant.');
@@ -75,7 +75,12 @@ export function validateEntry(value: unknown, memberIDs: string[], previous?:Bil
     if(e.refundOf===e.id) throw new InputError('A refund cannot refund itself.');
     if(e.splits.every(s=>s.memberID===e.paidBy || s.amount===0)) throw new InputError('Credit the refund to someone other than the person who received it.');
     if(e.refundOf!=null) extras.refundOf=e.refundOf;
-  } else if(e.refundOf!=null) throw new InputError('Only refunds can refer to an original expense.');
+    if(e.refundItems!=null) {
+      if(e.refundOf==null || !Array.isArray(e.refundItems) || !e.refundItems.length || e.refundItems.length>50 ||
+         new Set(e.refundItems).size!==e.refundItems.length || e.refundItems.some(id=>!validID(id))) throw new InputError('Choose items from the original receipt to refund.');
+      extras.refundItems=[...e.refundItems];
+    }
+  } else if(e.refundOf!=null || e.refundItems!=null) throw new InputError('Only refunds can refer to an original expense.');
   if(e.payers!=null) extras.payers=readPayers(e.payers,memberIDs,e.amount,e.paidBy,e.kind);
   if(e.notes!=null) {
     if(typeof e.notes!=='string') throw new InputError('Write a note of up to 2,000 characters.');

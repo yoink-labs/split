@@ -161,6 +161,12 @@ split items claim --group GROUP_ID --expense EXPENSE_ID --item ITEM_ID --member 
 split items close --group GROUP_ID --expense EXPENSE_ID --participants '["MEMBER_ID"]'
 split receipts list --group GROUP_ID --expense EXPENSE_ID
 split receipts get --group GROUP_ID --expense EXPENSE_ID --photo PHOTO_ID
+split receipts upload --group GROUP_ID --photo receipt.jpg --note "Taxi"   # to the group inbox
+split receipts inbox --group GROUP_ID
+split receipts pair --group GROUP_ID --photo RECEIPT_ID --expense EXPENSE_ID
+split receipts move --group GROUP_ID --expense EXPENSE_ID --photo RECEIPT_ID --to OTHER_EXPENSE_ID   # or --to inbox
+split receipts delete --group GROUP_ID --photo RECEIPT_ID
+split items report --group GROUP_ID [--member MEMBER_ID]   # who consumed what, with tax and tip
 ```
 
 Claim defaults to adding yourself. Pass a group member ID to add a second claimant or act for a placeholder. Close defaults to everyone for the remaining purchases. Each group report keeps currencies separate, includes member expense IDs, and returns full expense detail when filtered by member. The CLI returns JPEG content as base64 JSON. MCP returns JPEG image content. Take or select and review receipt photos in the iOS app. `expenses add` accepts a category and equal, exact, percent or shares allocation.

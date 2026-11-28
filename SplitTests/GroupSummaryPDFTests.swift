@@ -24,7 +24,7 @@ final class GroupSummaryPDFTests: XCTestCase {
             splits: [Portion(memberID: "one", amount: 211)], category: "Dining", kind: "settlement"
         )
         let sections = GroupSummaryPDF.Sections(totals: false, balances: false, history: false,
-                                                categories: true, months: true, people: true)
+                                                categories: true, months: true, people: true, consumption: false)
         let data = try GroupSummaryPDF.render(group: group, entries: [dinner, lunch, payment],
                                               fx: FXStore(fileURL: nil), sections: sections)
         let text = try XCTUnwrap(PDFDocument(data: data)?.string)
@@ -92,12 +92,14 @@ final class GroupSummaryPDFTests: XCTestCase {
         XCTAssertTrue(text.contains("Share incl. tax & tip"))
         XCTAssertTrue(text.contains(Money.text(601, "CAD")))
 
-        let detailed = try GroupSummaryPDF.render(group: group, entries: [meal], fx: fx, layout: .expenses)
+        let detailed = try GroupSummaryPDF.render(group: group, entries: [meal], fx: fx, layout: .expenses,
+                                                  sections: GroupSummaryPDF.Sections(consumption: false))
         let details = try XCTUnwrap(PDFDocument(data: detailed)?.string)
         XCTAssertTrue(details.contains(meal.title))
         XCTAssertFalse(details.contains("Market dumplings"))
 
-        let summary = try GroupSummaryPDF.render(group: group, entries: [meal], fx: fx, layout: .summary)
+        let summary = try GroupSummaryPDF.render(group: group, entries: [meal], fx: fx, layout: .summary,
+                                                  sections: GroupSummaryPDF.Sections(consumption: false))
         let summaryText = try XCTUnwrap(PDFDocument(data: summary)?.string)
         XCTAssertTrue(summaryText.contains("Suggested payments"))
         XCTAssertTrue(summaryText.contains(meal.title))

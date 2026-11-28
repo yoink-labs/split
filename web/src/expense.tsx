@@ -212,7 +212,9 @@ function Composer({ g, existing }: { g: Group; existing?: Expense }) {
           submit={async (f) => {
             if (scanning && mode === "items") throw new Error("Wait for photo reading to finish before saving.");
             const files = (f.getAll("photos") as File[]).filter((file) => file.size);
-            if (files.length > 4) throw new Error("Choose up to four photos.");
+            const attached = existing?.receiptIDs?.length ?? 0;
+            if (files.length + attached > 4)
+              throw new Error(attached ? `This expense has ${attached} of 4 receipt photos. Choose up to ${4 - attached} more, or move one to the receipts inbox first.` : "Choose up to four photos.");
             const photos = await Promise.all(
               files.map((file) => {
                 let photo = photosByFile.current.get(file);
@@ -456,7 +458,7 @@ function Composer({ g, existing }: { g: Group; existing?: Expense }) {
                   options={[
                     { value: "equal", label: "Equally" }, { value: "exact", label: "Exact amounts" },
                     { value: "percent", label: "Percentages" }, { value: "shares", label: "Shares (weights)" },
-                    { value: "adjustment", label: "Equal + adjustments" }, { value: "items", label: "Itemized receipt" },
+                    { value: "adjustment", label: "Equal + adjustments" }, { value: "items", label: "Itemized (items, tax & tip)" },
                   ]} />
               </div>
 
@@ -641,7 +643,7 @@ function Composer({ g, existing }: { g: Group; existing?: Expense }) {
                     onChange={(event) => void suggestPhotos(Array.from(event.currentTarget.files ?? []))}
                   />
                   <span className="receipt-upload-label">Choose receipt photos</span>
-                  <span className="muted">Up to 4 images</span>
+                  <span className="muted">{existing?.receiptIDs?.length ? `${existing.receiptIDs.length} of 4 attached · up to ${Math.max(0, 4 - existing.receiptIDs.length)} more` : "Up to 4 images"}</span>
                 </label>
                 {fileNames.length > 0 && <p className="receipt-file-list">{fileNames.join(", ")}</p>}
                 {fileNames.length > 0 && (

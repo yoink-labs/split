@@ -14,10 +14,12 @@ import { LocalAIScreen, type Connection } from "./ai";
 import {
   api,
   itemSplit,
+  MAX_RECEIPTS,
   type ActiveInvite,
   type Expense,
   type ExpenseComment,
   type Group,
+  type InboxReceipt,
   type Snapshot,
   type PaymentMethod,
 } from "./data";
@@ -87,6 +89,7 @@ function DemoLedger({ onExit }: { onExit: () => void }) {
   const claimEmails = useRef<Record<string, Record<string, string>>>({});
   const invitesRef = useRef<Record<string, ActiveInvite[]>>(initial.invites);
   const photosRef = useRef<Record<string, Blob>>(initial.photos);
+  const inboxRef = useRef<InboxReceipt[]>(initial.inbox);
   const connections = useRef<Connection[]>([{
     id: "demo-computer", name: "Sample laptop", created_at: Date.now() - 3 * 86_400_000,
     last_used: Date.now() - 600_000, scope: "cli", is_remote: 0,
@@ -131,6 +134,83 @@ function DemoLedger({ onExit }: { onExit: () => void }) {
           : undefined;
         if (!blob) throw new Error("Receipt photo unavailable.");
         return blob as T;
+      }
+
+      // Receipts inbox: list / upload, photo, delete, pair, and move between expenses
+      const myMember = (gid: string) => data.groups.find((g) => g.id === gid)?.members.find((m) => m.userID === DEMO_USER);
+      const inboxList = path.match(/^\/v1\/groups\/([\w-]+)\/receipts$/);
+      if (inboxList) {
+        const gid = inboxList[1];
+        const me = myMember(gid);
+        if (!me) throw new Error("Group unavailable.");
+        if (body === undefined) {
+          return { receipts: inboxRef.current.filter((r) => r.groupID === gid).sort((a, b) => b.createdAt.localeCompare(a.createdAt)) } as T;
+        }
+        const { id, data: image, note } = body as { id: string; data: string; note?: string };
+        const [stored] = storePhotos([{ id, data: image }]);
+        inboxRef.current = [
+          { id: stored, groupID: gid, uploadedBy: me.id, createdAt: new Date().toISOString(), ...(note ? { note } : {}), bytes: Math.floor((image.length * 3) / 4) },
+          ...inboxRef.current,
+        ];
+        return { id: stored } as T;
+      }
+      const inboxPhoto = path.match(/^\/v1\/groups\/([\w-]+)\/receipts\/([\w-]+)$/);
+      if (inboxPhoto && photo) {
+        const [, gid, rid] = inboxPhoto;
+        const blob = inboxRef.current.some((r) => r.id === rid && r.groupID === gid) ? photosRef.current[rid] : undefined;
+        if (!blob) throw new Error("Receipt photo unavailable.");
+        return blob as T;
+      }
+      const inboxAction = path.match(/^\/v1\/groups\/([\w-]+)\/receipts\/([\w-]+)\/(delete|pair)$/);
+      if (inboxAction && body) {
+        const [, gid, rid, action] = inboxAction;
+        const receipt = inboxRef.current.find((r) => r.id === rid && r.groupID === gid);
+        if (!receipt) throw new Error("This receipt is no longer in the inbox.");
+        if (action === "delete") {
+          if (receipt.uploadedBy !== myMember(gid)?.id) throw new Error("Only the person who uploaded this receipt can delete it.");
+          inboxRef.current = inboxRef.current.filter((r) => r.id !== rid);
+          delete photosRef.current[rid];
+          return { ok: true } as T;
+        }
+        const { entryID } = body as { entryID: string };
+        const entry = data.entries.find((e) => e.id === entryID && e.groupID === gid && e.kind === "expense");
+        if (!entry) throw new Error("Choose an expense in this group.");
+        if ((entry.receiptIDs?.length ?? 0) >= MAX_RECEIPTS) throw new Error(`This expense already has ${MAX_RECEIPTS} receipt photos.`);
+        inboxRef.current = inboxRef.current.filter((r) => r.id !== rid);
+        setData((prev) => ({
+          ...prev,
+          entries: prev.entries.map((e) => (e.id === entryID ? { ...e, receiptIDs: [...(e.receiptIDs ?? []), rid] } : e)),
+        }));
+        return { ok: true, entryID, receiptID: rid } as T;
+      }
+      const moveMatch = path.match(/^\/v1\/entries\/([\w-]+)\/receipts\/([\w-]+)\/move$/);
+      if (moveMatch && body) {
+        const [, fromID, rid] = moveMatch;
+        const { entryID: toID } = body as { entryID: string | null };
+        const from = data.entries.find((e) => e.id === fromID);
+        if (!from?.receiptIDs?.includes(rid)) throw new Error("Receipt photo unavailable.");
+        if (toID !== null) {
+          const to = data.entries.find((e) => e.id === toID && e.groupID === from.groupID && e.kind === "expense");
+          if (!to || toID === fromID) throw new Error("Choose another expense in this group.");
+          if ((to.receiptIDs?.length ?? 0) >= MAX_RECEIPTS) throw new Error(`This expense already has ${MAX_RECEIPTS} receipt photos.`);
+        } else {
+          inboxRef.current = [
+            { id: rid, groupID: from.groupID, uploadedBy: myMember(from.groupID)?.id ?? from.paidBy, createdAt: new Date().toISOString(), note: from.title, bytes: photosRef.current[rid]?.size ?? 0 },
+            ...inboxRef.current,
+          ];
+        }
+        setData((prev) => ({
+          ...prev,
+          entries: prev.entries.map((e) => {
+            if (e.id === fromID) {
+              const rest = (e.receiptIDs ?? []).filter((id) => id !== rid);
+              const { receiptIDs: _r, ...without } = e;
+              return rest.length ? { ...e, receiptIDs: rest } : without;
+            }
+            return e.id === toID ? { ...e, receiptIDs: [...(e.receiptIDs ?? []), rid] } : e;
+          }),
+        }));
+        return { ok: true, entryID: toID, receiptID: rid } as T;
       }
 
       // Comments GET / POST

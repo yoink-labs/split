@@ -31,10 +31,11 @@ struct GroupPDFExportView: View {
                 Toggle("By category", isOn: $sections.categories)
                 Toggle("By month", isOn: $sections.months)
                 Toggle("By person", isOn: $sections.people)
+                Toggle("Consumption by person", isOn: $sections.consumption)
             } header: {
                 Text("Spending breakdowns")
             } footer: {
-                Text("Breakdowns use the recorded currencies. The person breakdown shows how much each person paid and their share.")
+                Text("Breakdowns use the recorded currencies. The person breakdown shows how much each person paid and their share. Consumption lists what each person had, with receipt items split into item price, tax and tip.")
             }
             Section {
                 Button("Export PDF", systemImage: "square.and.arrow.up", action: export)

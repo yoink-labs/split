@@ -14,6 +14,9 @@ is noted next to each release. The CLI is versioned separately with
 
 - Open the Analytics tab on the web for spending over time, by category, by person (paid against share) and by currency in your home currency. Filter by date range and member, and select any bar or row to see its transactions.
 - Record refunds and credits on web, iOS and the CLI/MCP. Refund part or all of an expense to some or all of the people who shared it, or give a standalone credit. Refunds lower the right shares and balances to the cent, and can never exceed the original expense or one person's share. Splitwise rows with a negative cost import as refunds.
+- Keep receipts in a group Receipts inbox on web, iOS and the CLI/MCP. Upload a receipt before its expense exists, pair it later, or move a receipt to another expense or back to the inbox. Any expense can hold up to four receipts.
+- Refund specific receipt items. Everyone who had an item gets back exactly what it cost them, tax and tip included, and each item can be refunded once.
+- Every group report, including the PDF, can show consumption by person: who had each item, item totals, and how tax and tip were allocated, exact to the cent. Refunds are netted out. `split items report` gives the same breakdown.
 - Mark any expense pending with an optional note while its cost may still change. Pending expenses count toward balances, balances also show the confirmed-only amount, and settle up warns while anything is pending. Resolve one by confirming it, adjusting its amount, or turning it into a refund.
 - Manage group members, claim addresses, and invitations from the Members tab on web and iOS. Email or resend invitations and send sign-in reminders.
 - Open the Transactions tab on web and iOS to see each expense or settlement and its payment split.

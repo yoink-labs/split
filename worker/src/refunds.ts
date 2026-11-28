@@ -3,6 +3,7 @@ import { HTTPError, json, body } from './http';
 import { Entry, entryPayers, InputError, validateEntry } from './ledger';
 import { adjustedEntry, refundRoom } from './refundMath';
 import { resolveEntry } from './people';
+import { itemRefund } from './items';
 
 const live = 'id NOT IN (SELECT entry_id FROM deleted_entries)';
 const linked = `group_id=? AND json_extract(payload,'$.refundOf')=? AND id<>? AND ${live}`;
@@ -52,7 +53,9 @@ export async function refundGuard(db: D1Database, refund: Entry, aliases: Map<st
   if (!row) throw new HTTPError(404, 'Original expense not found.');
   const payload = originalPayload ?? row.payload;
   const others = await linkedRefunds(db, refund.groupID, refund.refundOf, refund.id);
-  checkRefundsFit(JSON.parse(payload), [...others, refund], aliases);
+  const original: Entry = JSON.parse(payload);
+  if (refund.refundItems) checkItemRefund(resolveEntry(original, aliases), resolveEntry(refund, aliases), others);
+  checkRefundsFit(original, [...others, refund], aliases);
   const fit = refundsGuard(refund.groupID, refund.refundOf, refund.id, others);
   return {
     sql: `EXISTS (SELECT 1 FROM entries WHERE id=? AND group_id=? AND payload=? AND ${live}) AND ${fit.sql}`,
@@ -60,11 +63,23 @@ export async function refundGuard(db: D1Database, refund: Entry, aliases: Map<st
   };
 }
 
+/** A refund of specific items must credit exactly what those items cost each person, and each item is refunded once. */
+export function checkItemRefund(original: Entry, refund: Entry, others: Entry[]) {
+  const ids = refund.refundItems!;
+  if (others.some(r => r.refundItems?.some(id => ids.includes(id)))) throw new InputError('One of these items has already been refunded.');
+  const exact = itemRefund(original, ids);
+  if (refund.amount !== exact.amount || refund.splits.filter(s => s.amount).length !== exact.splits.length ||
+      exact.splits.some(p => !refund.splits.some(s => s.memberID === p.memberID && s.amount === p.amount)))
+    throw new InputError('Refresh the item refund: credits must match what each person paid for these items.');
+}
+
 /** An edited expense must still cover its refunds. */
 export async function refundedExpenseGuard(db: D1Database, expense: Entry, aliases: Map<string,string>): Promise<Guard | undefined> {
   if (expense.kind !== 'expense') return undefined;
   const refunds = await linkedRefunds(db, expense.groupID, expense.id, expense.id);
   if (!refunds.length) return undefined;
+  if (refunds.some(r => r.refundItems?.some(id => !expense.bill?.items.some(i => i.id === id))))
+    throw new InputError('This expense has item refunds. Keep the refunded items, or delete those refunds first.');
   try { checkRefundsFit(expense, refunds, aliases); }
   catch (error) {
     if (error instanceof InputError) throw new InputError('This expense has refunds. ' + error.message + ' Edit or delete the refunds first.');

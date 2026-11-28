@@ -11,7 +11,16 @@ export {
   entryPayers,
   simplify,
 } from "../../worker/src/ledger";
-export { itemSplit, itemPortions, grossItems, breakdown } from "../../worker/src/items";
+export {
+  itemSplit,
+  itemPortions,
+  grossItems,
+  breakdown,
+  billConsumption,
+  entryConsumption,
+  consumptionReport,
+} from "../../worker/src/items";
+export type { ConsumptionPart, ItemConsumption } from "../../worker/src/items";
 export { sign, isRefund, isSpend, refundsOf, pendingView } from "../../worker/src/refundMath";
 export { settlementEntry } from "../../worker/src/exchange";
 
@@ -65,6 +74,19 @@ export interface Snapshot {
   settlementRequests?: Expense[];
   paymentMethods?: PaymentMethod[];
 }
+
+/** A receipt photo in a group's inbox, not yet paired with an expense. */
+export interface InboxReceipt {
+  id: string;
+  groupID: string;
+  uploadedBy: string;
+  createdAt: string;
+  note?: string | null;
+  bytes: number;
+}
+
+/** Most receipt photos one expense can hold. */
+export const MAX_RECEIPTS = 4;
 
 export interface ExpenseComment {
   id: string;

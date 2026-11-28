@@ -2,6 +2,7 @@ import { legacyPayment, paymentMethods, saveAccountPayments } from './paymentPro
 import { preserveStatementAmount } from './exchange';
 import {groupTools,generateRecurring} from './groupTools';
 import { purchaseRoute, attachments } from './receipts';
+import { receiptInboxRoute } from './receiptInbox';
 import { optionalDescription, socialRoute } from './social';
 import { claimSeat, fetchVerifiedProfile, lookup, refreshIdentity, resolveEntry } from './people';
 import { activeGroupMember, activePlaceholder, emailInvitation, newInviteCode, requireActiveMember, reserveMemberEmail, sendMemberEmail, tokenHash } from './memberEmail';
@@ -66,6 +67,8 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
   const url=new URL(request.url), path=url.pathname;
   const extra=await groupTools(request,env,userID);
   if(extra) return extra;
+  const inbox=await receiptInboxRoute(request,env,userID);
+  if(inbox) return inbox;
   const purchase=await purchaseRoute(request,env,userID);
   if(purchase) return purchase;
   const social=await socialRoute(request,env,userID);
@@ -504,6 +507,6 @@ export default {
      await refreshIdentity(env,userID);
    }
    return await handle(request,env,userID);
-  }catch(error){if(error instanceof Error && /Receipt limit reached|bytes BETWEEN/.test(error.message)) return json({error:'Receipt storage limit reached.'},409);if(error instanceof Error && /Group is full|Account group limit reached/.test(error.message)) return json({error:'Member or account group limit reached.'},409);if(error instanceof HTTPError)return json({error:error.message},error.status);if(error instanceof InputError)return json({error:error.message},422);console.error(JSON.stringify({event:'request_failed',type:error instanceof Error?error.name:'unknown'}));return json({error:'Could not save this change. Please retry.'},500);}
+  }catch(error){if(error instanceof Error && /Receipt inbox is full/.test(error.message)) return json({error:'This group’s receipt inbox is full. Pair or delete a receipt first.'},409);if(error instanceof Error && /Receipt limit reached|bytes BETWEEN/.test(error.message)) return json({error:'Receipt storage limit reached.'},409);if(error instanceof Error && /Group is full|Account group limit reached/.test(error.message)) return json({error:'Member or account group limit reached.'},409);if(error instanceof HTTPError)return json({error:error.message},error.status);if(error instanceof InputError)return json({error:error.message},422);console.error(JSON.stringify({event:'request_failed',type:error instanceof Error?error.name:'unknown'}));return json({error:'Could not save this change. Please retry.'},500);}
  }
 } satisfies ExportedHandler<Env>;

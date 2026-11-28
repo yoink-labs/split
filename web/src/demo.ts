@@ -173,6 +173,31 @@ export function createDemoState() {
     ],
   };
 
+  const airbnbGroup: Group = {
+    id: "demo-airbnb", name: "Airbnb Weekend", kind: "trip", currency: "USD",
+    members: [
+      { id: "airbnb-amine", name: "Amine", userID: null },
+      { id: "airbnb-alex", name: "Alex", userID: DEMO_USER },
+      { id: "airbnb-maya", name: "Maya", userID: null },
+    ],
+  };
+  const [amine, alex, maya] = airbnbGroup.members.map(person => person.id);
+  const airbnb: Expense = {
+    id: "demo-airbnb-stay", groupID: airbnbGroup.id, title: "Airbnb", kind: "expense",
+    amount: 90000, currency: "USD", paidBy: amine, splitMode: "equal", editable: true, category: "Lodging",
+    splits: [amine, alex, maya].map(memberID => ({ memberID, amount: 30000 })), createdAt: "2026-11-20T12:00:00Z",
+  };
+  const airbnbEntries: Expense[] = [
+    airbnb,
+    ...[alex, maya].map((guest): Expense => ({
+      id: `demo-airbnb-payment-${guest}`, groupID: airbnbGroup.id, title: "Settlement", kind: "settlement",
+      amount: 30000, currency: "USD", paidBy: guest, splits: [{ memberID: amine, amount: 30000 }],
+      splitMode: "exact", editable: true, createdAt: "2026-11-21T12:00:00Z",
+    })),
+    { ...airbnb, id: "demo-airbnb-refund", title: "Refund: Airbnb", kind: "refund", amount: 9000,
+      refundOf: airbnb.id, splitMode: "exact", splits: [amine, alex, maya].map(memberID => ({ memberID, amount: 3000 })),
+      createdAt: "2026-11-22T12:00:00Z" },
+  ];
   const entries: Expense[] = [
     ...["m-harris", "m-maya"].map((paidBy, index): Expense => {
       const amount = index === 0 ? 1851 : 2164;
@@ -604,9 +629,9 @@ export function createDemoState() {
     directory,
     invitations,
     snapshot: { userID: DEMO_USER, avatarURL: "preset:cobalt", invitationCount: invitations.length, discoverable: true, paymentMethods: [{ platform: "venmo", handle: "harris-k", preferred: true }],
-      groups: [gBA, gHome, gTokyo].map((group) => ({ ...group, canDelete: true, members: group.members.map((person) =>
+      groups: [gBA, gHome, gTokyo, airbnbGroup].map((group) => ({ ...group, canDelete: true, members: group.members.map((person) =>
         person.userID === DEMO_USER ? { ...person, paymentMethods: [{ platform: "venmo", handle: "harris-k", preferred: true }] } : person
-      ) })), entries: [...entries, ...householdHistory(gHome.id, gHome.members.map((m) => m.id))] } as Snapshot,
+      ) })), entries: [...entries, ...airbnbEntries, ...householdHistory(gHome.id, gHome.members.map((m) => m.id))] } as Snapshot,
     comments,
     invites,
     photos,

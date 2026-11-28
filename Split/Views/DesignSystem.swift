@@ -167,6 +167,7 @@ struct LedgerRow<Leading: View>: View {
     var value: String
     var valueCaption: String?
     var valueTint: Color = Palette.ink
+    var detailLineLimit = 1
     @ViewBuilder var leading: Leading
 
     var body: some View {
@@ -189,7 +190,7 @@ struct LedgerRow<Leading: View>: View {
                     Text(detail)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                        .lineLimit(detailLineLimit)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     if let valueCaption {
                         Text(valueCaption)

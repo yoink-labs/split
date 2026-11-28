@@ -54,6 +54,7 @@ split expenses add --group "$GROUP" --title Cab --payer "$MAYA" --amount 10.01 \
   --mode percent --participants '["member-alex","member-maya"]' --values '["25","75"]'
 split expenses list --group "$GROUP"
 split balances --group "$GROUP"
+split balances --group "$GROUP" --member "$MEMBER"   # Signed balance breakdown
 split settle up --group "$GROUP" --from "$MAYA" --to "$ALEX" --amount 7.50
 split activity --group "$GROUP"
 ```

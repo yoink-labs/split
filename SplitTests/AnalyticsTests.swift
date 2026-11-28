@@ -67,7 +67,7 @@ final class AnalyticsTests: XCTestCase {
     func testGroupSummariesAndSearch() {
         let snapshot = Fixtures.snapshot()
         let summaries = Analytics.groupSummaries(groups: snapshot.groups, entries: snapshot.entries, userID: "demo-user")
-        XCTAssertEqual(summaries.count, 5)
+        XCTAssertEqual(summaries.count, 6)
         let people = Analytics.allPeople(groups: snapshot.groups, entries: snapshot.entries, userID: "demo-user")
         let results = Search.run("harris", groups: snapshot.groups, entries: snapshot.entries, people: people)
         XCTAssertTrue(results.groups.contains { $0.name == "Spain" })

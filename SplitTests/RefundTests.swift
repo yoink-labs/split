@@ -2,6 +2,17 @@ import XCTest
 @testable import Split
 
 final class RefundTests: XCTestCase {
+    func testAirbnbGuestBalanceIncludesRepaymentAndLinkedRefund() {
+        let demo = Fixtures.snapshot()
+        let entries = demo.entries.filter { $0.groupID == "demo-airbnb" }
+        for member in ["airbnb-alex", "airbnb-maya"] {
+            let lines = entries.map { Ledger.net($0.settling, for: member) }.filter { $0 != 0 }
+            XCTAssertEqual(lines, [-30000, 30000, 3000])
+            XCTAssertEqual(lines.reduce(0, +), Ledger.balances(entries, currency: "USD")[member])
+        }
+        XCTAssertEqual(entries.last?.refundOf, entries.first?.id)
+    }
+
     private func expense(_ amount: Int64 = 10_000, pending: Bool = false) -> LedgerEntry {
         var e = LedgerEntry(id: "orig-12345678", groupID: "g", title: "Excursion", amount: amount, currency: "USD", paidBy: "a",
                             splits: [Portion(memberID: "a", amount: 3334), Portion(memberID: "b", amount: 3333), Portion(memberID: "c", amount: 3333)])

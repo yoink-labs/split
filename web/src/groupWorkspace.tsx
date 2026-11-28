@@ -1,3 +1,4 @@
+import { Picker } from "./picker";
 import { nightRate } from "../../worker/src/ledger";
 import { PaymentOptions } from "./paymentMethods";
 import { memberBalances, useHomeMoney } from "./homeMoney";
@@ -394,17 +395,10 @@ function ExpenseDrawer({
                 <strong style={{ fontSize: 13 }}>Repeat schedule</strong>
                 <p className="muted" style={{ fontSize: 12 }}>Great for rent, utilities & subscriptions</p>
               </div>
-              <select
+              <Picker label="Recurrence"
                 value={entry.recurrence ?? "off"}
-                onChange={(e) => void setRecurrence(e.target.value)}
-                style={{ height: 32, padding: "0 10px" }}
-              >
-                <option value="off">Off</option>
-                <option value="daily">Daily</option>
-                <option value="weekly">Weekly</option>
-                <option value="monthly">Monthly</option>
-                <option value="yearly">Yearly</option>
-              </select>
+                onChange={(selected) => void setRecurrence(selected)}
+                 options={[{ value: "off", label: "Off" }, { value: "daily", label: "Daily" }, { value: "weekly", label: "Weekly" }, { value: "monthly", label: "Monthly" }, { value: "yearly", label: "Yearly" }]} />
             </div>
           )}
 

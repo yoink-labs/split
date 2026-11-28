@@ -165,7 +165,6 @@
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 135px), 1fr));
   gap: 8px;
 }
-.ledger-filter-fields .picker-panel { width: 100%; }
 .ledger-filter-top input[type="search"] { min-height: 40px; }
 .ledger-table-scroll:focus-visible, .statement-detail summary:focus-visible {
   outline: 2px solid var(--primary);

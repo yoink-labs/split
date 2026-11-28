@@ -44,7 +44,15 @@ private struct ActiveInviteResponse: Decodable {
     private var demoPhotos: [String:Data] = [:]
     private var demoComments: [String:[EntryComment]] = [:]
     private var demoInbox: [InboxReceipt] = []
-    private var demoFriends = Array(Fixtures.directory.prefix(1))
+    private var demoFriends = Fixtures.directory.filter { $0.userID != "demo-priyanka-account" && $0.userID != "demo-carmen-account" }.reversed().enumerated().map { index, person in
+        var friend = person
+        if index == 0 {
+            friend.paymentMethods = [PaymentMethod(platform: "venmo", handle: "maya-lin", preferred: true),
+                                     PaymentMethod(platform: "zelle", handle: "maya@example.test")]
+        }
+        return friend
+    }
+    private var demoSentRequests = [SentFriendRequest(id: "demo-sent", label: "sam@example.test")]
     private var demoLinks: [String: [MemberLink]] = [:]
     private var demoInvitations: [GroupInvitation] = Fixtures.invitations()
     private var demo = false
@@ -300,7 +308,7 @@ private struct ActiveInviteResponse: Decodable {
     var discoverable: Bool { state.snapshot.discoverable ?? true }
 
     func knownPeople() async throws -> [SplitUser] {
-        if demo { return Fixtures.directory + demoFriends.filter { !Fixtures.directory.contains($0) } }
+        if demo { return Fixtures.directory + demoFriends.filter { friend in !Fixtures.directory.contains { $0.userID == friend.userID } } }
         return try await people(at: "/v1/people/known")
     }
 
@@ -319,9 +327,25 @@ private struct ActiveInviteResponse: Decodable {
     }
 
     func sendFriendRequest(email: String? = nil, userID: String? = nil) async throws {
-        if demo { return }
+        if demo {
+            let label = email ?? Fixtures.directory.first { $0.userID == userID }?.name
+            if let label, !demoSentRequests.contains(where: { $0.label == label }) {
+                demoSentRequests.insert(SentFriendRequest(id: UUID().uuidString, label: label), at: 0)
+            }
+            return
+        }
         let target = ["email": email, "userID": userID].compactMapValues { $0 }
         _ = try await post("/v1/friends/requests", JSONEncoder().encode(target))
+    }
+
+    func sentFriendRequests() async throws -> [SentFriendRequest] {
+        if demo { return demoSentRequests }
+        return try JSONDecoder().decode([SentFriendRequest].self, from: try await request(path: "/v1/friends/requests"))
+    }
+
+    func cancelFriendRequest(_ id: String) async throws {
+        if demo { demoSentRequests.removeAll { $0.id == id }; return }
+        _ = try await post("/v1/friends/requests/\(id)/cancel", Data("{}".utf8))
     }
 
     func removeFriend(_ userID: String) async throws {
@@ -448,18 +472,23 @@ private struct ActiveInviteResponse: Decodable {
         for id in entryIDs { comments.removeValue(forKey: id) }
     }
 
-    func savePaymentMethods(_ methods: [PaymentMethod]?, in groupID: String?) async throws {
+    func savePaymentMethods(_ methods: [PaymentMethod]?, in groupID: String?, shareWithFriends: Bool? = nil) async throws {
         struct Update: Encodable {
             let methods: [PaymentMethod]?
+            let shareWithFriends: Bool?
             func encode(to encoder: Encoder) throws {
                 var container = encoder.container(keyedBy: CodingKeys.self)
                 try container.encode(methods, forKey: .methods)
+                try container.encodeIfPresent(shareWithFriends, forKey: .shareWithFriends)
             }
-            enum CodingKeys: String, CodingKey { case methods }
+            enum CodingKeys: String, CodingKey { case methods, shareWithFriends }
         }
         if demo {
             var next = state
-            if groupID == nil { next.snapshot.paymentMethods = methods ?? [] }
+            if groupID == nil {
+                next.snapshot.paymentMethods = methods ?? []
+                next.snapshot.sharePaymentWithFriends = shareWithFriends ?? next.snapshot.sharePaymentWithFriends
+            }
             for group in next.snapshot.groups.indices where groupID == nil || next.snapshot.groups[group].id == groupID {
                 let members = next.snapshot.groups[group].members
                 guard let index = members.firstIndex(where: { $0.userID == currentUserID }) else { continue }
@@ -470,7 +499,7 @@ private struct ActiveInviteResponse: Decodable {
             try persist(next)
         } else {
             let path = groupID.map { "/v1/groups/\($0)/payment-profile" } ?? "/v1/profile/payment-methods"
-            _ = try await post(path, JSONEncoder().encode(Update(methods: methods)))
+            _ = try await post(path, JSONEncoder().encode(Update(methods: methods, shareWithFriends: shareWithFriends)))
             await sync()
         }
     }
@@ -1227,8 +1256,14 @@ struct SplitUser: Decodable, Identifiable, Hashable {
     var userID: String
     var name: String
     var avatarURL: String?
+    var paymentMethods: [PaymentMethod]?
     var id: String { userID }
 }
+struct SentFriendRequest: Decodable, Identifiable {
+    var id: String
+    var label: String
+}
+
 struct MemberLink: Decodable, Identifiable {
     var id: String
     var memberName: String

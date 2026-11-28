@@ -14,6 +14,8 @@ is noted next to each release. The CLI is versioned separately with
 
 - Set different check-in and check-out dates for each person on a nights split, and view daily costs in your home currency.
 
+- The Friends page on web and iOS puts accepted friends and balances first. Manage sent and received requests, and share profile payment methods with accepted friends from your payment settings.
+- Web dropdowns use a shared picker with keyboard controls, search for long lists, and a touch-friendly sheet on phones.
 - Split stays by nights and spread expenses over a date range. See each person’s daily costs on web and iOS or with the CLI and MCP.
 - See how expenses, payments, and linked refunds add up in a group member’s balance breakdown on web and iOS, or with `split balances --group ID --member ID`.
 

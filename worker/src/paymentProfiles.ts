@@ -42,9 +42,14 @@ export function validateMethods(value: unknown): PaymentMethod[] {
 }
 
 export async function saveAccountPayments(request: Request, db: D1Database, user: string) {
-  const { methods } = await body(request, 65536);
-  await db.prepare(`INSERT INTO account_payment_profiles(user_id,details) VALUES (?,?)
-    ON CONFLICT(user_id) DO UPDATE SET details=excluded.details`).bind(user, JSON.stringify(validateMethods(methods))).run();
+  const { methods, shareWithFriends } = await body(request, 65536);
+  if (shareWithFriends !== undefined && typeof shareWithFriends !== 'boolean')
+    throw new InputError('Choose whether friends can see your payment methods.');
+  const sharing = shareWithFriends === undefined ? null : Number(shareWithFriends);
+  await db.prepare(`INSERT INTO account_payment_profiles(user_id,details,share_with_friends) VALUES (?,?,COALESCE(?,0))
+    ON CONFLICT(user_id) DO UPDATE SET details=excluded.details,
+      share_with_friends=COALESCE(?,account_payment_profiles.share_with_friends)`)
+    .bind(user, JSON.stringify(validateMethods(methods)), sharing, sharing).run();
   return json({ ok: true });
 }
 

@@ -175,9 +175,9 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
     if(entries.length>5000)throw new HTTPError(409,'This beta supports up to 5,000 entries. Export support is coming.');
     const settlementRequests=(await pendingSettlements(env.DB,userID))
       .map(row => resolveEntry(JSON.parse(row.payload),aliases));
-    const profilePayment=await env.DB.prepare('SELECT details FROM account_payment_profiles WHERE user_id=?').bind(userID).first<string>('details');
+    const profilePayment=await env.DB.prepare('SELECT details,share_with_friends FROM account_payment_profiles WHERE user_id=?').bind(userID).first<{details:string;share_with_friends:number}>();
     const [pendingInvitations,discoverable]=await Promise.all([invitations(env.DB,userID),isDiscoverable(env.DB,userID)]);
-    return json({userID,paymentMethods:paymentMethods(profilePayment)??[],settlementRequests,invitationCount:pendingInvitations.length,discoverable,...(avatarURL ? {avatarURL} : {}),groups:all,entries:entries.map(e=>{
+    return json({userID,paymentMethods:paymentMethods(profilePayment?.details)??[],sharePaymentWithFriends:profilePayment?.share_with_friends===1,settlementRequests,invitationCount:pendingInvitations.length,discoverable,...(avatarURL ? {avatarURL} : {}),groups:all,entries:entries.map(e=>{
       const entry=resolveEntry(JSON.parse(e.payload),aliases);
       return {...entry,recurrence:e.recurrence,receiptIDs:JSON.parse(e.photos),editable:e.author===userID && !entry.combinedCount,
         commentCount:Number(e.commentCount),likeCount:Number(e.likeCount),likedByMe:Boolean(e.likedByMe)};

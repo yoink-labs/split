@@ -17,6 +17,8 @@ is noted next to each release. The CLI is versioned separately with
 - The Friends page on web and iOS puts accepted friends and balances first. Manage sent and received requests, and share profile payment methods with accepted friends from your payment settings.
 - Web dropdowns use a shared picker with keyboard controls, search for long lists, and a touch-friendly sheet on phones.
 - Split stays by nights and spread expenses over a date range. See each person’s daily costs on web and iOS or with the CLI and MCP.
+- See who changed a group or expense, what they changed, and any reason they entered. Open History on an expense, filter group Activity, or run `split history --group ID`. Add a reason when editing, deleting, or recording a refund.
+
 - See how expenses, payments, and linked refunds add up in a group member’s balance breakdown on web and iOS, or with `split balances --group ID --member ID`.
 - Let Finance set the amount your card actually charged on a foreign expense you recorded and paid, when you approve its connection with "updates card charges". The amount becomes the expense's statement amount: original-currency shares stay as they are, everyone's converted share follows the card, and each change is kept in the charged amount history and Finance's update log. Retries with the same key never apply twice, and a change made in Split since Finance looked is refused. Existing Finance connections stay read-only.
 
@@ -45,7 +47,7 @@ is noted next to each release. The CLI is versioned separately with
 - Delete groups you created and respond to pending payments from the CLI or MCP.
 - Set trip exchange rates and payment methods, and mark expenses as handled from the CLI or MCP.
 - Create remote MCP tokens and revoke AI, CLI, and Finance access from the Split web app.
-- Create and edit Trip and Long-term / Home groups. Trip expenses get a date-based phase you can override, filter, group, and see in analytics. CLI and MCP expose the same group types and trip phases. Empty group sections stay hidden.
+- Create and edit Trip and Long-term / Home groups. Trip expenses get a date-based phase you can override, filter, group, and see in analytics. CLI and MCP expose the same group types and trip phases. Empty group sections stay hidden. Activity records group type and trip phase edits with the actor, before-and-after values, and an optional reason.
 
 ### Changed
 

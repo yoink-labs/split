@@ -415,7 +415,7 @@ function DemoLedger({ onExit }: { onExit: () => void }) {
       const updGroup = path.match(/^\/v1\/groups\/([\w-]+)\/update$/);
       if (updGroup && body) {
         const gid = updGroup[1];
-        const b = body as Partial<Group>;
+        const { reason: _reason, ...b } = body as Partial<Group> & { reason?: string };
         setData((prev) => ({
           ...prev,
           groups: prev.groups.map((g) => g.id === gid

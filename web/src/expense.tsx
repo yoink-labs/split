@@ -331,12 +331,12 @@ function Composer({ g, existing }: { g: Group; existing?: Expense }) {
             const days = spread ? spreadLength(spread) : 0;
             if (spread && (days < 1 || days > 366 || splits.some((s: Portion) => (s.nights ?? 0) > days)))
               throw new Error("Choose a date range up to 366 days that covers everyone’s nights.");
-            if (!/^\d{4}-\d\d-\d\d$/.test(date) || (!existing && date > today()))
+            if (!/^\d{4}-\d\d-\d\d$/.test(date) || date > today())
               throw new Error("Choose today or an earlier charge date.");
             if (foreign && !exchange)
               throw new Error("Wait for the rate, or enter your own rate.");
 
-            const createdAt = existing ? existing.createdAt : date + "T12:00:00Z";
+            const createdAt = existing?.createdAt.slice(0, 10) === date ? existing.createdAt : date + "T12:00:00Z";
             const entry = {
               id,
               groupID: g.id,
@@ -363,6 +363,7 @@ function Composer({ g, existing }: { g: Group; existing?: Expense }) {
               await save(`/v1/entries/${existing.id}/edit`, {
                 original: { ...orig, phase: orig.phase ?? null },
                 entry: { ...entry, phase: g.kind === "trip" ? phase || null : existing.phase },
+                reason: value(f, "reason"),
                 ...(photos.length ? { photos } : {}),
               });
             } else {
@@ -378,6 +379,7 @@ function Composer({ g, existing }: { g: Group; existing?: Expense }) {
           <div className="expense-layout">
             <section className="card expense-panel">
               <h2>Expense details</h2>
+              {existing && <label className="field">Reason for change (optional)<input name="reason" maxLength={500} /></label>}
               <label className="field">
                 Description
                 <input type="text" required name="title" maxLength={120}
@@ -406,7 +408,7 @@ function Composer({ g, existing }: { g: Group; existing?: Expense }) {
               </div>
               <label className="field">
                 Date
-                <input type="date" value={date} disabled={Boolean(existing)} max={today()} required
+                <input type="date" value={date} max={today()} required
                   onChange={(e) => {
                     setExchange(null);
                     setDate(e.target.value);

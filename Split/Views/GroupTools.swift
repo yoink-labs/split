@@ -20,6 +20,7 @@ struct GroupTools: View {
     @State private var currency = ""
     @State private var simplify = true
     @State private var description = ""
+    @State private var reason = ""
     @State private var start: Date?
     @State private var end: Date?
     @State private var weights: [String: String] = [:]
@@ -58,9 +59,11 @@ struct GroupTools: View {
                     }
                     GroupMetadataFields(description: $description, start: $start, end: $end, isTrip: kind == "trip")
                     Toggle("Simplify payments", isOn: $simplify)
+                    TextField("Reason for change (optional)", text: $reason)
                     Button {
                         run {
-                            try await store.updateGroup(current, name: name, kind: kind, currency: currency, simplify: simplify, description: description, start: start, end: end)
+                            try await store.updateGroup(current, name: name, kind: kind, currency: currency, simplify: simplify, description: description, start: start, end: end, reason: reason)
+                            reason = ""
                             message = "Group details saved."
                         }
                     } label: {

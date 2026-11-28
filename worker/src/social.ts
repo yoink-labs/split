@@ -1,4 +1,5 @@
 import { groupKind } from './tripPhases';
+import { normalizeName } from './names';
 import { HTTPError, body, json, optionalDay } from './http';
 import { requireActiveMember } from './memberEmail';
 import { currencies, InputError } from './ledger';
@@ -284,6 +285,21 @@ export async function socialRoute(request:Request,env:Env,userID:string):Promise
   if(inviteRevokeMatch && request.method==='POST') {
     await requireActiveMember(env,inviteRevokeMatch[1],userID);
     return revokeInvite(env,inviteRevokeMatch[1],inviteRevokeMatch[2]);
+  }
+  const rename = path.match(/^\/v1\/groups\/([\w-]+)\/members\/([\w-]+)\/rename$/);
+  if (rename && request.method === 'POST') {
+    const [,groupID,id] = rename;
+    await requireActiveMember(env,groupID,userID);
+    const b = await body(request);
+    const name = typeof b.name === 'string' ? normalizeName(b.name) : '';
+    if (!name || name.length > 60) throw new InputError('Enter a name of up to 60 characters.');
+    const result = await env.DB.prepare(`UPDATE members SET name=? WHERE id=? AND group_id=?
+      AND removed_at IS NULL AND (user_id IS NULL OR user_id=?)
+      AND id NOT IN (SELECT member_id FROM member_aliases)
+      AND EXISTS (SELECT 1 FROM members actor WHERE actor.group_id=? AND actor.user_id=? AND actor.removed_at IS NULL)`)
+      .bind(name,id,groupID,userID,groupID,userID).run();
+    if (!result.meta.changes) throw new HTTPError(404,'This member cannot be renamed.');
+    return json({ok:true});
   }
   const memberRemoveMatch=path.match(/^\/v1\/groups\/([\w-]+)\/members\/([\w-]+)\/remove$/);
   if(memberRemoveMatch && request.method==='POST') {

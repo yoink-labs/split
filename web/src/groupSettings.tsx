@@ -105,6 +105,7 @@ export function GroupSettings({ g, showRates }: { g: Group; showRates: boolean }
                 throw new Error("End date must be on or after the start date.");
               await save(`/v1/groups/${g.id}/update`, {
                 kind: g.kind === "friend" ? undefined : kind,
+                reason: value(f, "reason"),
                 name: value(f, "name"),
                 description: value(f, "description"),
                 startDate: kind === "trip" ? value(f, "startDate") || null : undefined,
@@ -133,6 +134,10 @@ export function GroupSettings({ g, showRates }: { g: Group; showRates: boolean }
                 <input type="date" name="endDate" required={g.kind !== "trip"} defaultValue={g.endDate ?? ""} />
               </label>
             </div>}
+            <label className="field">
+              Reason for change (optional)
+              <input type="text" name="reason" maxLength={500} />
+            </label>
             {settingsSaved && <p className="ok-banner">Saved group details</p>}
           </Form>
         </SettingsCard>

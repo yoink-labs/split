@@ -47,9 +47,10 @@ import { RefundForm } from "./refundForm";
 import { pendingView, refundRoom, refundsOf } from "../../worker/src/refundMath";
 import { GroupMembers } from "./groupMembers";
 import { GroupSettings } from "./groupSettings";
+import { ChangeHistory } from "./changeHistory";
 import "./groupWorkspace.css";
 
-const tabs = ["overview", "analytics", "ledger", "transactions", "receipts", "settle", "members", "settings"] as const;
+const tabs = ["overview", "analytics", "ledger", "transactions", "receipts", "settle", "members", "activity", "settings"] as const;
 type Tab = typeof tabs[number];
 
 function ExpenseDrawer({
@@ -70,10 +71,7 @@ function ExpenseDrawer({
   const { request, save, user } = useLedger();
   const homeMoney = useHomeMoney();
   const nav = useNavigate();
-  const [chargeHistory, setChargeHistory] = useState<{
-    id: number; previousAmount: number | null; previousCurrency: string | null;
-    chargedAmount: number | null; chargedCurrency: string | null; changedAt: string;
-  }[]>([]);
+  const [deleting, setDeleting] = useState(false);
   const [comments, setComments] = useState<ExpenseComment[]>([]);
   const [commentText, setCommentText] = useState("");
   const [busy, setBusy] = useState(false);
@@ -103,16 +101,6 @@ function ExpenseDrawer({
       alive = false;
     };
   }, [request, entry.id]);
-
-  useEffect(() => {
-    if (entry.kind !== "expense") return;
-    let alive = true;
-    setChargeHistory([]);
-    request<{ history: typeof chargeHistory }>(`/v1/entries/${entry.id}/charged-amount-history`)
-      .then(({ history }) => { if (alive) setChargeHistory(history); })
-      .catch(() => {});
-    return () => { alive = false; };
-  }, [request, entry.id, entry.kind, entry.exchange?.statementAmount, entry.exchange?.target]);
 
   const payers = entryPayers(entry);
   const canSetHandled = entry.kind === "expense" && !entry.combinedCount && !entry.pending && payers.some((payer) =>
@@ -152,14 +140,13 @@ function ExpenseDrawer({
     }
   }
 
-  async function deleteEntry() {
+  async function deleteEntry(reason: string) {
     if (linked.length) {
       alert("Delete this expense’s refunds first. Its refunds would no longer have an original.");
       return;
     }
-    if (!confirm(`Delete "${entry.title}"? This updates everyone’s balances.`)) return;
     const { editable: _ed, recurrence: _rec, commentCount: _cc, likeCount: _lc, likedByMe: _lm, receiptIDs: _ri, ...orig } = entry;
-    await save(`/v1/entries/${entry.id}/delete`, { original: orig });
+    await save(`/v1/entries/${entry.id}/delete`, { original: orig, reason });
     onClose();
   }
 
@@ -203,6 +190,13 @@ function ExpenseDrawer({
         </div>
 
         <div className="drawer-body">
+          {deleting && <div className="card card-pad">
+            <p>Delete {entry.title}? This updates everyone’s balances.</p>
+            <Form label="Delete entry" destructive cancel={() => setDeleting(false)}
+              submit={form => deleteEntry(value(form, "reason"))}>
+              <label className="field">Reason for change (optional)<input name="reason" maxLength={500} /></label>
+            </Form>
+          </div>}
           {entry.combinedCount && g.members.some((m) => m.userID === user && !m.removed) ? (
             <div className="card card-pad">
               <p>Combined from {entry.combinedCount} expenses</p>
@@ -231,7 +225,7 @@ function ExpenseDrawer({
                   </button>
                 )}
                 {entry.editable && (
-                  <button className="btn btn-xs btn-danger" onClick={deleteEntry}>
+                  <button className="btn btn-xs btn-danger" onClick={() => setDeleting(true)}>
                     Delete
                   </button>
                 )}
@@ -407,19 +401,7 @@ function ExpenseDrawer({
             </div>
           )}
 
-          {chargeHistory.length > 0 && (
-            <div className="card card-pad">
-              <h4>Charged amount history</h4>
-              {chargeHistory.map((change) => (
-                <p className="muted" key={change.id}>
-                  {dateText(change.changedAt)} · {change.previousAmount !== null && change.previousCurrency
-                    ? money(change.previousAmount, change.previousCurrency) : "Exchange rate"} →{" "}
-                  {change.chargedAmount !== null && change.chargedCurrency
-                    ? money(change.chargedAmount, change.chargedCurrency) : "Exchange rate"}
-                </p>
-              ))}
-            </div>
-          )}
+          <ChangeHistory group={g} expense={entry.id} revision={entry} />
 
           {/* Comments */}
           <div>
@@ -747,6 +729,9 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
           <button className="ws-tab" role="tab" aria-selected={tab === "members"} onClick={() => setTab("members")}>
             Members
           </button>
+          <button className="ws-tab" role="tab" aria-selected={tab === "activity"} onClick={() => setTab("activity")}>
+            Activity
+          </button>
           <button className="ws-tab" role="tab" aria-selected={tab === "settings"} onClick={() => setTab("settings")}>
             Settings
           </button>
@@ -1064,6 +1049,7 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
       )}
 
       {tab === "members" && <GroupMembers key={g.id} group={g} entries={entries} />}
+      {tab === "activity" && <ChangeHistory group={g} liveIDs={new Set(entries.map(entry => entry.id))} revision={entries} />}
       {tab === "settings" && <GroupSettings key={g.id} g={g} showRates={selectedTab === "rates"} />}
 
       {crediting && (

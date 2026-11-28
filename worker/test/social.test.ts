@@ -3,9 +3,10 @@ import {beforeEach,describe,expect,it} from 'vitest';
 import {handle} from '../src/index';
 import {balances,simplify,validateEntry,type Entry} from '../src/ledger';
 
-const group='group-social',userA='user-alex',userB='user-maya',outsider='user-outsider';
+let group: string;
+const userA='user-alex',userB='user-maya',outsider='user-outsider';
 const seatA='seat-alex',seatB='seat-maya';
-const baseEntry:Entry={id:'entry-social',groupID:group,title:'Dinner',amount:1000,currency:'USD',paidBy:seatA,
+const baseEntry:Entry={id:'entry-social',groupID:'',title:'Dinner',amount:1000,currency:'USD',paidBy:seatA,
   splits:[{memberID:seatA,amount:500},{memberID:seatB,amount:500}],kind:'expense',splitMode:'equal',
   createdAt:'2026-11-17T00:00:00Z'};
 const path=(suffix:string)=>'/v1/entries/'+baseEntry.id+suffix;
@@ -26,6 +27,8 @@ async function snapshot(user:string) {
 }
 
 beforeEach(async()=>{
+  group = crypto.randomUUID();
+  baseEntry.groupID = group;
   await env.DB.prepare('INSERT INTO split_profiles VALUES (?,?,?,?,?)').bind(userB,'Maya','maya',null,Date.now()).run();
   await env.DB.prepare('INSERT INTO friendships VALUES (?,?,?,?,?)').bind('social-friends',userA,userB,1,Date.now()).run();
   await call(userA,'/v1/groups',{id:group,name:'Trip',kind:'trip',currency:'USD',

@@ -143,17 +143,25 @@ private struct ActiveInviteResponse: Decodable {
         if !demo { next.outbox.append(OutboxItem(id: id, path: "/v1/groups", body: try JSONEncoder().encode(group))) }
         try persist(next); Task { await sync() }
     }
-    func add(_ entry: LedgerEntry) throws {
+    func add(_ entry: LedgerEntry, reason: String? = nil) throws {
         guard scope != nil else { throw LedgerError.invalid("Sign in again before adding an expense.") }
         var entry = entry
         if demo, let bill = entry.bill { entry.bill?.closed = bill.openCount == 0 }
         var next = state; next.snapshot.entries.append(entry)
-        if !demo { next.outbox.append(OutboxItem(id: entry.id, path: "/v1/entries", body: try JSONEncoder().encode(entry))) }
+        if !demo {
+            let encoded = try JSONEncoder().encode(entry)
+            var payload = try JSONSerialization.jsonObject(with: encoded) as? [String: Any] ?? [:]
+            payload["reason"] = reason
+            next.outbox.append(OutboxItem(id: entry.id, path: "/v1/entries", body: try JSONSerialization.data(withJSONObject: payload)))
+        }
         try persist(next); Task { await sync() }
     }
-    func request(path: String, body: Data? = nil, method: String? = nil) async throws -> Data {
+    func request(path: String, body: Data? = nil, method: String? = nil, query: [URLQueryItem] = []) async throws -> Data {
         guard let token = try await Clerk.shared.auth.getToken() else { throw LedgerError.invalid("Sign in again to sync. Your pending changes are saved on this device.") }
-        var req = URLRequest(url: baseURL.appendingPathComponent(path)); req.timeoutInterval = 20
+        var components = URLComponents(url: baseURL.appendingPathComponent(path), resolvingAgainstBaseURL: false)
+        if !query.isEmpty { components?.queryItems = query }
+        guard let url = components?.url else { throw LedgerError.invalid("Invalid request URL.") }
+        var req = URLRequest(url: url); req.timeoutInterval = 20
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         if let body { req.httpMethod = method ?? "POST"; req.httpBody = body; req.setValue("application/json", forHTTPHeaderField: "Content-Type") }
         else if let method { req.httpMethod = method }
@@ -415,7 +423,7 @@ private struct ActiveInviteResponse: Decodable {
     }
 
     func updateGroup(_ group: ExpenseGroup, name: String, kind: String, currency: String, simplify: Bool,
-                     description: String, start: Date?, end: Date?) async throws {
+                     description: String, start: Date?, end: Date?, reason: String) async throws {
         let clean = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !clean.isEmpty, clean.count <= 80 else { throw LedgerError.invalid("Give the group a name of up to 80 characters.") }
         var updated = group
@@ -435,7 +443,7 @@ private struct ActiveInviteResponse: Decodable {
         } else {
             _ = try await groupAction(group.id, "update", [
                 "name": clean, "kind": kind, "currency": currency, "simplify": simplify,
-                "description": updated.description ?? "",
+                "description": updated.description ?? "", "reason": reason,
                 "startDate": (updated.startDate as Any?) ?? NSNull(),
                 "endDate": (updated.endDate as Any?) ?? NSNull()
             ])
@@ -508,10 +516,9 @@ private struct ActiveInviteResponse: Decodable {
         }
     }
 
-    func chargedAmountHistory(for entryID: String) async throws -> [ChargedAmountChange] {
-        guard !isDemo else { return [] }
-        let data = try await request(path: "/v1/entries/\(entryID)/charged-amount-history")
-        return try JSONDecoder().decode(ChargedAmountHistory.self, from: data).history
+    func changeHistory(groupID: String, query: [URLQueryItem]) async throws -> ChangeHistoryPage {
+        let data = try await request(path: "/v1/groups/\(groupID)/history", query: query)
+        return try JSONDecoder().decode(ChangeHistoryPage.self, from: data)
     }
 
     func comments(for entryID: String) -> [EntryComment]? {
@@ -729,7 +736,7 @@ private struct ActiveInviteResponse: Decodable {
     enum Resolution { case confirm, adjust(Int64), refund(LedgerEntry) }
 
     /// Resolves a pending entry: confirm it, adjust the amount (splits rescale by largest remainder), or record a linked refund.
-    func resolve(_ entry: LedgerEntry, _ resolution: Resolution) async throws {
+    func resolve(_ entry: LedgerEntry, _ resolution: Resolution, reason: String? = nil) async throws {
         if case .refund(let refund) = resolution {
             try Refunds.validate(refund, original: entry, others: Refunds.linked(to: entry, in: entries, excluding: refund.id))
         }
@@ -751,7 +758,7 @@ private struct ActiveInviteResponse: Decodable {
         switch resolution {
         case .confirm: body = try JSONEncoder().encode(["action": "confirm"])
         case .adjust(let amount): body = try JSONSerialization.data(withJSONObject: ["action": "adjust", "amount": amount])
-        case .refund(let refund): body = try JSONEncoder().encode(ResolveRefund(refund: refund))
+        case .refund(let refund): body = try JSONEncoder().encode(ResolveRefund(refund: refund, reason: reason))
         }
         _ = try await post("/v1/entries/\(entry.id)/resolve", body)
         try await waitForSync()
@@ -765,7 +772,7 @@ private struct ActiveInviteResponse: Decodable {
         try persist(next)
     }
 
-    func change(_ original: LedgerEntry, to replacement: LedgerEntry?) async throws {
+    func change(_ original: LedgerEntry, to replacement: LedgerEntry?, reason: String? = nil) async throws {
         guard demo || original.editable == true else { throw LedgerError.invalid("Only the person who recorded this entry can change it.") }
         if demo {
             var next = state
@@ -781,13 +788,13 @@ private struct ActiveInviteResponse: Decodable {
             try persist(next)
         } else {
             let action = replacement == nil ? "delete" : "edit"
-            _ = try await post("/v1/entries/\(original.id)/\(action)", JSONSerialization.data(withJSONObject: try entryRevision(original, replacement)))
+            _ = try await post("/v1/entries/\(original.id)/\(action)", JSONSerialization.data(withJSONObject: try entryRevision(original, replacement, reason: reason)))
             try await waitForSync()
             await sync()
         }
     }
 
-    private func entryRevision(_ original: LedgerEntry, _ replacement: LedgerEntry?) throws -> [String: Any] {
+    private func entryRevision(_ original: LedgerEntry, _ replacement: LedgerEntry?, reason: String?) throws -> [String: Any] {
         let encoder = JSONEncoder()
         func payload(_ entry: LedgerEntry) throws -> [String: Any] {
             guard var fields = try JSONSerialization.jsonObject(with: encoder.encode(entry)) as? [String: Any] else {
@@ -796,7 +803,8 @@ private struct ActiveInviteResponse: Decodable {
             fields["phase"] = (entry.phase?.rawValue as Any?) ?? NSNull()
             return fields
         }
-        return ["original": try payload(original), "entry": try replacement.map(payload) as Any? ?? NSNull()]
+        return ["original": try payload(original), "entry": try replacement.map(payload) as Any? ?? NSNull(),
+                "reason": (reason as Any?) ?? NSNull()]
     }
 
     func receiptDrafts(in groupID: String) -> [ReceiptDraft] {
@@ -821,9 +829,9 @@ private struct ActiveInviteResponse: Decodable {
         try persist(next)
     }
 
-    func saveReceipted(_ entry: LedgerEntry, original: LedgerEntry?, photos: [ReceiptPhoto]) async throws {
+    func saveReceipted(_ entry: LedgerEntry, original: LedgerEntry?, photos: [ReceiptPhoto], reason: String? = nil) async throws {
         guard !photos.isEmpty else {
-            if let original { try await change(original,to:entry) } else { try add(entry) }
+            if let original { try await change(original, to: entry, reason: reason) } else { try add(entry, reason: reason) }
             return
         }
         if demo {
@@ -837,12 +845,13 @@ private struct ActiveInviteResponse: Decodable {
         var payload:[String:Any]
         let path:String
         if let original {
-            payload = try entryRevision(original, entry)
+            payload = try entryRevision(original, entry, reason: reason)
             path="/v1/entries/\(entry.id)/edit"
         } else {
             payload=try JSONSerialization.jsonObject(with:encoder.encode(entry)) as? [String:Any] ?? [:]
             path="/v1/entries"
         }
+        payload["reason"] = reason
         payload["photos"]=try JSONSerialization.jsonObject(with:encoder.encode(photos))
         _ = try await post(path,JSONSerialization.data(withJSONObject:payload))
         try await waitForSync()
@@ -1133,7 +1142,7 @@ private struct ActiveInviteResponse: Decodable {
     }
 }
 private struct APIError: Decodable { var error: String }
-private struct ResolveRefund: Encodable { var action = "refund"; var refund: LedgerEntry }
+private struct ResolveRefund: Encodable { var action = "refund"; var refund: LedgerEntry; var reason: String? }
 private struct InviteResponse: Decodable { var url: URL }
 struct ChargedAmountChange: Decodable, Identifiable {
     var id: Int

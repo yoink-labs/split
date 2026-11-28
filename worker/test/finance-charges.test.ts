@@ -65,8 +65,14 @@ it('sets the card charge as the statement amount, re-spreads shares, records his
   const audit=await env.DB.prepare('SELECT user_id,previous_amount,charged_amount,rate_e8 FROM finance_charge_updates WHERE entry_id=?').bind(dinner.id).all();
   expect(audit.results).toEqual([{user_id:'alex',previous_amount:4640,charged_amount:4682,rate_e8:18_728_000}]);
 
+  const timeline = '/v1/groups/'+group+'/history?expense='+dinner.id+'&member='+alexSeat;
+  const events = (await (await call('maya',timeline)).json<{events:unknown[]}>()).events;
+  expect(events[0]).toMatchObject({actor:'alex',actorName:'Alex',action:'edit',reason:'Card charge updated through Finance.',
+    changes:{chargedAmount:{before:null,after:4682},chargedCurrency:{before:null,after:'USD'}}});
+
   const replay=await send(charge,body,token,key('first'));
   expect(await replay.json()).toEqual({...result,applied:false});
+  expect((await (await call('maya',timeline)).json<{events:unknown[]}>()).events).toEqual(events);
   expect(await (await send(charge,{...body,chargedAmount:4683,rateE8:18_732_000},token,key('first'))).json()).toMatchObject({code:'idempotency_conflict'});
   const stale=await send(charge,body,token,key('second'));
   expect(stale.status).toBe(409);

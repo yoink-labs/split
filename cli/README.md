@@ -46,6 +46,9 @@ Exact email and username searches find existing Split users. Partial names match
 
 An email on a placeholder lets the owner of that verified primary email claim the member’s history when they open Split on the web or iOS. If they already joined separately, Split merges the placeholder history into their membership. CLI users can claim a placeholder with `split join --invite`. Changing or clearing the address revokes the placeholder’s existing invite links. Account holders manage their own sign-in email through Clerk.
 
+Review a group’s change history with `split history --group "$GROUP"`. Use `--expense` or `--member` to narrow it down, `--before` to request the next page, or `--json` for structured before/after values in integer minor units. Add `--reason` when editing or deleting an expense or recording a refund. The same commands and arguments are available as MCP tools.
+
+
 ```sh
 split expenses add --group "$GROUP" --title Dinner --payer "$ALEX" --amount 24.50
 split expenses add --group "$GROUP" --title Tickets --payer "$ALEX" --amount 30 \
@@ -61,7 +64,7 @@ split activity --group "$GROUP"
 
 Replace sample IDs with the IDs in your group. Enter money as decimal major units. Responses use integer minor units, so USD 24.50 appears as `2450`. Balances stay separate by currency. Equal splits default to every member. For exact and percent splits, supply values in participant order. Use `settle up` to request approval for a payment you made or to record a payment you received. Payments you received are confirmed when you record them. Pending requests appear in `activity` for the payer and recipient and enter the ledger once approved.
 
-Use `groups create --kind trip --start YYYY-MM-DD --end YYYY-MM-DD` for a scheduled trip or `--kind home` for an ongoing group. Use `groups update --kind` to change the type. In a trip, `expenses add` and `expenses edit` accept `--phase pre|during|post` to override the date-based phase. On edit, `--phase auto` restores the automatic phase. Use the same phase values with `expenses list` to filter the list. The matching MCP tools accept a `phase` argument.
+Use `groups create --kind trip --start YYYY-MM-DD --end YYYY-MM-DD` for a scheduled trip or `--kind home` for an ongoing group. Use `groups update --kind` to change the type. In a trip, `expenses add` and `expenses edit` accept `--phase pre|during|post` to override the date-based phase. On edit, `--phase auto` restores the automatic phase. Use the same phase values with `expenses list` to filter the list. The matching MCP tools accept a `phase` argument. Pass `--reason` on a group type or expense phase edit to include a reason in `split history`.
 
 The expense list includes the date, payer names and a `shortID` accepted by `expenses show`. Foreign expenses use a saved trip rate when available. To override it, pass the group currency per unit of expense currency, for example `--currency BRL --rate 0.18` in a USD group. Without either rate, the result warns that the expense uses a separate balance. The `exchange` object records the rate, source and rate date. Imported expenses keep their original transaction date. A rate provider can return an earlier published date on weekends or holidays.
 

@@ -468,6 +468,12 @@ struct GroupDetail: View {
         VStack(alignment: .leading, spacing: Spacing.m) {
             positionCard(group)
             overviewTotals(group)
+            NavigationLink {
+                ChangeHistoryView(group: group)
+            } label: {
+                Label("Group activity", systemImage: "clock.arrow.circlepath")
+            }
+            .buttonStyle(.bordered)
             PendingSettlementsView(groupID: group.id)
             SectionHeader(title: "Recent activity", actionTitle: entries.isEmpty ? nil : "See all") {
                 clearLedgerFilters()

@@ -27,6 +27,7 @@ struct AddExpenseView: View {
     @State private var handled = false
     @State private var pending = false
     @State private var pendingNote = ""
+    @State private var reason = ""
     @State private var payers: [Payer] = []
     @State private var payerText: [String: String] = [:]
     @State private var stays: [String: ExpenseSpread] = [:]
@@ -81,8 +82,13 @@ struct AddExpenseView: View {
         return group.currency
     }
     private var showExchange: Bool { !currency.isEmpty && currency != settlementCurrency }
+    private var retainsOriginalDate: Bool {
+        guard let original, let previous = ISO8601DateFormatter().date(from: original.createdAt) else { return false }
+        return Calendar.current.isDate(previous, inSameDayAs: purchaseDate)
+    }
+
     private var quoteDate: String {
-        original.map { String($0.createdAt.prefix(10)) } ?? Exchange.localDay(purchaseDate)
+        Exchange.localDay(purchaseDate)
     }
     private var people: [String] {
         let available = availableMembers.map(\.id)
@@ -358,6 +364,10 @@ struct AddExpenseView: View {
         Card {
             VStack(alignment: .leading, spacing: 14) {
                 SectionHeader(title: "Details", subtitle: "What was this for?")
+                if original != nil {
+                    TextField("Reason for change (optional)", text: $reason)
+                        .textFieldStyle(.roundedBorder)
+                }
                 TextField("Description", text: $title)
                     .font(.body)
                     .textInputAutocapitalization(.sentences)
@@ -398,16 +408,10 @@ struct AddExpenseView: View {
                 Divider()
                 DatePicker("Date", selection: $purchaseDate, in: ...Date(), displayedComponents: .date)
                     .font(.subheadline.weight(.medium))
-                    .disabled(original != nil)
                     .accessibilityLabel("Expense date")
-                if original != nil {
-                    Text("The original date is kept when you edit an expense.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
                 Divider()
                 if current.kind == "trip" {
-                    let automatic = current.defaultPhase(on: original?.createdAt ?? quoteDate)
+                    let automatic = current.defaultPhase(on: retainsOriginalDate ? original?.createdAt ?? quoteDate : quoteDate)
                     Picker("Trip phase", selection: $phase) {
                         Text("Automatic · " + automatic.title).tag(nil as TripPhase?)
                         ForEach(TripPhase.allCases) { phase in Text(phase.title).tag(Optional(phase)) }
@@ -1213,7 +1217,7 @@ struct AddExpenseView: View {
         defer { saving = false }
         do {
             let entry = try buildEntry()
-            try await store.saveReceipted(entry, original: original, photos: photos)
+            try await store.saveReceipted(entry, original: original, photos: photos, reason: String(reason.prefix(500)))
             if let draft {
                 do { try store.removeReceiptDraft(draft.id) }
                 catch { store.error = "Expense saved. The local receipt draft could not be cleared." }
@@ -1265,7 +1269,7 @@ struct AddExpenseView: View {
         }
 
         let created: String
-        if let original {
+        if let original, retainsOriginalDate {
             created = original.createdAt
         } else if currency != settlementCurrency || current.kind == "trip" {
             created = quoteDate + "T12:00:00Z"

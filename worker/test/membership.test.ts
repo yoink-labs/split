@@ -33,15 +33,15 @@ it('allows multiple late joiners and retrying a reusable code',async()=>{
   await env.DB.prepare('UPDATE group_invites SET expires_at=0').run();
   await expect(call('user-late','/v1/join',{token:code})).rejects.toThrow('expired');
 });
-it('limits discovery to a verified email or a name prefix and never reveals contact details',async()=>{
+it('limits roster changes to members and known accounts',async()=>{
   await group(); await saveProfile(env.DB,profile);
-  const search=async(query:string)=>(await call(owner,'/v1/people/search',{query})).json<unknown[]>();
-  for (const query of ['Caseyg','%%%','sey']) expect(await search(query)).toEqual([]);
-  for (const query of ['CASEY@example.test','case','Green']) expect(await search(query)).toEqual([{userID:guest,name:profile.name}]);
-  await expect(call(owner,'/v1/people/search',{query:'@CaseyG'})).rejects.toThrow('full email');
-  await expect(call('outsider',`/v1/groups/${groupID}/members`,{id:placeholder,name:'Casey'})).rejects.toThrow('not a member');
-  await call(owner,`/v1/groups/${groupID}/members`,{id:placeholder,name:'Casey',userID:guest});
-  expect(await search('Green')).toHaveLength(1);
+  const path = `/v1/groups/${groupID}/members`;
+  const person = {id:placeholder,name:'Casey',userID:guest};
+  await expect(call('outsider',path,person)).rejects.toMatchObject({status:403});
+  await expect(call(owner,path,person)).rejects.toThrow('Choose a friend');
+  await env.DB.prepare('INSERT INTO friendships VALUES (?,?,?,?,?)').bind('known-member',owner,guest,1,Date.now()).run();
+  expect((await call(owner,path,person)).status).toBe(201);
+  expect((await snapshot(owner)).groups[0].members).toContainEqual(expect.objectContaining({id:placeholder,userID:guest,name:profile.name}));
 });
 it('claims a verified address and merges both sides of historical expenses and settlements',async()=>{
   await group();

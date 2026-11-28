@@ -9,7 +9,6 @@ struct GroupsView: View {
     @State private var joining = false
     @State private var importing = false
     @State private var inbox = false
-    @State private var findingPeople = false
     @State private var presentedSheet: GroupDetailSheet?
     @State private var query = ""
     @State private var showArchived = false
@@ -37,7 +36,6 @@ struct GroupsView: View {
         .sheet(isPresented: $joining) { JoinGroupView { id in selection = id } }
         .sheet(isPresented: $importing) { SplitwiseImportView() }
         .sheet(isPresented: $inbox) { InvitationsView { id in selection = id } }
-        .sheet(isPresented: $findingPeople) { PeopleSearchView() }
         // The split view can recreate its detail column as the device folds.
         .sheet(item: $presentedSheet) { $0.content }
         .onChange(of: store.joinedGroupID) { _, id in
@@ -147,10 +145,6 @@ struct GroupsView: View {
             }
         }
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button { findingPeople = true } label: { Image(systemName: "person.crop.circle.badge.plus") }
-                    .accessibilityLabel("Find people")
-            }
             ToolbarItem(placement: .topBarTrailing) {
                 Button { inbox = true } label: { Image(systemName: store.invitationCount > 0 ? "tray.full" : "tray") }
                     .badge(store.invitationCount)

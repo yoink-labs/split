@@ -1,32 +1,38 @@
-# People search and the invitation inbox
+# People settings and invitation inbox
 
-Signed-in users can look up other Split accounts, for example to invite them to
-a group. The directory is privacy-sensitive, so the Worker enforces these rules
-(`worker/src/directory.ts`):
+The Friends screen lets you send a request to a full sign-in email or to an
+active member of a group you share. Split uses the verified primary email from
+the account profile. **Let people find me** controls email-addressed requests
+and defaults to on. People with active memberships in a shared group can still request by account
+ID. Split gives the same response for unknown, opted-out, pending and eligible
+recipients, and never returns an address or phone number from these endpoints.
+Each account can send up to 60 requests per hour. Requests expire after 14 days.
 
-| Rule | Value |
-| --- | --- |
-| Fields returned | Opaque user ID, display name, avatar. Never email, username or phone. |
-| Query | A full email address (exact match on the verified primary address), or a name prefix of at least 3 characters (start of the name or of any word in it). No substring or wildcard matching. |
-| Results | At most 10 per query. You never see yourself. |
-| Rate limit | 60 lookups per account per hour (search and profile views share it). Exceeding it returns 429. |
-| Opt-out | **Let people find me** (Account), on by default. When off, the account is absent from search, cannot be invited by strangers, and its profile is visible only to people who already share a group. |
-| Profile | Name, avatar and the groups the viewer *already* shares with that person. |
-| Direct invitations | Only active group members can send them, at most 20 per sender per hour. They expire after 14 days. |
+Only the recipient can see or answer a pending request. Acceptance makes the
+friendship visible to both accounts. Either friend can remove the relationship.
+Removing a friendship leaves existing group memberships intact.
+
+## Link a placeholder
+
+An active group member can link an active, unclaimed placeholder to a friend
+or another active member of a shared group. The Worker rechecks group
+membership and the relationship when it writes the link. It claims the
+placeholder in place, or aliases it to the recipient’s existing seat so past
+payers and shares resolve to one member without changing cent totals.
+
+An archived recipient must restore their membership before that group can link
+another seat to them. The recipient immediately gets a private inbox notification. Group members can
+see the event in Member activity. Linking is permanent. The recipient cannot
+unlink themselves because subsequent entries and settlements can combine the
+histories of both seats. Dismissing the notice leaves the link in place.
 
 ## Invitation inbox
 
-`GET /v1/invitations` lists, for the signed-in account only:
+The invitation inbox and its badge include pending friend requests, unread
+placeholder link notices, and group invitations from direct and verified-email
+links. Only the addressed account can respond. Existing email invites still
+recheck the recipient’s current verified email before claiming a placeholder.
 
-- invitations sent to the account from people search (`direct_invites`), while the
-  inviter is still an active member;
-- email invitations (`invites.recipient_email`) addressed to the account's
-  verified primary email.
-
-Groups the account already belongs to are left out. The snapshot includes
-`invitationCount` for the badge. `POST /v1/invitations/:id/accept|decline` only
-matches invitations addressed to the caller, so another account gets a 404 and
-learns nothing. An email invitation also rechecks the live verified address with
-Clerk before claiming. Accepting reuses `claimSeat` to take over a linked
-placeholder, then runs the existing sign-in claim so other placeholders with the
-same verified email merge too. Migration `0024_people_directory.sql` is additive.
+Migration 0024 introduced the inbox and account privacy setting. The people
+settings migration adds friendships and a member link activity log. Existing
+invitations continue to work.

@@ -182,6 +182,7 @@ describe('Splitwise import route', () => {
     const maya = 'user-maya';
     const sam = 'user-sam';
     await saveProfile(env.DB, { userID: maya, name: 'Maya R', username: 'maya', email: null });
+    await env.DB.prepare('INSERT INTO friendships VALUES (?,?,?,?,?)').bind('import-friends',user,maya,1,Date.now()).run();
     const people = [
       { name: 'Harris', me: true, displayName: 'Harris K' },
       { name: 'Maya', userID: maya },
@@ -214,6 +215,7 @@ describe('Splitwise import route', () => {
   it('associates previously imported history with an account already in the group', async () => {
     const alex = 'user-alex';
     await saveProfile(env.DB, { userID: alex, name: 'Alex R', username: 'alex', email: null });
+    await env.DB.prepare('INSERT INTO friendships VALUES (?,?,?,?,?)').bind('import-friends',user,alex,1,Date.now()).run();
     const { body, g } = await request(trip, 'trip.csv', tripPeople);
     await call('/v1/import/splitwise', body);
     await call(`/v1/groups/${body.group.id}/members`, { id: 'seat-alex', name: 'Alex R', userID: alex });
@@ -230,7 +232,7 @@ describe('Splitwise import route', () => {
     const maya = 'user-maya';
     const { body } = await request(trip, 'trip.csv', tripPeople);
     const pick = (names: string[]) => tripPeople.map(person => names.includes(person.name) ? { ...person, userID: maya } : person);
-    await expect(call('/v1/import/splitwise', { ...body, people: pick(['Maya']) })).rejects.toThrow('Choose a Split user');
+    await expect(call('/v1/import/splitwise', { ...body, people: pick(['Maya']) })).rejects.toThrow('Choose a friend or someone from a shared group');
     await saveProfile(env.DB, { userID: maya, name: 'Maya', username: 'maya', email: null });
     await expect(call('/v1/import/splitwise', { ...body, people: pick(['Maya', 'Alex']) })).rejects.toThrow('same person');
     expect((await snapshot()).groups).toHaveLength(0);

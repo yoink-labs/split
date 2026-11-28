@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { handle } from '../src/index';
 import { saveProfile } from '../src/people';
 import { InputError } from '../src/ledger';
-import { DIRECT_INVITES_PER_HOUR, MAX_RESULTS, SEARCH_LIMIT_PER_HOUR } from '../src/directory';
+import { DIRECT_INVITES_PER_HOUR, FRIEND_REQUESTS_PER_HOUR } from '../src/directory';
 
 const owner = 'dir-owner', casey = 'dir-casey', mallory = 'dir-mallory';
 const groupID = 'dir-group-0001', groupPath = '/v1/groups/' + groupID;
@@ -15,7 +15,6 @@ function call(user: string, path: string, data?: unknown) {
   }), settings, user);
 }
 const read = async <T = any>(user: string, path: string, data?: unknown) => (await call(user, path, data)).json<T>();
-const search = (user: string, query: string) => read<any[]>(user, '/v1/people/search', { query });
 const inbox = async (user: string) => (await read<{ invitations: any[] }>(user, '/v1/invitations')).invitations;
 
 async function people() {
@@ -32,61 +31,151 @@ function identity(userID: string, email: string) {
     email_addresses: [{ id: 'primary', email_address: email, verification: { status: 'verified' } }] });
 }
 
-describe('people search', () => {
-  it('returns only an ID, display name and avatar, for a full email or a 3+ letter name prefix', async () => {
+async function befriend(target: string) {
+  await read(owner, '/v1/friends/requests', { email: target === casey ? 'casey@example.test' : 'mallory@example.test' });
+  const [request] = await inbox(target);
+  await read(target, `/v1/invitations/${request.id}/accept`, {});
+}
+
+async function shareGroup(target = casey) {
+  const shared = 'dir-shared-group';
+  await call(owner, '/v1/groups', { id: shared, name: 'Shared', kind: 'trip', currency: 'EUR',
+    members: [{ id: 'dir-shared-owner', userID: owner, name: 'Olive' }] });
+  await env.DB.prepare('INSERT INTO members(id,group_id,user_id,name) VALUES (?,?,?,?)')
+    .bind('dir-shared-guest', shared, target, 'Guest').run();
+  return shared;
+}
+
+describe('friends and known people', () => {
+  it('keeps email requests private, reciprocal only after acceptance, and removable by either friend', async () => {
     await people();
     await call(casey, '/v1/profile/avatar', { avatarURL: 'preset:fern' });
-    const found = await search(owner, 'CASEY@example.test');
-    expect(found).toEqual([{ userID: casey, name: 'Casey Green', avatarURL: 'preset:fern' }]);
-    expect(JSON.stringify(found)).not.toMatch(/example\.test|caseyg/);
-    expect(await search(owner, 'cas')).toEqual([{ userID: casey, name: 'Casey Green', avatarURL: 'preset:fern' }]);
-    expect(await search(owner, 'gre')).toHaveLength(1); // a later word in the name
-    expect(await search(owner, 'een')).toEqual([]); // prefixes only, never substrings
-    expect(await search(owner, 'olive')).toEqual([]); // never yourself
-    expect(await search(owner, '%%%')).toEqual([]);
-    for (const query of ['ca', 'casey@', '@caseyg', 'casey@example', ' ', 'x'.repeat(255)])
-      await expect(call(owner, '/v1/people/search', { query })).rejects.toBeInstanceOf(InputError);
+    const send = (email: string) => read(owner, '/v1/friends/requests', { email });
+    expect(await send('nobody@example.test')).toEqual({ok:true});
+    expect(await send('CASEY@example.test')).toEqual({ok:true});
+    await send('casey@example.test');
+    expect(await inbox(owner)).toEqual([]);
+    expect(await inbox(mallory)).toEqual([]);
+    const items = await inbox(casey);
+    expect(items).toEqual([expect.objectContaining({ kind: 'friend', inviterName: 'Olive Owner' })]);
+    expect(JSON.stringify(items)).not.toMatch(/example\.test|username|phone|email/);
+    const [invite] = items;
+    expect((await read(casey,'/v1/snapshot')).invitationCount).toBe(1);
+    expect(await read(owner, '/v1/friends')).toEqual([]);
+    expect(await read(owner, '/v1/people/known')).toEqual([]);
+    for (const actor of [owner,mallory]) for (const action of ['accept','decline'])
+      await expect(call(actor,`/v1/invitations/${invite.id}/${action}`,{})).rejects.toMatchObject({status:404});
+    await expect(call(owner,`/v1/friends/${casey}/remove`,{})).rejects.toMatchObject({status:404});
+    await call(casey,`/v1/invitations/${invite.id}/accept`,{});
+    expect((await read(casey,'/v1/snapshot')).invitationCount).toBe(0);
+    const card = [{userID:casey,name:'Casey Green',avatarURL:'preset:fern'}];
+    expect(await read(owner,'/v1/friends')).toEqual(card);
+    expect(await read(owner,'/v1/people/known')).toEqual(card);
+    expect(await read(casey,'/v1/friends')).toEqual([{userID:owner,name:'Olive Owner'}]);
+    await expect(call(mallory,`/v1/friends/${casey}/remove`,{})).rejects.toMatchObject({status:404});
+    await call(casey,`/v1/friends/${owner}/remove`,{});
+    expect(await read(owner,'/v1/friends')).toEqual([]);
+    expect(await inbox(casey)).toEqual([]);
   });
 
-  it('caps the number of results', async () => {
-    for (let i = 0; i < MAX_RESULTS + 5; i++)
-      await saveProfile(env.DB, { userID: 'dir-many-' + i, name: 'Sam ' + i, username: null, email: null });
-    expect(await search(owner, 'sam')).toHaveLength(MAX_RESULTS);
-  });
-
-  it('rate-limits each account per hour without affecting others', async () => {
+  it('honors discoverability for exact email and requires an active shared group for account IDs', async () => {
     await people();
-    for (let i = 0; i < SEARCH_LIMIT_PER_HOUR; i++) await search(owner, 'casey');
-    await expect(call(owner, '/v1/people/search', { query: 'casey' })).rejects.toMatchObject({ status: 429 });
-    await expect(call(owner, '/v1/people/' + casey)).rejects.toMatchObject({ status: 429 });
-    expect(await search(mallory, 'casey')).toHaveLength(1);
-    await env.DB.prepare('UPDATE lookup_limits SET hour=0 WHERE user_id=?').bind(owner).run();
-    expect(await search(owner, 'casey')).toHaveLength(1);
+    await expect(call(casey,'/v1/profile/discoverable',{discoverable:'no'})).rejects.toBeInstanceOf(InputError);
+    await call(casey,'/v1/profile/discoverable',{discoverable:false});
+    await call(owner,'/v1/friends/requests',{email:'casey@example.test'});
+    await call(owner,'/v1/friends/requests',{userID:casey});
+    expect(await inbox(casey)).toEqual([]);
+    const shared = await shareGroup();
+    await call(owner,'/v1/friends/requests',{email:'casey@example.test'});
+    expect(await inbox(casey)).toEqual([]);
+    expect(await read(owner,'/v1/people/shared')).toEqual([{userID:casey,name:'Casey Green'}]);
+    await call(owner,'/v1/friends/requests',{userID:casey});
+    const [request] = await inbox(casey);
+    await call(casey,`/v1/invitations/${request.id}/decline`,{});
+    await expect(call(casey,`/v1/invitations/${request.id}/accept`,{})).rejects.toMatchObject({status:404});
+    await env.DB.prepare('UPDATE members SET removed_at=? WHERE group_id=? AND user_id=?').bind('2026-01-01',shared,casey).run();
+    expect(await read(owner,'/v1/people/shared')).toEqual([]);
+    expect(await read(owner,'/v1/people/known')).toEqual([]);
+    await call(owner,'/v1/friends/requests',{userID:casey});
+    expect(await inbox(casey)).toEqual([]);
   });
 
-  it('hides people who turn off discoverable from search, profiles and invitations', async () => {
+  it('validates input and limits requests per account', async () => {
     await people();
-    expect(await read(casey, '/v1/profile/discoverable')).toEqual({ discoverable: true });
-    expect((await read(casey, '/v1/snapshot')).discoverable).toBe(true);
-    await call(casey, '/v1/profile/discoverable', { discoverable: false });
-    expect((await read(casey, '/v1/snapshot')).discoverable).toBe(false);
-    expect(await search(owner, 'casey@example.test')).toEqual([]);
-    expect(await search(owner, 'casey')).toEqual([]);
-    await expect(call(owner, '/v1/people/' + casey)).rejects.toMatchObject({ status: 404 });
-    await expect(call(owner, groupPath + '/invites/direct', { userID: casey })).rejects.toMatchObject({ status: 404 });
-    await expect(call(casey, '/v1/profile/discoverable', { discoverable: 'no' })).rejects.toBeInstanceOf(InputError);
+    for (const input of [{email:'cas'}, {email:'casey@example.test',userID:casey}, {}])
+      await expect(call(owner,'/v1/friends/requests',input)).rejects.toBeInstanceOf(InputError);
+    for (let i=0;i<FRIEND_REQUESTS_PER_HOUR;i++) await call(owner,'/v1/friends/requests',{email:'unknown@example.test'});
+    await expect(call(owner,'/v1/friends/requests',{email:'unknown@example.test'})).rejects.toMatchObject({status:429});
+    expect((await call(casey,'/v1/friends/requests',{email:'unknown@example.test'})).status).toBe(202);
+    await expect(call(owner,'/v1/people/search',{query:'Casey'})).rejects.toMatchObject({status:404});
+  });
+});
 
-    // People who already share a group can still see each other's minimal profile.
-    await call(owner, groupPath + '/members', { id: 'dir-seat-direct', name: 'Casey', userID: casey });
-    expect(await read(owner, '/v1/people/' + casey)).toEqual({ userID: casey, name: 'Casey Green', sharedGroups: [{ id: groupID, name: 'Lisbon' }] });
-    await call(casey, '/v1/profile/discoverable', { discoverable: true });
-    expect(await search(owner, 'casey')).toHaveLength(1);
+describe('direct placeholder linking', () => {
+  const seat = 'dir-seat-casey';
+  const path = groupPath + '/members/' + seat + '/link';
+  const activity = groupPath + '/member-links';
+
+  it('requires active membership and a known account, and records a private notification', async () => {
+    await people();
+    await expect(call(mallory,path,{userID:casey})).rejects.toMatchObject({status:403});
+    await expect(call(mallory,activity)).rejects.toMatchObject({status:403});
+    await expect(call(owner,path,{userID:casey})).rejects.toMatchObject({status:404});
+    await expect(call(owner,groupPath+'/members',{id:'stranger-seat',name:'Casey',userID:casey})).rejects.toBeInstanceOf(InputError);
+    await expect(call(owner,'/v1/groups',{id:'stranger-group',name:'Trip',currency:'EUR',kind:'trip',members:[
+      {id:'stranger-owner',name:'Olive',userID:owner},{id:'stranger-guest',name:'Casey',userID:casey},
+    ]})).rejects.toBeInstanceOf(InputError);
+    await befriend(casey);
+    await expect(call(owner,groupPath+'/members/dir-seat-owner/link',{userID:casey})).rejects.toMatchObject({status:409});
+    await env.DB.prepare('UPDATE members SET removed_at=? WHERE id=?').bind('2026-01-01','dir-seat-owner').run();
+    await expect(call(owner,path,{userID:casey})).rejects.toMatchObject({status:403});
+    await env.DB.prepare('UPDATE members SET removed_at=NULL WHERE id=?').bind('dir-seat-owner').run();
+    expect(await read(owner,path,{userID:casey})).toEqual({ok:true});
+    await expect(call(owner,path,{userID:casey})).rejects.toMatchObject({status:409});
+    const [notice] = await inbox(casey);
+    expect(notice).toMatchObject({kind:'linked',groupID,memberName:'Casey (placeholder)',inviterName:'Olive Owner'});
+    expect(await inbox(owner)).toEqual([]);
+    expect(await inbox(mallory)).toEqual([]);
+    expect((await read(casey,'/v1/snapshot')).groups[0].members).toContainEqual(expect.objectContaining({id:seat,userID:casey}));
+    await expect(call(owner,`/v1/invitations/${notice.id}/decline`,{})).rejects.toMatchObject({status:404});
+    await call(casey,`/v1/invitations/${notice.id}/decline`,{});
+    expect(await inbox(casey)).toEqual([]);
+    expect(await read(casey,activity)).toEqual({links:[{id:notice.id,memberName:'Casey (placeholder)',actorName:'Olive Owner',userName:'Casey Green',createdAt:expect.any(Number)}]});
+    expect(await env.DB.prepare('SELECT count(*) AS n FROM direct_invites').first('n')).toBe(0);
+  });
+
+  it('expires a request and records only one concurrent link', async () => {
+    await people();
+    await call(owner,'/v1/friends/requests',{email:'casey@example.test'});
+    const [expired] = await inbox(casey);
+    await env.DB.prepare('UPDATE friendships SET expires_at=0 WHERE id=?').bind(expired.id).run();
+    expect(await inbox(casey)).toEqual([]);
+    await expect(call(casey,`/v1/invitations/${expired.id}/accept`,{})).rejects.toMatchObject({status:404});
+    await befriend(casey);
+    await befriend(mallory);
+    const results = await Promise.allSettled([call(owner,path,{userID:casey}),call(owner,path,{userID:mallory})]);
+    expect(results.filter(result => result.status==='fulfilled')).toHaveLength(1);
+    expect((await read(owner,activity)).links).toHaveLength(1);
+    expect((await inbox(casey)).length + (await inbox(mallory)).length).toBe(1);
+  });
+
+  it('merges placeholder expense history into an existing member through aliases', async () => {
+    await people();
+    await env.DB.prepare('INSERT INTO members(id,group_id,user_id,name) VALUES (?,?,?,?)')
+      .bind('dir-casey-account',groupID,casey,'Casey Green').run();
+    await call(owner,'/v1/entries',{id:'dir-dinner',groupID,title:'Dinner',amount:1001,currency:'EUR',
+      createdAt:'2026-05-15T00:00:00Z',splitMode:'exact',kind:'expense',paidBy:seat,splits:[{memberID:seat,amount:500},{memberID:'dir-casey-account',amount:501}]});
+    await call(owner,path,{userID:casey});
+    const snapshot = await read(casey,'/v1/snapshot');
+    expect(snapshot.entries[0]).toMatchObject({paidBy:'dir-casey-account',splits:[{memberID:'dir-casey-account',amount:1001}]});
+    expect(snapshot.groups[0].members.some((m: {id: string}) => m.id===seat)).toBe(false);
   });
 });
 
 describe('invite inbox', () => {
   it('delivers a direct invitation only to its recipient, who can accept it and claim the placeholder', async () => {
     await people();
+    await befriend(casey);
     await expect(call(mallory, groupPath + '/invites/direct', { userID: casey })).rejects.toMatchObject({ status: 403 });
     await expect(call(owner, groupPath + '/invites/direct', { userID: 'nobody' })).rejects.toMatchObject({ status: 404 });
     await expect(call(owner, groupPath + '/invites/direct', { userID: casey, memberID: 'dir-seat-owner' })).rejects.toMatchObject({ status: 404 });
@@ -117,6 +206,7 @@ describe('invite inbox', () => {
 
   it('lets the recipient decline, and the inviter revoke, a direct invitation', async () => {
     await people();
+    await befriend(casey);
     const first = await read<{ id: string }>(owner, groupPath + '/invites/direct', { userID: casey });
     expect(await read(casey, `/v1/invitations/${first.id}/decline`, {})).toEqual({ ok: true });
     expect(await inbox(casey)).toEqual([]);
@@ -130,6 +220,7 @@ describe('invite inbox', () => {
 
   it('joins as a new member when no placeholder is attached', async () => {
     await people();
+    await befriend(mallory);
     const { id } = await read<{ id: string }>(owner, groupPath + '/invites/direct', { userID: mallory });
     expect(await read(mallory, `/v1/invitations/${id}/accept`, {})).toEqual({ ok: true, groupID });
     const members = (await read(mallory, '/v1/snapshot')).groups[0].members;
@@ -138,10 +229,10 @@ describe('invite inbox', () => {
 
   it('rate-limits direct invitations per sender', async () => {
     await people();
-    for (let i = 0; i < DIRECT_INVITES_PER_HOUR; i++) {
-      await saveProfile(env.DB, { userID: 'dir-bulk-' + i, name: 'Bulk ' + i, username: null, email: null });
-      await call(owner, groupPath + '/invites/direct', { userID: 'dir-bulk-' + i });
-    }
+    await befriend(casey);
+    for (let i = 0; i < DIRECT_INVITES_PER_HOUR; i++)
+      await env.DB.prepare('INSERT INTO direct_invites VALUES (?,?,?,?,?,?,?)')
+        .bind('invite-'+i,groupID,'dir-bulk-'+i,owner,null,Date.now(),Date.now()+3600000).run();
     await expect(call(owner, groupPath + '/invites/direct', { userID: casey })).rejects.toMatchObject({ status: 429 });
   });
 

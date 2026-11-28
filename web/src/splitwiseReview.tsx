@@ -73,15 +73,9 @@ export function ImportPerson({ source, person, members, newGroup, update }: {
             </>
           ) : (
             <>
-              <Form label="Search Split" submit={async (form) => {
-                setMatches(undefined);
-                setMatches(await request<SplitAccount[]>("/v1/people/search", { query: value(form, "query") }));
-              }}>
-                <label className="field">
-                  Email, username, or shared contact
-                  <input name="query" required maxLength={254} />
-                </label>
-              </Form>
+              <Form label="Show known accounts" submit={async () => {
+                setMatches(await request<SplitAccount[]>("/v1/people/known"));
+              }} />
               {matches?.length === 0 && <p className="splitwise-hint" role="status">No Split accounts found.</p>}
               {matches?.map((account) => (
                 <button type="button" className="btn btn-sm" key={account.userID} onClick={() => update({ ...person, account })}>

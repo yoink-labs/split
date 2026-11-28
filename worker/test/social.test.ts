@@ -27,6 +27,7 @@ async function snapshot(user:string) {
 
 beforeEach(async()=>{
   await env.DB.prepare('INSERT INTO split_profiles VALUES (?,?,?,?,?)').bind(userB,'Maya','maya',null,Date.now()).run();
+  await env.DB.prepare('INSERT INTO friendships VALUES (?,?,?,?,?)').bind('social-friends',userA,userB,1,Date.now()).run();
   await call(userA,'/v1/groups',{id:group,name:'Trip',kind:'trip',currency:'USD',
     members:[{id:seatA,userID:userA,name:'Alex'},{id:seatB,userID:userB,name:'Maya'}]});
 });

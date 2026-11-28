@@ -13,7 +13,6 @@ struct SplitwisePersonEditor: View {
     @State private var name: String
     @State private var email: String
     @State private var account: SplitUser?
-    @State private var query = ""
     @State private var matches: [SplitUser]?
     @State private var searching = false
     @State private var error: String?
@@ -67,7 +66,7 @@ struct SplitwisePersonEditor: View {
                     } footer: { Text("Prepare a personal invite after importing.") }
                 }
                 if choice == .account {
-                    accountSearch
+                    accountPicker
                 }
                 if let error { InlineError(text: error) }
             }
@@ -82,22 +81,17 @@ struct SplitwisePersonEditor: View {
         }
     }
 
-    @ViewBuilder private var accountSearch: some View {
+    @ViewBuilder private var accountPicker: some View {
         if let account {
             Section {
                 LabeledContent("Split account", value: account.name)
                 Button("Change account") {
                     self.account = nil
-                    matches = nil
                 }
             } footer: { Text("This account can access the group after import.") }
         } else {
             Section {
-                TextField("Full email or first 3 letters of a name", text: $query)
-                    .textInputAutocapitalization(.never).autocorrectionDisabled()
-                    .submitLabel(.search).onSubmit(search)
-                Button("Search Split", action: search)
-                    .disabled(query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || searching)
+                Button("Show known accounts", action: loadAccounts).disabled(searching)
                 if searching { ProgressView() }
                 if matches?.isEmpty == true { Text("No Split accounts found.").foregroundStyle(.secondary) }
                 ForEach(matches ?? []) { user in
@@ -111,20 +105,13 @@ struct SplitwisePersonEditor: View {
         }
     }
 
-    private func search() {
-        let submitted = query
-        guard !searching, !submitted.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+    private func loadAccounts() {
         searching = true
-        matches = nil
         error = nil
         Task {
             defer { searching = false }
-            do {
-                let found = try await store.search(submitted)
-                if query == submitted { matches = found }
-            } catch {
-                if query == submitted { self.error = error.localizedDescription }
-            }
+            do { matches = try await store.knownPeople() }
+            catch { self.error = error.localizedDescription }
         }
     }
 

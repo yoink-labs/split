@@ -6,10 +6,12 @@ import { SettingsCard } from "./groupSettings";
 import { memberBalances, useHomeMoney } from "./homeMoney";
 import { Avatar, BalanceBadge } from "./ui";
 
+type MemberLink = { id: string; memberName: string; actorName: string | null; userName: string | null };
+
 type ClaimEmail = { memberID: string; email: string };
 
 export function GroupMembers({ group, entries }: { group: Group; entries: Expense[] }) {
-  const { request, save, user, demo, data } = useLedger();
+  const { request, save, user, demo } = useLedger();
   const homeMoney = useHomeMoney();
   const path = `/v1/groups/${group.id}`;
   const canManage = group.members.some((person) => person.userID === user && !person.removed);
@@ -17,7 +19,8 @@ export function GroupMembers({ group, entries }: { group: Group; entries: Expens
   const [newLink, setNewLink] = useState<{ id: string; url: string }>();
   const [selectedID, setSelectedID] = useState<string>();
   const selected = group.members.find((person) => person.id === selectedID);
-  const [matches, setMatches] = useState<DirectoryPerson[]>();
+  const [known, setKnown] = useState<DirectoryPerson[]>([]);
+  const [links, setLinks] = useState<MemberLink[]>([]);
   const [loadError, setLoadError] = useState("");
   const [actionError, setActionError] = useState("");
   const [notice, setNotice] = useState("");
@@ -31,12 +34,16 @@ export function GroupMembers({ group, entries }: { group: Group; entries: Expens
     setLoading(true);
     setLoadError("");
     try {
-      const [members, invites] = await Promise.all([
+      const [members, invites, people, activity] = await Promise.all([
         request<{ claimEmails: ClaimEmail[] }>(`${path}/members`),
         request<{ invites: ActiveInvite[] }>(`${path}/invites`),
+        request<DirectoryPerson[]>("/v1/people/known"),
+        request<{ links: MemberLink[] }>(`${path}/member-links`),
       ]);
       if (version === loadVersion.current) {
         setDirectory({ ...members, ...invites });
+        setKnown(people);
+        setLinks(activity.links);
         setNewLink((link) => invites.invites.some((invite) => invite.id === link?.id) ? link : undefined);
       }
     } catch (error) {
@@ -147,7 +154,7 @@ export function GroupMembers({ group, entries }: { group: Group; entries: Expens
           </div>
         </SettingsCard>
         {canManage && <>
-          <SettingsCard id="add-person" title="Add a person" description="Add a placeholder or find someone on Split.">
+          <SettingsCard id="add-person" title="Add a person" description="Add a placeholder or someone you know on Split.">
             <Form label="Add placeholder" submit={async (form) => {
               await save(`${path}/members`, { id: crypto.randomUUID(), name: value(form, "name"), email: value(form, "email") });
               await load();
@@ -158,43 +165,22 @@ export function GroupMembers({ group, entries }: { group: Group; entries: Expens
                 <small>They can claim their history by signing in with this verified email.</small>
               </label>
             </Form>
-            <Form label="Search Split" submit={async (form) => {
-              setMatches(undefined);
-              setMatches(await request<DirectoryPerson[]>("/v1/people/search", { query: value(form, "query") }));
-            }}>
-              <label className="field">Find someone on Split<input type="search" name="query" required minLength={3} maxLength={254}
-                placeholder="Full email, or the first 3 letters of a name" />
-                <small>They get an invitation in Split and can accept or decline it. Only names and avatars are shown.</small>
-              </label>
-            </Form>
-            {matches?.length === 0 && <p className="muted">No matches.</p>}
-            {matches?.map((person) => {
-              const joined = group.members.some((member) => member.userID === person.userID && !member.removed);
-              const invited = directory?.invites.some((invite) => invite.kind === "person" && invite.recipientName === person.name);
-              // People you already share a group with can be added directly, as before.
-              const known = data.groups.some((other) => other.members.some((member) => member.userID === person.userID));
-              return (
-                <div className="people-row-main" key={person.userID}>
-                  <Avatar name={person.name} avatarURL={person.avatarURL} size={32} />
-                  <strong>{person.name}</strong>
-                  <div className="people-row-actions">
-                    {known && !joined && (
-                      <button className="btn btn-sm" type="button" disabled={working} onClick={() => void act(async () => {
-                        await save(`${path}/members`, { id: crypto.randomUUID(), userID: person.userID, name: person.name });
-                        setMatches(undefined);
-                        setNotice(`${person.name} added.`);
-                      })}>Add now</button>
-                    )}
-                    <button className="btn btn-sm btn-primary" type="button" disabled={working || joined} onClick={() => void act(async () => {
-                      await request(`${path}/invites/direct`, { userID: person.userID });
-                      setMatches(undefined);
-                      setNotice(`Invitation sent to ${person.name}.`);
-                      await load();
-                    })}>{joined ? "In group" : invited ? "Invite again" : "Invite"}</button>
-                  </div>
-                </div>
-              );
-            })}
+            {known.some((person) => !group.members.some((member) => member.userID === person.userID)) && (
+              <Form label="Add known person" submit={async (form) => {
+                const person = known.find((candidate) => candidate.userID === value(form, "user"));
+                if (!person) throw new Error("Choose a person.");
+                await save(`${path}/members`, { id: crypto.randomUUID(), userID: person.userID, name: person.name });
+                setNotice(`${person.name} added.`);
+              }}>
+                <label className="field">Friends and shared group members
+                  <select name="user" required>
+                    <option value="">Choose a person</option>
+                    {known.filter((person) => !group.members.some((member) => member.userID === person.userID))
+                      .map((person) => <option key={person.userID} value={person.userID}>{person.name}</option>)}
+                  </select>
+                </label>
+              </Form>
+            )}
           </SettingsCard>
           <SettingsCard id="group-invites" title="Invitations" description="Share a link or send a personal email from a placeholder’s member row.">
             <Form label="Create invite link" submit={async (form) => {
@@ -254,6 +240,9 @@ export function GroupMembers({ group, entries }: { group: Group; entries: Expens
               </div>
             )}
           </SettingsCard>
+          {links.length > 0 && <SettingsCard id="member-activity" title="Member activity">
+            <ul>{links.map((link) => <li key={link.id}>{link.actorName ?? "A member"} linked {link.memberName} to {link.userName ?? "a Split account"}.</li>)}</ul>
+          </SettingsCard>}
         </>}
       </div>
       <dialog ref={dialog} className="modal group-delete-dialog" aria-labelledby="manage-member-title" onClose={() => setSelectedID(undefined)}>
@@ -261,6 +250,22 @@ export function GroupMembers({ group, entries }: { group: Group; entries: Expens
           <div className="form-stack" key={selected.id}>
             <h3 id="manage-member-title">{selected.name}</h3>
             {!selected.userID && !selected.removed && <>
+              {known.length > 0 && <Form label="Link placeholder" submit={async (form) => {
+                const person = known.find((candidate) => candidate.userID === value(form, "user"));
+                if (!person) throw new Error("Choose a person.");
+                await save(`${path}/members/${selected.id}/link`, { userID: person.userID });
+                dialog.current?.close();
+                setNotice(`${selected.name} linked to ${person.name}.`);
+                await load();
+              }}>
+                <label className="field">Link to an existing account<select name="user" required>
+                  <option value="">Choose a person</option>
+                  {known.map((person) => <option key={person.userID} value={person.userID}>{person.name}</option>)}
+                </select></label>
+                <label className="check-row"><input type="checkbox" required />
+                  <span>Permanently merge this placeholder’s expense history into the selected account.</span>
+                </label>
+              </Form>}
               {directory && <Form label="Save claim email" submit={async (form) => {
                 await request(`${path}/members/${selected.id}/email`, { email: value(form, "email") || null });
                 setNotice("Claim email updated.");

@@ -6,6 +6,7 @@ struct FriendsView: View {
     @Environment(\.horizontalSizeClass) private var size
     @State private var selection: String?
     @State private var showCreate = false
+    @State private var managingFriends = false
     @State private var query = ""
 
     private var rows: [PersonBalance] {
@@ -52,7 +53,8 @@ struct FriendsView: View {
             }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button { showCreate = true } label: { Label("Add a friend", systemImage: "plus") }
+                    Button { managingFriends = true } label: { Label("Manage friends", systemImage: "person.crop.circle.badge.plus") }
+                    Button { showCreate = true } label: { Label("New balance tab", systemImage: "plus") }
                 }
             }
             .searchable(text: $query, placement: .sidebar, prompt: "Search people")
@@ -66,6 +68,12 @@ struct FriendsView: View {
         }
         .navigationSplitViewStyle(.balanced)
         .sheet(isPresented: $showCreate) { CreateGroupView(friend: true) }
+        .sheet(isPresented: $managingFriends) {
+            NavigationStack {
+                FriendSettingsView()
+                    .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { managingFriends = false } } }
+            }
+        }
         .onAppear {
             if selection == nil, size == .regular, let first = rows.first?.key { selection = first }
         }

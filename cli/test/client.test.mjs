@@ -31,7 +31,7 @@ test('offline version, help and per-command flags work through the installed lau
   const run = args => spawnSync(fileURLToPath(new URL('../bin/split',import.meta.url)),args,{encoding:'utf8'});
   const version = JSON.parse(await readFile(new URL('../release/version.json', import.meta.url), 'utf8'));
   assert.equal(run(['--version']).stdout.trim(),`split ${version}`);
-  assert.match(run(['--help']).stdout,/members lookup/);
+  assert.match(run(['--help']).stdout,/members known/);
   assert.match(run(['--help']).stdout,/github\.com\/yoink-labs\/split/);
   assert.match(run(['expenses','edit','--help']).stdout,/--revision/);
   assert.match(run(['members','update','--help']).stdout,/--email/);

@@ -30,6 +30,8 @@ beforeEach(async () => {
   });
   for (const [id, name, mail] of [[maya, 'Maya', 'maya@example.test'], [sam, 'Sam', 'sam@example.test'], [alex, 'Alex', 'alex@example.test']])
     await env.DB.prepare('INSERT INTO split_profiles VALUES (?,?,?,?,?)').bind(id, name, null, mail, Date.now()).run();
+  for (const friend of [maya,sam])
+    await env.DB.prepare('INSERT INTO friendships VALUES (?,?,?,?,?)').bind('email-friend-'+friend,alex,friend,1,Date.now()).run();
   await call(alex, '/v1/groups', { id: group, name: 'Lisbon', kind: 'trip', currency: 'USD', members: [
     { id: 'seat-alex', userID: alex, name: 'Alex' },
     { id: 'seat-maya', userID: maya, name: 'Maya' },

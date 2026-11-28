@@ -1,3 +1,4 @@
+import { knownAccount } from './relationships';
 import { itemSplit } from './items';
 import { type Entry } from './ledger';
 
@@ -54,21 +55,34 @@ export function resolveEntry(entry: Entry, aliases: Map<string,string>): Entry {
 // sees either the original seat or the completed merge.
 // Evidence is the invitation that authorizes the claim. It is rechecked inside
 // every statement so a revoke that races the claim wins.
-export type ClaimEvidence = 'link' | 'direct';
+export type ClaimEvidence = 'link' | 'direct' | { actor: string };
 export async function claimSeat(db: D1Database, groupID: string, seatID: string, userID: string, tokenHash: string,
   evidence: ClaimEvidence = 'link') {
-  const invite = evidence === 'direct'
-    ? 'EXISTS (SELECT 1 FROM direct_invites WHERE id=? AND member_id=? AND group_id=? AND expires_at>? AND recipient=?)'
+  const link = typeof evidence === 'object' ? evidence : null;
+  const invite = link
+    ? 'EXISTS (SELECT 1 FROM member_links WHERE id=? AND member_id=? AND group_id=? AND recipient=?)'
+    : evidence === 'direct'
+    ? `EXISTS (SELECT 1 FROM direct_invites WHERE id=? AND member_id=? AND group_id=? AND expires_at>? AND recipient=?
+      AND EXISTS (SELECT 1 FROM members WHERE group_id=direct_invites.group_id AND user_id=direct_invites.inviter AND removed_at IS NULL))`
     : 'EXISTS (SELECT 1 FROM invites WHERE token_hash=? AND member_id=? AND group_id=? AND expires_at>?)';
-  const inviteArgs: unknown[] = [tokenHash,seatID,groupID,Date.now(),...(evidence === 'direct' ? [userID] : [])];
+  const inviteArgs: unknown[] = link ? [tokenHash,seatID,groupID,userID]
+    : [tokenHash,seatID,groupID,Date.now(),...(evidence === 'direct' ? [userID] : [])];
   const eligible = 'id=? AND group_id=? AND user_id IS NULL AND removed_at IS NULL AND id NOT IN (SELECT member_id FROM member_aliases)';
-  await db.batch([
+  const audit = link ? [db.prepare(`INSERT INTO member_links(id,group_id,member_id,member_name,actor,recipient,created_at)
+    SELECT ?,group_id,id,name,?,?,? FROM members WHERE ${eligible}
+    AND EXISTS (SELECT 1 FROM members WHERE group_id=? AND user_id=? AND removed_at IS NULL)
+    AND EXISTS (SELECT 1 FROM split_profiles p WHERE p.user_id=? AND p.user_id<>? AND ${knownAccount})
+    AND NOT EXISTS (SELECT 1 FROM members WHERE group_id=? AND user_id=? AND removed_at IS NOT NULL)`)
+    .bind(tokenHash,link.actor,userID,Date.now(),seatID,groupID,groupID,link.actor,userID,link.actor,link.actor,link.actor,link.actor,groupID,userID)] : [];
+  const results = await db.batch([
+    ...audit,
     db.prepare(`INSERT INTO member_aliases(member_id, canonical_id)
       SELECT target.id, existing.id FROM members target JOIN members existing ON existing.group_id=target.group_id
       WHERE target.id=? AND target.group_id=? AND target.user_id IS NULL AND target.removed_at IS NULL AND existing.user_id=? AND ${invite}
       ON CONFLICT(member_id) DO NOTHING`).bind(seatID, groupID, userID, ...inviteArgs),
     db.prepare(`UPDATE members SET user_id=? WHERE ${eligible} AND ${invite}`).bind(userID, seatID, groupID, ...inviteArgs),
   ]);
+  if (link) return Boolean(results[0].meta.changes);
   return Boolean(await db.prepare(`SELECT m.id FROM members m LEFT JOIN member_aliases a ON a.member_id=m.id
     JOIN members owner ON owner.id=COALESCE(a.canonical_id,m.id)
     WHERE m.id=? AND m.group_id=? AND owner.user_id=? AND ${invite}`).bind(seatID,groupID,userID,...inviteArgs).first());

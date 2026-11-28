@@ -1,90 +1,56 @@
-// People search and the invite inbox.
-//
-// Privacy rules for the directory:
-// - Results contain only the account ID, display name and avatar. Email
-//   addresses, usernames and phone numbers never leave the Worker.
-// - A query is a full email address (exact match against the verified primary
-//   address) or a name prefix of at least three characters.
-// - Each account may run a limited number of lookups per hour and sees at most
-//   MAX_RESULTS people per query.
-// - People who turn off "discoverable" never appear in search, and their
-//   profile is visible only to people who already share a group with them.
+// Known accounts, friend requests, and the invitation inbox.
 import { HTTPError, body, json } from './http';
 import { InputError } from './ledger';
 import { activeGroupMember, activePlaceholder, requireActiveMember, tokenHash } from './memberEmail';
+import { activeSharedGroup, knownAccount, knownPerson, listPeople } from './relationships';
 import { claimSeat, fetchVerifiedProfile, refreshIdentity } from './people';
 
-export const SEARCH_LIMIT_PER_HOUR = 60;
-export const MAX_RESULTS = 10;
-export const MIN_NAME_PREFIX = 3;
+export const FRIEND_REQUESTS_PER_HOUR = 60;
 export const DIRECT_INVITES_PER_HOUR = 20;
 const INVITE_DAYS = 14;
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-export interface Person { userID: string; name: string; avatarURL?: string }
 export interface Invitation {
-  id: string; kind: 'email' | 'direct'; groupID: string; groupName: string; groupKind: string;
+  id: string; kind: 'email' | 'direct' | 'friend' | 'linked'; groupID: string; groupName: string; groupKind: string;
   memberCount: number; inviterName?: string; memberName?: string; expiresAt: number;
 }
 
 const discoverable = `COALESCE((SELECT discoverable FROM people_settings WHERE user_id=p.user_id),1)=1`;
-const sharesGroup = `EXISTS (SELECT 1 FROM members mine JOIN members theirs ON theirs.group_id=mine.group_id
-  WHERE mine.user_id=? AND mine.removed_at IS NULL AND theirs.user_id=p.user_id)`;
-const avatar = '(SELECT avatar_url FROM user_avatars WHERE user_id=p.user_id) AS avatarURL';
-
-function person(row: {userID: string; name: string; avatarURL: string | null}): Person {
-  return {userID: row.userID, name: row.name, ...(row.avatarURL ? {avatarURL: row.avatarURL} : {})};
-}
-
-async function spendLookup(db: D1Database, userID: string) {
+async function spendFriendRequest(db: D1Database, userID: string) {
   const hour = Math.floor(Date.now() / 3600000);
   const count = await db.prepare(`INSERT INTO lookup_limits VALUES (?,?,1) ON CONFLICT(user_id) DO UPDATE SET
     attempts=CASE WHEN hour=excluded.hour THEN attempts+1 ELSE 1 END, hour=excluded.hour RETURNING attempts`)
     .bind(userID, hour).first<{attempts: number}>();
-  if ((count?.attempts ?? 0) > SEARCH_LIMIT_PER_HOUR) throw new HTTPError(429, 'Search limit reached. Try again in an hour.');
+  if ((count?.attempts ?? 0) > FRIEND_REQUESTS_PER_HOUR) throw new HTTPError(429, 'Friend request limit reached. Try again in an hour.');
 }
 
-export function parseQuery(raw: unknown): {email: string} | {prefix: string} {
-  const query = typeof raw === 'string' ? raw.trim().replace(/\s+/g, ' ') : '';
-  if (!query || query.length > 254) throw new InputError('Enter a full email address or at least 3 letters of a name.');
-  if (query.includes('@')) {
-    if (!EMAIL.test(query)) throw new InputError('Enter a full email address, like name@example.com.');
-    return {email: query.toLowerCase()};
-  }
-  if ([...query].length < MIN_NAME_PREFIX) throw new InputError('Enter at least 3 letters of a name.');
-  if (query.length > 60) throw new InputError('Names are up to 60 characters.');
-  return {prefix: query.toLowerCase().replace(/[\\%_]/g, '\\$&')};
+async function requestFriend(db: D1Database, actor: string, b: Record<string, unknown>) {
+  const email = typeof b.email === 'string' ? b.email.trim().toLowerCase() : '';
+  const target = typeof b.userID === 'string' ? b.userID : '';
+  if ((email && target) || (!email && !target) || (email && (email.length > 254 || !EMAIL.test(email))) || target.length > 128)
+    throw new InputError('Enter a full email address or choose someone from a shared group.');
+  await spendFriendRequest(db, actor);
+  const now = Date.now();
+  const match = email ? `p.email=? AND ${discoverable}` : `p.user_id=? AND ${activeSharedGroup}`;
+  const args = email ? [email] : [target, actor];
+  await db.prepare(`INSERT INTO friendships(id,sender,recipient,expires_at)
+    SELECT ?,?,p.user_id,? FROM split_profiles p WHERE p.user_id<>? AND ${match}
+    ON CONFLICT DO UPDATE SET id=excluded.id,sender=excluded.sender,recipient=excluded.recipient,expires_at=excluded.expires_at
+    WHERE friendships.accepted=0 AND friendships.expires_at<=?`)
+    .bind(await tokenHash(crypto.randomUUID()),actor,now+INVITE_DAYS*86400_000,actor,...args,now).run();
+  // Uniform response for unavailable, opted-out, already pending, and unknown addresses.
+  return json({ok:true},202);
 }
 
-export async function lookup(db: D1Database, userID: string, raw: unknown): Promise<Person[]> {
-  const query = parseQuery(raw);
-  await spendLookup(db, userID);
-  const match = 'email' in query
-    ? {sql: 'p.email=?', args: [query.email]}
-    : {sql: `(lower(p.name) LIKE ? ESCAPE '\\' OR lower(p.name) LIKE ? ESCAPE '\\')`, args: [query.prefix + '%', '% ' + query.prefix + '%']};
-  const {results} = await db.prepare(`SELECT p.user_id AS userID,p.name,${avatar} FROM split_profiles p
-    WHERE p.user_id<>? AND ${discoverable} AND ${match.sql} ORDER BY p.name COLLATE NOCASE, p.user_id LIMIT ?`)
-    .bind(userID, ...match.args, MAX_RESULTS).all<{userID: string; name: string; avatarURL: string | null}>();
-  return results.map(person);
-}
-
-/** Someone the viewer may see: discoverable, or already sharing a group. */
-async function visiblePerson(db: D1Database, viewer: string, target: string) {
-  return db.prepare(`SELECT p.user_id AS userID,p.name,${avatar} FROM split_profiles p
-    WHERE p.user_id=? AND p.user_id<>? AND (${discoverable} OR ${sharesGroup})`)
-    .bind(target, viewer, viewer).first<{userID: string; name: string; avatarURL: string | null}>();
-}
-
-async function profile(db: D1Database, viewer: string, target: string) {
-  await spendLookup(db, viewer);
-  const row = await visiblePerson(db, viewer, target);
-  if (!row) throw new HTTPError(404, 'Person not found.');
-  // Only groups the viewer already belongs to, so nothing new is revealed.
-  const {results} = await db.prepare(`SELECT g.id,g.name FROM groups g
-    JOIN members mine ON mine.group_id=g.id AND mine.user_id=? AND mine.removed_at IS NULL
-    JOIN members theirs ON theirs.group_id=g.id AND theirs.user_id=? ORDER BY g.name LIMIT 20`)
-    .bind(viewer, target).all<{id: string; name: string}>();
-  return {...person(row), sharedGroups: results};
+async function respondPeople(db: D1Database, userID: string, id: string, action: 'accept' | 'decline') {
+  const pending = 'id=? AND recipient=? AND accepted=0 AND expires_at>?';
+  const result = await db.prepare(action === 'accept'
+    ? `UPDATE friendships SET accepted=1 WHERE ${pending}`
+    : `DELETE FROM friendships WHERE ${pending}`).bind(id,userID,Date.now()).run();
+  if (result.meta.changes) return json({ok:true});
+  const read = await db.prepare('UPDATE member_links SET read_at=? WHERE id=? AND recipient=? AND read_at IS NULL')
+    .bind(Date.now(),id,userID).run();
+  if (read.meta.changes) return json({ok:true, dismissed:true});
 }
 
 export async function isDiscoverable(db: D1Database, userID: string) {
@@ -94,11 +60,11 @@ export async function isDiscoverable(db: D1Database, userID: string) {
 
 async function inviteUser(env: Env, groupID: string, inviter: string, b: Record<string, unknown>) {
   await requireActiveMember(env, groupID, inviter);
-  if (typeof b.userID !== 'string' || !b.userID || b.userID.length > 128) throw new InputError('Choose a person from search results.');
+  if (typeof b.userID !== 'string' || !b.userID || b.userID.length > 128) throw new InputError('Choose a friend or someone from a shared group.');
   const target = b.userID;
   if (target === inviter) throw new InputError('You are already in this group.');
   const memberID = b.memberID === undefined || b.memberID === null ? null : String(b.memberID);
-  if (!await visiblePerson(env.DB, inviter, target)) throw new HTTPError(404, 'Person not found.');
+  if (!await knownPerson(env.DB, inviter, target)) throw new HTTPError(404, 'Person not found.');
   if (await env.DB.prepare('SELECT 1 FROM members WHERE group_id=? AND user_id=? AND removed_at IS NULL').bind(groupID, target).first())
     throw new HTTPError(409, 'This person is already in the group.');
   if (memberID && !await env.DB.prepare(activePlaceholder).bind(groupID, memberID, groupID, inviter).first())
@@ -110,9 +76,10 @@ async function inviteUser(env: Env, groupID: string, inviter: string, b: Record<
   const id = await tokenHash(crypto.randomUUID());
   const saved = await env.DB.prepare(`INSERT INTO direct_invites(id,group_id,recipient,inviter,member_id,created_at,expires_at)
     SELECT ?,?,?,?,?,?,? WHERE ${activeGroupMember}
+    AND EXISTS (SELECT 1 FROM split_profiles p WHERE p.user_id=? AND ${knownAccount})
     ON CONFLICT(group_id,recipient) DO UPDATE SET inviter=excluded.inviter,member_id=excluded.member_id,
       created_at=excluded.created_at,expires_at=excluded.expires_at RETURNING id`)
-    .bind(id, groupID, target, inviter, memberID, now, now + INVITE_DAYS * 86400_000, groupID, inviter).first<string>('id');
+    .bind(id, groupID, target, inviter, memberID, now, now + INVITE_DAYS * 86400_000, groupID, inviter, target, inviter, inviter, inviter).first<string>('id');
   if (!saved) throw new HTTPError(403, 'You are not a member of this group or your membership is archived.');
   return json({id: saved, expiresAt: now + INVITE_DAYS * 86400_000}, 201);
 }
@@ -137,14 +104,25 @@ export async function invitations(db: D1Database, userID: string): Promise<Invit
       SELECT i.token_hash,'email',g.id,g.name,g.kind,${memberCount('g.id')},NULL,m.name,max(i.expires_at)
       FROM invites i JOIN groups g ON g.id=i.group_id JOIN members m ON m.id=i.member_id
       WHERE ${emailLive} AND ${openSeat} AND ${notJoined('i.group_id')} GROUP BY i.member_id
+    UNION ALL
+      SELECT f.id,'friend','','Friend request','',0,COALESCE(p.name,'Split member'),NULL,f.expires_at
+      FROM friendships f LEFT JOIN split_profiles p ON p.user_id=f.sender
+      WHERE f.recipient=? AND f.accepted=0 AND f.expires_at>?
+    UNION ALL
+      SELECT l.id,'linked',g.id,g.name,g.kind,0,p.name,l.member_name,l.created_at
+      FROM member_links l JOIN groups g ON g.id=l.group_id LEFT JOIN split_profiles p ON p.user_id=l.actor
+      WHERE l.recipient=? AND l.read_at IS NULL
+        AND EXISTS (SELECT 1 FROM members m WHERE m.group_id=g.id AND m.user_id=l.recipient AND m.removed_at IS NULL)
     ) ORDER BY expiresAt DESC LIMIT 50`)
-    .bind(userID, now, userID, userID, now, userID)
+    .bind(userID, now, userID, userID, now, userID, userID, now, userID)
     .all<Invitation & {inviterName: string | null; memberName: string | null}>();
   return results.map(({inviterName, memberName, ...row}) => ({...row, memberCount: Number(row.memberCount),
     ...(inviterName ? {inviterName} : {}), ...(memberName ? {memberName} : {})}));
 }
 
 async function respond(env: Env, userID: string, id: string, action: 'accept' | 'decline') {
+  const people = await respondPeople(env.DB,userID,id,action);
+  if (people) return people;
   const now = Date.now();
   const direct = await env.DB.prepare(`SELECT d.group_id AS groupID,d.member_id AS memberID FROM direct_invites d WHERE d.id=? AND ${directLive}`)
     .bind(id, userID, now).first<{groupID: string; memberID: string | null}>();
@@ -193,8 +171,42 @@ async function claimHistory(env: Env, userID: string) {
 
 export async function directoryRoute(request: Request, env: Env, userID: string): Promise<Response | undefined> {
   const path = new URL(request.url).pathname;
-  if (path === '/v1/people/search' && request.method === 'POST')
-    return json(await lookup(env.DB, userID, (await body(request)).query));
+  if (request.method === 'GET') {
+    if (path === '/v1/people/known') return json(await listPeople(env.DB,userID,'known'));
+    if (path === '/v1/people/shared') return json(await listPeople(env.DB,userID,'shared'));
+    if (path === '/v1/friends') return json(await listPeople(env.DB,userID,'friends'));
+  }
+  if (path === '/v1/friends/requests' && request.method === 'POST')
+    return requestFriend(env.DB,userID,await body(request));
+  const remove = path.match(/^\/v1\/friends\/([\w-]{1,128})\/remove$/);
+  if (remove && request.method === 'POST') {
+    const deleted = await env.DB.prepare(`DELETE FROM friendships WHERE accepted=1
+      AND min(sender,recipient)=min(?,?) AND max(sender,recipient)=max(?,?)`)
+      .bind(userID,remove[1],userID,remove[1]).run();
+    if (!deleted.meta.changes) throw new HTTPError(404,'Friend not found.');
+    return json({ok:true});
+  }
+  const link = path.match(/^\/v1\/groups\/([\w-]+)\/members\/([\w-]+)\/link$/);
+  if (link && request.method === 'POST') {
+    const [,groupID,memberID] = link;
+    await requireActiveMember(env,groupID,userID);
+    const b = await body(request);
+    if (typeof b.userID !== 'string' || !await knownPerson(env.DB,userID,b.userID))
+      throw new HTTPError(404,'Choose a friend or someone from a shared group.');
+    if (!await claimSeat(env.DB,groupID,memberID,b.userID,await tokenHash(crypto.randomUUID()),{actor:userID}))
+      throw new HTTPError(409,'This placeholder is no longer available to link.');
+    return json({ok:true});
+  }
+  const activity = path.match(/^\/v1\/groups\/([\w-]+)\/member-links$/);
+  if (activity && request.method === 'GET') {
+    await requireActiveMember(env,activity[1],userID);
+    const {results} = await env.DB.prepare(`SELECT l.id,l.member_name AS memberName,l.created_at AS createdAt,
+      a.name AS actorName,p.name AS userName FROM member_links l
+      LEFT JOIN split_profiles a ON a.user_id=l.actor LEFT JOIN split_profiles p ON p.user_id=l.recipient
+      WHERE l.group_id=? AND ${activeGroupMember} ORDER BY l.created_at DESC LIMIT 50`)
+      .bind(activity[1],activity[1],userID).all();
+    return json({links:results});
+  }
   if (path === '/v1/profile/discoverable') {
     if (request.method === 'GET') return json({discoverable: await isDiscoverable(env.DB, userID)});
     if (request.method !== 'POST') throw new HTTPError(404, 'Not found.');
@@ -205,8 +217,6 @@ export async function directoryRoute(request: Request, env: Env, userID: string)
       .bind(userID, b.discoverable ? 1 : 0, Date.now()).run();
     return json({discoverable: b.discoverable});
   }
-  const profileMatch = path.match(/^\/v1\/people\/([\w-]{1,128})$/);
-  if (profileMatch && request.method === 'GET' && profileMatch[1] !== 'search') return json(await profile(env.DB, userID, profileMatch[1]));
   const direct = path.match(/^\/v1\/groups\/([\w-]+)\/invites\/direct$/);
   if (direct && request.method === 'POST') return inviteUser(env, direct[1], userID, await body(request));
   if (path === '/v1/invitations' && request.method === 'GET') return json({invitations: await invitations(env.DB, userID)});

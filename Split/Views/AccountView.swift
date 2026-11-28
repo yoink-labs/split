@@ -240,7 +240,7 @@ struct AccountView: View {
                     settingsRow(
                         icon: "person.crop.circle.badge.questionmark",
                         title: "Let people find me",
-                        subtitle: "By full email or name. Only your name is shown."
+                        subtitle: "Allow friend requests by full sign-in email."
                     ) {
                         Toggle("Let people find me", isOn: Binding(
                             get: { store.discoverable },
@@ -419,8 +419,8 @@ struct AccountView: View {
                     }
                     .buttonStyle(.plain)
                     rowDivider
-                    NavigationLink { PeopleSearchView(showsClose: false) } label: {
-                        navigationLabel(icon: "person.crop.circle.badge.plus", title: "Find people", subtitle: "Invite someone who uses Split")
+                    NavigationLink { FriendSettingsView() } label: {
+                        navigationLabel(icon: "person.crop.circle.badge.plus", title: "Friends", subtitle: "Manage friends and send requests")
                     }
                     .buttonStyle(.plain)
                     rowDivider

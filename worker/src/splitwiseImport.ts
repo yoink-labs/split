@@ -1,3 +1,4 @@
+import { knownAccount } from './relationships';
 // Imports one Splitwise group export as a single atomic D1 batch: the new group (or an existing
 // one the caller belongs to), placeholders for unmatched names, and every expense and payment.
 import { HTTPError, json } from './http';
@@ -58,9 +59,9 @@ export async function importSplitwise(db: D1Database, user: string, b: Record<st
     FROM members m LEFT JOIN member_aliases a ON a.member_id=m.id WHERE m.group_id=?`).bind(group).all<Seat>()).results;
   const linkedUsers = people.flatMap(p => p.userID ? [p.userID] : []);
   if (new Set(linkedUsers).size !== linkedUsers.length) throw new InputError('Two Splitwise names point to the same person.');
-  const profiles = linkedUsers.length ? (await db.prepare(`SELECT user_id AS userID,name FROM split_profiles
-    WHERE user_id IN (SELECT value FROM json_each(?))`).bind(JSON.stringify(linkedUsers)).all<{userID: string; name: string}>()).results : [];
-  if (profiles.length !== linkedUsers.length) throw new InputError('Choose a Split user from search results.');
+  const profiles = linkedUsers.length ? (await db.prepare(`SELECT user_id AS userID,name FROM split_profiles p
+    WHERE user_id IN (SELECT value FROM json_each(?)) AND ${knownAccount}`).bind(JSON.stringify(linkedUsers),user,user,user).all<{userID: string; name: string}>()).results : [];
+  if (profiles.length !== linkedUsers.length) throw new InputError('Choose a friend or someone from a shared group.');
   const ids = new Map<string, string>(), used = new Set<string>();
   let myID = seat?.id;
   if (creating) {

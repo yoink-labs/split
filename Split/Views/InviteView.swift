@@ -16,6 +16,7 @@ struct InviteView: View {
     @State private var copied: String?
     @State private var busy: String?
     @State private var errors: [String: String] = [:]
+    @State private var memberLinks: [MemberLink] = []
     @State private var active: [ActiveInvite] = []
     @State private var inviteToRevoke: ActiveInvite?
     @State private var inviteError: String?
@@ -52,7 +53,7 @@ struct InviteView: View {
         }
         .sheet(isPresented: $adding, onDismiss: { Task { await loadInvites() } }) {
             MemberEditor(save: { draft in _ = try await store.addMember(groupID: group.id, draft: draft) },
-                         invite: { user in try await store.inviteUser(groupID: group.id, userID: user.userID) })
+                         exclude: current.members.compactMap(\.userID))
         }
         .sheet(item: $managing) { member in
             GroupMemberEditor(groupID: group.id, member: member, isMe: member.userID == session.userID,
@@ -102,6 +103,17 @@ struct InviteView: View {
                     }
                 }
             }
+            if !memberLinks.isEmpty {
+                SectionHeader(title: "Member activity")
+                Card {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(memberLinks) { link in
+                            Text("\(link.actorName ?? "A member") linked \(link.memberName) to \(link.userName ?? "a Split account").")
+                                .font(.subheadline)
+                        }
+                    }
+                }
+            }
             if let inviteError {
                 InlineError(text: inviteError)
                 Button("Reload invitations") { Task { await loadInvites() } }
@@ -117,7 +129,9 @@ struct InviteView: View {
                 active = []
                 return
             }
+            async let activity = store.memberLinks(groupID: current.id)
             async let invitations = store.activeInvites(groupID: current.id)
+            memberLinks = try await activity
             async let contacts = store.memberClaimEmails(groupID: current.id)
             let (newInvites, newContacts) = try await (invitations, contacts)
             active = newInvites
@@ -295,7 +309,7 @@ struct InviteView: View {
             }
             .buttonStyle(.plain)
             .accessibilityHint("Opens \(member.name)’s charges")
-            if canManage && !store.isDemo {
+            if canManage && (!store.isDemo || member.userID == nil) {
                 Button { managing = member } label: {
                     Image(systemName: "ellipsis.circle")
                         .frame(minWidth: HitTarget.minimum, minHeight: HitTarget.minimum)

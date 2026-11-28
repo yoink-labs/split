@@ -162,11 +162,11 @@ export function AppShell({ children }: { children: ReactNode }) {
           {invitationCount > 0 && <span className="nav-badge">{invitationCount}</span>}
         </Link>
         <Link
-          to="/people"
-          className={"nav-item" + (loc.pathname.startsWith("/people") ? " active" : "")}
+          to="/friends"
+          className={"nav-item" + (loc.pathname === "/friends" ? " active" : "")}
           onClick={() => setNavOpen(false)}
         >
-          <span>Find people</span>
+          <span>Friends</span>
         </Link>
 
         <div className="nav-section">

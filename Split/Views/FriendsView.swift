@@ -185,8 +185,11 @@ struct FriendDetail: View {
     private var history: [LedgerEntry] {
         Analytics.entries(with: person, groups: store.groups, entries: store.entries, userID: store.currentUserID)
     }
+    /// History renders a page at a time so a long friendship never builds thousands of rows.
+    @State private var historyLimit = BoundedList.page
+
     private var months: [(String, [LedgerEntry])] {
-        let grouped = Dictionary(grouping: history) { String($0.createdAt.prefix(7)) }
+        let grouped = Dictionary(grouping: history.prefix(historyLimit)) { String($0.createdAt.prefix(7)) }
         return grouped.keys.sorted(by: >).map { ($0, grouped[$0]?.sorted { $0.createdAt > $1.createdAt } ?? []) }
     }
 
@@ -265,7 +268,7 @@ struct FriendDetail: View {
                     VStack(alignment: .leading, spacing: 8) {
                         MonthHeader(date: monthDate(month))
                         Card(padding: 0) {
-                            VStack(spacing: 0) {
+                            LazyVStack(spacing: 0) {
                                 ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
                                     if let group = store.group(entry.groupID) {
                                         Button { inspecting = entry } label: {
@@ -281,6 +284,7 @@ struct FriendDetail: View {
                         }
                     }
                 }
+                ShowMoreButton(shown: Swift.min(historyLimit, history.count), total: history.count) { historyLimit += BoundedList.page }
             }
         }
     }

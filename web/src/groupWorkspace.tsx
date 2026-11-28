@@ -3,8 +3,9 @@ import { memberBalances, useHomeMoney } from "./homeMoney";
 import { PendingPayments } from "./settlements";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { PaidVsShareChart } from "./charts";
-import { SpendingDashboard } from "./spending";
+import { GroupAnalytics } from "./analyticsView";
+import { TransactionTable } from "./transactionTable";
+import { categoryMeta } from "./categories";
 import { Form, useLedger, value } from "./context";
 import {
   balances,
@@ -37,7 +38,7 @@ import { GroupMembers } from "./groupMembers";
 import { GroupSettings } from "./groupSettings";
 import "./groupWorkspace.css";
 
-const tabs = ["overview", "ledger", "transactions", "receipts", "settle", "members", "settings"] as const;
+const tabs = ["overview", "analytics", "ledger", "transactions", "receipts", "settle", "members", "settings"] as const;
 type Tab = typeof tabs[number];
 
 function ExpenseDrawer({
@@ -563,6 +564,9 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
           <button className="ws-tab" role="tab" aria-selected={tab === "overview"} onClick={() => setTab("overview")}>
             Overview
           </button>
+          <button className="ws-tab" role="tab" aria-selected={tab === "analytics"} onClick={() => setTab("analytics")}>
+            Analytics
+          </button>
           <button className="ws-tab" role="tab" aria-selected={tab === "ledger"} onClick={() => setTab("ledger")}>
             Ledger
           </button>
@@ -630,43 +634,78 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
           </div>
 
           {foreignSpend && <p className="muted">Spending in {homeMoney.home} uses estimated exchange rates.</p>}
-          {missingSpend ? <p className="muted">Spending charts are unavailable until all exchange rates are available.</p> : (
-            <SpendingDashboard group={g} entries={homeEntries} currency={homeMoney.home}
-              convertedIDs={convertedSpendIDs} format={homeMoney.format} onOpenEntry={(entry) => setInspectID(entry.id)} />
-          )}
 
-          <div className="grid-2">
-            {!missingSpend && <PaidVsShareChart g={g} entries={homeEntries} currency={homeMoney.home} convertedIDs={convertedSpendIDs}
-              onSelectMember={(mid) => nav(memberPath(g, mid))} />}
-            <div className="card">
-              <div className="card-head">
-                <h3>Who owes whom</h3>
-                <button className="btn btn-xs btn-ghost" onClick={() => setTab("settle")}>
-                  Full graph ›
-                </button>
-              </div>
-              {suggestions.length ? (
-                <div>
-                  {suggestions.map((t) => (
-                    <div className="row" key={t.currency + "-" + t.from + "-" + t.to}>
-                      <span style={{ fontSize: 13 }}>
-                        <strong>{memberName(g, t.from)}</strong> → <strong>{memberName(g, t.to)}</strong>
-                      </span>
-                      <div style={{ textAlign: "right" }}>
-                        <b className="num">{homeMoney.totalText({ [t.currency]: t.amount })}</b>
-                        {t.currency !== homeMoney.home && <div className="muted">Pay {money(t.amount, t.currency)}</div>}
+          <div className="overview-grid">
+            <section className="overview-recent" aria-labelledby="overview-recent-title">
+              <header className="overview-section-head">
+                <h3 id="overview-recent-title">Recent transactions</h3>
+                <button type="button" className="btn btn-xs btn-ghost" onClick={() => setTab("transactions")}>Open ledger</button>
+              </header>
+              <TransactionTable g={g} entries={entries} size="compact" pageSize={25} label="Recent transactions"
+                inspectedID={inspected?.id} onInspect={setInspectID}
+                empty="No transactions yet. Add an expense to get started."
+                viewAll={{ to: `/g/${g.id}?tab=transactions`, label: `View all ${entries.length} in ledger` }} />
+            </section>
+
+            <div className="overview-side">
+              <div className="card">
+                <div className="card-head">
+                  <h3>Who owes whom</h3>
+                  <button className="btn btn-xs btn-ghost" onClick={() => setTab("settle")}>
+                    Full graph ›
+                  </button>
+                </div>
+                {suggestions.length ? (
+                  <div className="bounded-list">
+                    {suggestions.map((t) => (
+                      <div className="row" key={t.currency + "-" + t.from + "-" + t.to}>
+                        <span style={{ fontSize: 13 }}>
+                          <strong>{memberName(g, t.from)}</strong> → <strong>{memberName(g, t.to)}</strong>
+                        </span>
+                        <div style={{ textAlign: "right" }}>
+                          <b className="num">{homeMoney.totalText({ [t.currency]: t.amount })}</b>
+                          {t.currency !== homeMoney.home && <div className="muted">Pay {money(t.amount, t.currency)}</div>}
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    ))}
+                  </div>
+                ) : (
+                  <div className="card-pad">
+                    <p className="muted" style={{ fontSize: 13 }}>Everyone is settled up.</p>
+                  </div>
+                )}
+              </div>
+
+              <div className="card">
+                <div className="card-head">
+                  <h3>Top categories</h3>
+                  <button className="btn btn-xs btn-ghost" onClick={() => setTab("analytics")}>
+                    Analytics ›
+                  </button>
                 </div>
-              ) : (
-                <div className="card-pad">
-                  <p className="muted" style={{ fontSize: 13 }}>Everyone is settled up.</p>
-                </div>
-              )}
+                {missingSpend ? <p className="card-pad muted" style={{ fontSize: 13 }}>Waiting for exchange rates.</p>
+                  : !spending.total ? <p className="card-pad muted" style={{ fontSize: 13 }}>No spending yet.</p> : (
+                  <ul className="overview-cats">
+                    {Object.entries(spending.categories).sort((a, b) => b[1] - a[1]).slice(0, 4).map(([id, amount]) => (
+                      <li key={id}>
+                        <CategoryIcon category={id} />
+                        <span className="overview-cat-name">{categoryMeta(id).label}</span>
+                        <span className="overview-cat-bar" aria-hidden="true">
+                          <span style={{ inlineSize: `${(amount / spending.total) * 100}%`, background: categoryMeta(id).color }} />
+                        </span>
+                        <b className="num">{homeMoney.format(amount, foreignSpend)}</b>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
             </div>
           </div>
         </div>
+      )}
+
+      {tab === "analytics" && (
+        <GroupAnalytics g={g} entries={entries} inspectedID={inspected?.id} onInspect={setInspectID} />
       )}
 
       {(tab === "ledger" || tab === "transactions") && (
@@ -775,6 +814,7 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
               <div className="card-head">
                 <h3>Recorded Payments</h3>
               </div>
+              <div className="bounded-list">
               {entries
                 .filter((e) => e.kind === "settlement")
                 .map((e) => (
@@ -791,6 +831,7 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
                     </div>
                   </div>
                 ))}
+              </div>
             </div>
           )}
         </div>

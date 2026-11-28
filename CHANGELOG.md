@@ -12,6 +12,7 @@ is noted next to each release. The CLI is versioned separately with
 
 ### Added
 
+- Open the Analytics tab on the web for spending over time, by category, by person (paid against share) and by currency in your home currency. Filter by date range and member, and select any bar or row to see its transactions.
 - Manage group members, claim addresses, and invitations from the Members tab on web and iOS. Email or resend invitations and send sign-in reminders.
 - Open the Transactions tab on web and iOS to see each expense or settlement and its payment split.
 - Customize group PDFs with spending breakdowns by category, month, and person.
@@ -27,6 +28,7 @@ is noted next to each release. The CLI is versioned separately with
 
 ### Changed
 
+- Transaction lists on the web Overview, Transactions tab and Analytics stay inside a scrolling frame with a fixed header and pages of rows, with a link to the full ledger. Large groups no longer make the page grow without limit.
 - Enter web expenses with searchable pickers and a live split preview, and explore daily or monthly spending by category, person, and housing.
 - Redesigned Splitwise import on the web with drag-and-drop CSV selection, clearer balance checks, and a mobile layout for matching people and reviewing entries.
 - On web and iOS, claim your Splitwise history, match people to Split accounts or prepare email invites, and preview and import expenses and payments in your Home currency using historical exchange rates.

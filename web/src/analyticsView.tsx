@@ -1,0 +1,402 @@
+import { useRef, useState, type CSSProperties } from "react";
+import { analyze, drillRows, type Analytics, type Drill, type Granularity } from "./analytics";
+import { categoryMeta } from "./categories";
+import { memberName, moneyCompact, type Expense, type Group } from "./data";
+import { useHomeMoney } from "./homeMoney";
+import { Picker } from "./picker";
+import { TransactionTable } from "./transactionTable";
+import { Avatar, CategoryIcon } from "./ui";
+import "./analytics.css";
+
+type Range = "all" | "trip" | "30d" | "90d" | "12m" | "custom";
+const RANGE_LABELS: Record<Range, string> = {
+  all: "All time", trip: "Trip dates", "30d": "30 days", "90d": "90 days", "12m": "12 months", custom: "Custom",
+};
+const STACK_LIMIT = 6;
+const OTHER = "__other";
+
+const utcDay = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+const labelDay = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
+const labelMonth = new Intl.DateTimeFormat(undefined, { month: "short", year: "2-digit", timeZone: "UTC" });
+const longDay = new Intl.DateTimeFormat(undefined, { weekday: "short", month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
+const longMonth = new Intl.DateTimeFormat(undefined, { month: "long", year: "numeric", timeZone: "UTC" });
+const axis = new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 });
+
+export function bucketLabel(key: string, grain: Granularity, long = false) {
+  const date = new Date((grain === "month" ? key + "-01" : key) + "T00:00:00Z");
+  if (grain === "month") return (long ? longMonth : labelMonth).format(date);
+  if (grain === "week") return (long ? "Week of " + longDay.format(date) : labelDay.format(date));
+  return (long ? longDay : labelDay).format(date);
+}
+
+/** A rounded axis ceiling and tick so the tallest bar sits under the top gridline. */
+function scale(max: number) {
+  const raw = Math.max(1, max) / 4;
+  const magnitude = 10 ** Math.floor(Math.log10(raw));
+  const step = [1, 2, 2.5, 5, 10].map((n) => n * magnitude).find((n) => n >= raw) ?? raw;
+  return { tick: Math.ceil(step), ceiling: Math.ceil(step) * 4 };
+}
+
+function rangeBounds(range: Range, g: Group, custom: { from: string; to: string }) {
+  const today = Date.now();
+  switch (range) {
+    case "trip": return { from: g.startDate ?? "", to: g.endDate ?? "" };
+    case "30d": return { from: utcDay(today - 29 * 86_400_000), to: utcDay(today) };
+    case "90d": return { from: utcDay(today - 89 * 86_400_000), to: utcDay(today) };
+    case "12m": return { from: utcDay(today - 364 * 86_400_000), to: utcDay(today) };
+    case "custom": return custom.from && custom.to && custom.from > custom.to ? { from: custom.to, to: custom.from } : custom;
+    default: return { from: "", to: "" };
+  }
+}
+
+export function GroupAnalytics({ g, entries, onInspect, inspectedID }: {
+  g: Group;
+  entries: Expense[];
+  onInspect: (id: string) => void;
+  inspectedID?: string;
+}) {
+  const homeMoney = useHomeMoney();
+  const tripRange = !!(g.startDate || g.endDate);
+  const [range, setRange] = useState<Range>("all");
+  const [custom, setCustom] = useState({ from: "", to: "" });
+  const [memberID, setMemberID] = useState("");
+  const [grain, setGrain] = useState<Granularity | "auto">("auto");
+  const [drill, setDrill] = useState<Drill | null>(null);
+  const drillPanel = useRef<HTMLElement>(null);
+
+  const bounds = rangeBounds(range, g, custom);
+  const people = g.members.filter((m) => !m.removed || entries.some((e) =>
+    e.splits.some((s) => s.memberID === m.id) || e.paidBy === m.id));
+  const member = people.find((m) => m.id === memberID);
+  const data = analyze(entries, homeMoney.project, homeMoney.home, { ...bounds, memberID: member?.id },
+    g.members.map((m) => m.id), grain === "auto" ? undefined : grain);
+  const format = (amount: number, estimated = data.estimated) => homeMoney.format(amount, estimated);
+  const drilled = drillRows(data, drill);
+  const drillTotal = drilled.reduce((sum, row) => sum + (row.amount ?? 0), 0);
+
+  function select(next: Drill) {
+    const same = drill && JSON.stringify(drill) === JSON.stringify(next);
+    setDrill(same ? null : next);
+    if (!same) requestAnimationFrame(() => drillPanel.current?.scrollIntoView({
+      block: "nearest", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+    }));
+  }
+  function resetDrill<T>(setter: (value: T) => void) {
+    return (value: T) => { setter(value); setDrill(null); };
+  }
+
+  const drillTitle = !drill ? "All expenses in range"
+    : drill.kind === "bucket" ? bucketLabel(drill.key, data.granularity, true)
+    : drill.kind === "category" ? categoryMeta(drill.id).label
+    : drill.kind === "person" ? `${memberName(g, drill.memberID)}’s expenses`
+    : `Paid in ${drill.currency}`;
+  const ledgerLink = `/g/${g.id}?` + new URLSearchParams(drill?.kind === "category"
+    ? { tab: "transactions", cat: drill.id } : { tab: "transactions" });
+  const largest = data.categories[0];
+  const average = data.priced.length ? Math.round(data.total / data.priced.length) : 0;
+
+  return (
+    <section className="analytics" aria-labelledby="analytics-title">
+      <header className="analytics-head">
+        <div>
+          <h2 id="analytics-title">Analytics</h2>
+          <p className="muted">
+            {member ? `${member.name}’s share of expenses they’re part of` : "Every expense in the group"}, in {homeMoney.home}
+          </p>
+        </div>
+      </header>
+
+      <div className="card analytics-filters" role="group" aria-label="Analytics filters">
+        <div className="seg analytics-range" role="group" aria-label="Date range">
+          {(Object.keys(RANGE_LABELS) as Range[]).filter((key) => key !== "trip" || tripRange).map((key) => (
+            <button type="button" key={key} aria-pressed={range === key} onClick={() => resetDrill(setRange)(key)}>
+              {RANGE_LABELS[key]}
+            </button>
+          ))}
+        </div>
+        {range === "custom" && (
+          <div className="analytics-dates">
+            <label className="field">From
+              <input type="date" value={custom.from} onChange={(e) => resetDrill(setCustom)({ ...custom, from: e.target.value })} />
+            </label>
+            <label className="field">To
+              <input type="date" value={custom.to} onChange={(e) => resetDrill(setCustom)({ ...custom, to: e.target.value })} />
+            </label>
+          </div>
+        )}
+        <div className="analytics-filter-end">
+          <Picker label="Member" value={member?.id ?? ""} search={people.length > 8} onChange={resetDrill(setMemberID)}
+            options={[{ value: "", label: "Everyone" }, ...people.map((p) => ({
+              value: p.id, label: p.name, icon: <Avatar name={p.name} avatarURL={p.avatarURL} size={21} />,
+            }))]} />
+        </div>
+      </div>
+
+      {data.rows.length === 0 ? (
+        <p className="card ledger-empty muted">
+          {entries.some((e) => e.kind === "expense") ? "No expenses in this range. Choose a wider date range or another member." : "Add an expense to see analytics."}
+        </p>
+      ) : (
+        <>
+          <dl className="analytics-stats">
+            <div><dt>{member ? `${member.name}’s share` : "Total spend"}</dt><dd className="num">{format(data.total)}</dd></div>
+            <div><dt>Expenses</dt><dd className="num">{data.rows.length}</dd></div>
+            <div><dt>Average expense</dt><dd className="num">{format(average)}</dd></div>
+            {largest && <div><dt>Largest category</dt><dd>{categoryMeta(largest.id).label} <small className="muted">{largest.percent}%</small></dd></div>}
+          </dl>
+          {(data.excluded > 0 || data.estimated) && (
+            <p className="analytics-note muted">
+              {data.estimated && `≈ marks amounts converted to ${homeMoney.home} at saved or published rates. `}
+              {data.excluded > 0 && `${data.excluded} ${data.excluded === 1 ? "expense has" : "expenses have"} no ${homeMoney.home} rate yet and ${data.excluded === 1 ? "is" : "are"} shown only under currency.`}
+            </p>
+          )}
+
+          <TimeChart data={data} grain={grain} onGrain={resetDrill(setGrain)} format={format}
+            active={drill?.kind === "bucket" ? drill.key : ""} onSelect={(key) => select({ kind: "bucket", key })} />
+
+          <div className="analytics-grid">
+            <CategoryChart data={data} format={format}
+              active={drill?.kind === "category" ? drill.id : ""} onSelect={(id) => select({ kind: "category", id })} />
+            <PeopleChart g={g} data={data} format={format} highlight={member?.id}
+              active={drill?.kind === "person" ? drill.memberID : ""} onSelect={(id) => select({ kind: "person", memberID: id })} />
+            <CurrencyChart data={data} home={homeMoney.home} format={format}
+              active={drill?.kind === "currency" ? drill.currency : ""} onSelect={(currency) => select({ kind: "currency", currency })} />
+          </div>
+
+          <section ref={drillPanel} className="analytics-drill" aria-live="polite" aria-labelledby="analytics-drill-title">
+            <header>
+              <div>
+                <h3 id="analytics-drill-title">{drillTitle}</h3>
+                <p className="muted">
+                  {drilled.length} {drilled.length === 1 ? "expense" : "expenses"}
+                  {drilled.some((row) => row.amount !== null) && <> · <b className="num">{format(drillTotal, drilled.some((r) => r.estimated))}</b>{member && " share"}</>}
+                </p>
+              </div>
+              {drill ? <button type="button" className="btn btn-xs" onClick={() => setDrill(null)}>Show all</button>
+                : <span className="muted analytics-hint">Select a bar or row to filter this list.</span>}
+            </header>
+            <TransactionTable key={JSON.stringify([drill, bounds, member?.id])} g={g} size="compact" pageSize={25}
+              entries={drilled.map((row) => row.entry)} label={`${drillTitle} transactions`}
+              inspectedID={inspectedID} onInspect={onInspect}
+              viewAll={{ to: ledgerLink, label: "Open full ledger" }}
+              extra={member ? { header: `${member.name}’s share`, cell: (entry) => homeMoney.portion(entry, member.id) } : undefined} />
+          </section>
+        </>
+      )}
+    </section>
+  );
+}
+
+function TimeChart({ data, grain, onGrain, format, active, onSelect }: {
+  data: Analytics;
+  grain: Granularity | "auto";
+  onGrain: (grain: Granularity | "auto") => void;
+  format: (amount: number, estimated?: boolean) => string;
+  active: string;
+  onSelect: (key: string) => void;
+}) {
+  const [hover, setHover] = useState("");
+  const stackIDs = data.categories.slice(0, STACK_LIMIT).map((c) => c.id);
+  const stacked = new Set(stackIDs);
+  const max = data.buckets.reduce((m, b) => Math.max(m, b.amount), 0);
+  const { tick, ceiling } = scale(max);
+  const withSpend = data.buckets.filter((b) => b.count > 0);
+  const mean = withSpend.length ? Math.round(data.total / data.buckets.length) : 0;
+  const every = Math.max(1, Math.ceil(data.buckets.length / 10));
+  const focus = data.buckets.find((b) => b.key === (hover || active));
+  const busiest = withSpend.reduce<typeof withSpend[number] | undefined>((top, b) => !top || b.amount > top.amount ? b : top, undefined);
+  const noun = data.granularity === "day" ? "day" : data.granularity === "week" ? "week" : "month";
+
+  return (
+    <section className="card analytics-card analytics-time" aria-labelledby="analytics-time-title">
+      <header className="analytics-card-head">
+        <div>
+          <h3 id="analytics-time-title">Spending over time</h3>
+          <p className="muted analytics-readout" aria-live="polite">
+            {focus ? <>{bucketLabel(focus.key, data.granularity, true)} · <b className="num">{format(focus.amount)}</b> · {focus.count} {focus.count === 1 ? "expense" : "expenses"}</>
+              : busiest ? <>Busiest {noun}: {bucketLabel(busiest.key, data.granularity, true)} · <b className="num">{format(busiest.amount)}</b></> : "No priced expenses in range"}
+          </p>
+        </div>
+        <div className="seg" role="group" aria-label="Group by">
+          {(["auto", "day", "week", "month"] as const).map((key) => (
+            <button type="button" key={key} aria-pressed={grain === key} onClick={() => onGrain(key)}>
+              {key === "auto" ? "Auto" : key[0].toUpperCase() + key.slice(1)}
+            </button>
+          ))}
+        </div>
+      </header>
+      <div className="tchart">
+        <div className="tchart-axis" aria-hidden="true">
+          {[4, 3, 2, 1, 0].map((n) => <span key={n}>{axis.format((n * tick) / 100)}</span>)}
+        </div>
+        <div className="tchart-scroll" tabIndex={data.buckets.length > 24 ? 0 : undefined} role="group" aria-label="Spending by period">
+          <div className="tchart-plot" style={{ gridTemplateColumns: `repeat(${data.buckets.length}, minmax(${data.buckets.length > 60 ? 9 : 16}px, 1fr))` }}>
+            <div className="tchart-grid" aria-hidden="true"><i /><i /><i /><i /><i /></div>
+            {mean > 0 && <div className="tchart-mean" style={{ "--mean": String(mean / ceiling) } as CSSProperties} aria-hidden="true">
+              <span>avg {format(mean)}</span>
+            </div>}
+            {data.buckets.map((b, index) => {
+              const parts = [...b.parts].reduce((acc, [id, amount]) => {
+                const key = stacked.has(id) ? id : OTHER;
+                acc.set(key, (acc.get(key) ?? 0) + amount);
+                return acc;
+              }, new Map<string, number>());
+              const order = [...stackIDs, OTHER].filter((id) => parts.has(id));
+              return (
+                <button type="button" key={b.key} className="tchart-col" aria-pressed={active === b.key}
+                  disabled={!b.count}
+                  aria-label={`${bucketLabel(b.key, data.granularity, true)}: ${format(b.amount)}, ${b.count} expenses`}
+                  onMouseEnter={() => setHover(b.key)} onMouseLeave={() => setHover("")}
+                  onFocus={() => setHover(b.key)} onBlur={() => setHover("")}
+                  onClick={() => onSelect(b.key)}>
+                  <span className="tchart-track">
+                    <span className="tchart-stack" style={{ height: `${(b.amount / ceiling) * 100}%` }}>
+                      {order.map((id) => (
+                        <span key={id} style={{ flexGrow: parts.get(id), background: id === OTHER ? "var(--chart-other)" : categoryMeta(id).color }} />
+                      ))}
+                    </span>
+                  </span>
+                  <span className="tchart-label" aria-hidden="true">{index % every === 0 ? bucketLabel(b.key, data.granularity) : ""}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+      <ul className="analytics-legend" aria-label="Colors">
+        {stackIDs.map((id) => <li key={id}><i style={{ background: categoryMeta(id).color }} />{categoryMeta(id).label}</li>)}
+        {data.categories.length > STACK_LIMIT && <li><i style={{ background: "var(--chart-other)" }} />Everything else</li>}
+      </ul>
+    </section>
+  );
+}
+
+function CategoryChart({ data, format, active, onSelect }: {
+  data: Analytics;
+  format: (amount: number) => string;
+  active: string;
+  onSelect: (id: string) => void;
+}) {
+  const max = data.categories[0]?.amount ?? 1;
+  return (
+    <section className="card analytics-card" aria-labelledby="analytics-cat-title">
+      <header className="analytics-card-head">
+        <div>
+          <h3 id="analytics-cat-title">By category</h3>
+          <p className="muted">{data.categories.length} {data.categories.length === 1 ? "category" : "categories"}</p>
+        </div>
+      </header>
+      {data.total > 0 && (
+        <div className="analytics-composition" aria-hidden="true">
+          {data.categories.map((c) => <span key={c.id} style={{ flexGrow: c.amount, background: categoryMeta(c.id).color }} />)}
+        </div>
+      )}
+      <ul className="arank">
+        {data.categories.map((c) => {
+          const meta = categoryMeta(c.id);
+          return (
+            <li key={c.id}>
+              <button type="button" aria-pressed={active === c.id} onClick={() => onSelect(c.id)}>
+                <CategoryIcon category={c.id} />
+                <span className="arank-label">
+                  <span><b>{meta.label}</b><small className="muted">{c.count} {c.count === 1 ? "expense" : "expenses"}</small></span>
+                  <span className="arank-bar"><span style={{ inlineSize: `${(c.amount / max) * 100}%`, background: meta.color }} /></span>
+                </span>
+                <span className="arank-value"><b className="num">{format(c.amount)}</b><small className="muted">{c.percent}%</small></span>
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
+
+function PeopleChart({ g, data, format, highlight, active, onSelect }: {
+  g: Group;
+  data: Analytics;
+  format: (amount: number, estimated?: boolean, signed?: boolean) => string;
+  highlight?: string;
+  active: string;
+  onSelect: (id: string) => void;
+}) {
+  const rows = [...data.people].sort((a, b) => b.share - a.share || b.paid - a.paid);
+  const max = Math.max(1, ...rows.flatMap((r) => [r.paid, r.share]));
+  return (
+    <section className="card analytics-card" aria-labelledby="analytics-people-title">
+      <header className="analytics-card-head">
+        <div>
+          <h3 id="analytics-people-title">By person</h3>
+          <p className="muted">What each person paid against their share</p>
+        </div>
+        <ul className="analytics-legend analytics-legend-inline" aria-label="Bars">
+          <li><i className="apeople-paid" />Paid</li>
+          <li><i className="apeople-share" />Share</li>
+        </ul>
+      </header>
+      <ul className="apeople">
+        {rows.map((r) => {
+          const person = g.members.find((m) => m.id === r.memberID);
+          const name = memberName(g, r.memberID);
+          return (
+            <li key={r.memberID} className={highlight === r.memberID ? "highlight" : undefined}>
+              <button type="button" aria-pressed={active === r.memberID} onClick={() => onSelect(r.memberID)}
+                aria-label={`${name}: paid ${format(r.paid)}, share ${format(r.share)}`}>
+                <Avatar name={name} avatarURL={person?.avatarURL} size={28} />
+                <span className="apeople-body">
+                  <span className="apeople-name"><b>{name}</b>{person?.removed && <small className="muted"> archived</small>}</span>
+                  <span className="apeople-bars" aria-hidden="true">
+                    <span className="apeople-paid" style={{ inlineSize: `${(r.paid / max) * 100}%` }} />
+                    <span className="apeople-share" style={{ inlineSize: `${(r.share / max) * 100}%` }} />
+                  </span>
+                  <span className="apeople-figures muted"><span>Paid <b className="num">{format(r.paid)}</b></span><span>Share <b className="num">{format(r.share)}</b></span></span>
+                </span>
+                <span className={"apeople-net num " + (r.net > 0 ? "pos" : r.net < 0 ? "neg" : "muted")}>
+                  {r.net === 0 ? "Even" : format(r.net, undefined, true)}
+                  <small className="muted">{r.net > 0 ? "covered others" : r.net < 0 ? "covered by others" : ""}</small>
+                </span>
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
+
+function CurrencyChart({ data, home, format, active, onSelect }: {
+  data: Analytics;
+  home: string;
+  format: (amount: number, estimated?: boolean) => string;
+  active: string;
+  onSelect: (currency: string) => void;
+}) {
+  const max = Math.max(1, ...data.currencies.map((c) => c.home ?? 0));
+  return (
+    <section className="card analytics-card" aria-labelledby="analytics-fx-title">
+      <header className="analytics-card-head">
+        <div>
+          <h3 id="analytics-fx-title">By currency</h3>
+          <p className="muted">{data.currencies.length === 1 ? `Every expense was paid in ${data.currencies[0].currency}` : `Paid in ${data.currencies.length} currencies, totalled in ${home}`}</p>
+        </div>
+      </header>
+      <ul className="arank">
+        {data.currencies.map((c) => (
+          <li key={c.currency}>
+            <button type="button" aria-pressed={active === c.currency} onClick={() => onSelect(c.currency)}>
+              <span className="acur-code">{c.currency}</span>
+              <span className="arank-label">
+                <span><b>{moneyCompact(c.original, c.currency)}</b><small className="muted">{c.count} {c.count === 1 ? "expense" : "expenses"}</small></span>
+                <span className="arank-bar"><span style={{ inlineSize: `${((c.home ?? 0) / max) * 100}%`, background: "var(--primary)" }} /></span>
+              </span>
+              <span className="arank-value">
+                <b className="num">{c.home === null ? "Rate unavailable" : c.currency === home ? format(c.home, false) : format(c.home, true)}</b>
+                <small className="muted">{c.home === null ? "" : `${c.percent}%`}</small>
+              </span>
+            </button>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}

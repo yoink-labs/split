@@ -1,7 +1,8 @@
 import { useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { CATEGORIES, categoryMeta } from "./categories";
-import { breakdown, entryPayers, memberName, memberPath, moneyCompact, settlementEntry, shortDate, type Expense, type Group } from "./data";
+import { breakdown, entryPayers, memberPath, moneyCompact, settlementEntry, type Expense, type Group } from "./data";
+import { openItems, TransactionTable } from "./transactionTable";
 import { useHomeMoney } from "./homeMoney";
 import { Picker } from "./picker";
 import { Avatar, CategoryIcon } from "./ui";
@@ -12,8 +13,6 @@ type Status = "all" | "receipt" | "open" | "recurring";
 const percent = new Intl.NumberFormat(undefined, { style: "percent", maximumFractionDigits: 1 });
 const shareOf = (amount: number, total: number) => total ? amount / total : 0;
 const categoryOf = (entry: Expense) => entry.category ?? "Other";
-const openItems = (entry: Expense) => entry.bill && !entry.bill.closed
-  ? entry.bill.items.filter((item) => !item.memberIDs.length).length : 0;
 
 function position(entry: Expense, id?: string) {
   const involved = !!id && [...entryPayers(entry), ...entry.splits].some((part) => part.memberID === id);
@@ -36,7 +35,6 @@ export function GroupLedger({
   inspectedID?: string;
   onInspect: (id: string) => void;
 }) {
-  const homeMoney = useHomeMoney();
   const heading = useRef<HTMLHeadingElement>(null);
   const [search, setSearch] = useState("");
   const [payer, setPayer] = useState("");
@@ -119,66 +117,20 @@ export function GroupLedger({
             {owes && <p className="muted ledger-note">Shows expenses where your share exceeds what you paid, excluding expenses marked handled. Settle Up shows what you owe after payments.</p>}
           </section>
 
-          {filtered.length ? (
-            <div className="card ledger-table-scroll" tabIndex={0} role="region" aria-label="Transactions table">
-              <table className="ledger-table transaction-table">
-                <thead>
-                  <tr>
-                    <th scope="col">Transaction</th>
-                    <th scope="col" className="ledger-number">Amount</th>
-                    <th scope="col">Date</th>
-                    <th scope="col">Paid by</th>
-                    {memberID && <th scope="col" className="ledger-number">Your position</th>}
-                  </tr>
-                </thead>
-                <tbody>
-                  {filtered.map(({ entry, mine }) => {
-                    const payment = entry.kind === "settlement";
-                    const title = payment ? `Payment to ${entry.splits.map((s) => memberName(g, s.memberID)).join(", ")}` : entry.title;
-                    const payers = entryPayers(entry).map((p) => memberName(g, p.memberID)).join(", ");
-                    const open = openItems(entry);
-                    const projected = homeMoney.project(entry);
-                    const foreign = entry.currency !== homeMoney.home;
-                    return (
-                      <tr key={entry.id} className={inspectedID === entry.id ? "selected" : undefined}>
-                        <td>
-                          <div className="ledger-transaction">
-                            <CategoryIcon category={entry.category} settlement={payment} />
-                            <div>
-                              <button type="button" className="ledger-entry-link" onClick={() => onInspect(entry.id)}>{title}</button>
-                              <div className="ledger-entry-meta muted">
-                                {payment ? "Settlement" : categoryMeta(entry.category).label}
-                                {entry.handled && <span className="tag tag-pos">Handled</span>}
-                                {open > 0 && <span className="tag tag-warn">{open} open</span>}
-                                {!open && (entry.bill || !!entry.receiptIDs?.length) && <span className="tag">Receipt</span>}
-                                {!!entry.commentCount && <span>{entry.commentCount} {entry.commentCount === 1 ? "comment" : "comments"}</span>}
-                                {entry.recurrence && entry.recurrence !== "off" && <span className="tag tag-primary">{entry.recurrence}</span>}
-                              </div>
-                            </div>
-                          </div>
-                        </td>
-                        <td className="ledger-number">
-                          <strong>{projected ? homeMoney.format(projected.amount, foreign) : moneyCompact(entry.amount, entry.currency)}</strong>
-                          {foreign && <small className="muted">{projected ? moneyCompact(entry.amount, entry.currency) : "Rate unavailable"}</small>}
-                        </td>
-                        <td className="ledger-date muted">{shortDate(entry.createdAt)}</td>
-                        <td>{payers}</td>
-                        {memberID && (
-                          <td className="ledger-number">
-                            {mine.net ? (
-                              <strong className={mine.net < 0 ? "neg" : "pos"}>
-                                {mine.net < 0 ? "Owe" : "Owed"} {moneyCompact(Math.abs(mine.net), mine.currency)}
-                              </strong>
-                            ) : <span className="muted">{entry.handled ? "Handled" : !mine.involved ? "—" : payment ? "Payment" : "Even"}</span>}
-                          </td>
-                        )}
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          ) : <p className="card ledger-empty muted">{entries.length ? "No transactions match these filters." : "No transactions yet."}</p>}
+          <TransactionTable
+            key={[search, category, payer, person, status, involved, owes].join("|")}
+            g={g} entries={filtered.map(({ entry }) => entry)} label="Transactions table"
+            inspectedID={inspectedID} onInspect={onInspect}
+            empty={entries.length ? "No transactions match these filters." : "No transactions yet."}
+            extra={memberID ? { header: "Your position", cell: (entry) => {
+              const mine = position(entry, memberID);
+              return mine.net ? (
+                <strong className={mine.net < 0 ? "neg" : "pos"}>
+                  {mine.net < 0 ? "Owe" : "Owed"} {moneyCompact(Math.abs(mine.net), mine.currency)}
+                </strong>
+              ) : <span className="muted">{entry.handled ? "Handled" : !mine.involved ? "—" : entry.kind === "settlement" ? "Payment" : "Even"}</span>;
+            } } : undefined}
+          />
         </>
       )}
     </section>

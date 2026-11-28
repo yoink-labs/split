@@ -563,6 +563,7 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
 
   const [inspectID, setInspectID] = useState<string | null>(null);
   const [crediting, setCrediting] = useState(false);
+  const recentTransactions = useRef<HTMLElement>(null);
   const receiptFocusID = query.get("receipt");
 
   // Settle up open form
@@ -595,6 +596,11 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
     () => analyze(entries, homeMoney.project, homeMoney.home, {}, g.members.map((m) => m.id)),
     [entries, homeMoney.project, homeMoney.home, g.members],
   );
+  const overviewCategory = overviewAnalytics.categories.find((category) => category.id === query.get("cat"))?.id ?? "";
+  const overviewEntries = overviewCategory
+    ? overviewAnalytics.rows.filter((row) => row.category === overviewCategory).map((row) => row.entry)
+    : entries;
+  const overviewFilterLabel = overviewCategory ? `Filtered by ${categoryMeta(overviewCategory).label}` : "All categories";
   const spendText = (amount: number) => missingSpend ? "Rate unavailable" : homeMoney.format(amount, foreignSpend);
   const myStats = me ? spending.members.find((member) => member.id === me.id) : undefined;
   const myBalances = me ? memberBalances(entries, me.id) : {};
@@ -776,7 +782,8 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
                     categories={overviewAnalytics.categories}
                     total={overviewAnalytics.total}
                     format={(amount) => homeMoney.format(amount, overviewAnalytics.estimated)}
-                    onSelect={(id) => setTab("transactions", { cat: id })}
+                    active={overviewCategory}
+                    onSelect={(id) => setTab("overview", id === overviewCategory ? undefined : { cat: id })}
                   />
                 )}
               </div>
@@ -787,77 +794,85 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
               )}
             </section>
 
-            <section className="card overview-card" aria-labelledby="overview-owes-title">
-              <div className="card-head">
-                <div>
-                  <h3 id="overview-owes-title">Who owes whom</h3>
-                  <p className="muted card-sub">
-                    {suggestions.length
-                      ? `${suggestions.length} simplified ${suggestions.length === 1 ? "transfer" : "transfers"} to settle`
-                      : "All balances clear"}
-                  </p>
-                </div>
-                <button type="button" className="btn btn-xs btn-ghost" onClick={() => setTab("settle")}>
-                  Settle up ›
-                </button>
-              </div>
-              <div className="overview-card-body overview-owes-body">
-                {suggestions.length ? (
-                  <div className="bounded-list overview-owes-list">
-                    {suggestions.map((t) => (
-                      <div className="row" key={t.currency + "-" + t.from + "-" + t.to}>
-                        <span className="overview-transfer-names">
-                          <strong>{memberName(g, t.from)}</strong>
-                          <span className="muted" aria-hidden="true"> → </span>
-                          <strong>{memberName(g, t.to)}</strong>
-                        </span>
-                        <div className="overview-transfer-amt">
-                          <b className="num">{homeMoney.totalText({ [t.currency]: t.amount })}</b>
-                          {t.currency !== homeMoney.home && <div className="muted num">Pay {money(t.amount, t.currency)}</div>}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="muted overview-empty">Everyone is settled up.</p>
-                )}
-              </div>
-              <div className="overview-card-foot">
-                <span className="muted">
-                  {suggestions.length
-                    ? `${activeMembers.length} active ${activeMembers.length === 1 ? "member" : "members"}`
-                    : "No payments needed"}
-                </span>
-                <button type="button" className="btn btn-xs" onClick={() => setTab("settle")}>
-                  Open money flow
-                </button>
-              </div>
+            <section className="overview-ledger" aria-labelledby="overview-recent-title" ref={recentTransactions} tabIndex={-1}>
+              <span className="overview-filter-status" role="status">{overviewFilterLabel}</span>
+              <TransactionTable
+                g={g}
+                key={overviewCategory}
+                entries={overviewEntries}
+                all={entries}
+                size="compact"
+                pageSize={25}
+                label="Recent transactions"
+                inspectedID={inspected?.id}
+                onInspect={setInspectID}
+                empty="No transactions yet. Add an expense to get started."
+                header={
+                  <>
+                    <div>
+                      <h3 id="overview-recent-title">Recent transactions</h3>
+                      <p className="muted card-sub">{overviewFilterLabel}</p>
+                    </div>
+                    {overviewCategory && (
+                      <button type="button" className="btn btn-xs" onClick={() => {
+                        recentTransactions.current?.focus({ preventScroll: true });
+                        setTab("overview");
+                      }}>
+                        Clear filter
+                      </button>
+                    )}
+                  </>
+                }
+                viewAll={{ to: `/g/${g.id}?tab=transactions`, label: `View all ${entries.length} in ledger` }}
+              />
             </section>
           </div>
 
-          <section className="overview-ledger" aria-labelledby="overview-recent-title">
-            <TransactionTable
-              g={g}
-              entries={entries}
-              size="compact"
-              pageSize={25}
-              label="Recent transactions"
-              inspectedID={inspected?.id}
-              onInspect={setInspectID}
-              empty="No transactions yet. Add an expense to get started."
-              header={
-                <>
-                  <div>
-                    <h3 id="overview-recent-title">Recent transactions</h3>
-                    <p className="muted card-sub">Select any row to inspect splits, receipts, or comments</p>
-                  </div>
-                  <button type="button" className="btn btn-xs btn-ghost" onClick={() => setTab("transactions")}>
-                    Open ledger ›
-                  </button>
-                </>
-              }
-              viewAll={{ to: `/g/${g.id}?tab=transactions`, label: `View all ${entries.length} in ledger` }}
-            />
+          <section className="card overview-card" aria-labelledby="overview-owes-title">
+            <div className="card-head">
+              <div>
+                <h3 id="overview-owes-title">Who owes whom</h3>
+                <p className="muted card-sub">
+                  {suggestions.length
+                    ? `${suggestions.length} simplified ${suggestions.length === 1 ? "transfer" : "transfers"} to settle`
+                    : "All balances clear"}
+                </p>
+              </div>
+              <button type="button" className="btn btn-xs btn-ghost" onClick={() => setTab("settle")}>
+                Settle up ›
+              </button>
+            </div>
+            <div className="overview-card-body overview-owes-body">
+              {suggestions.length ? (
+                <div className="bounded-list overview-owes-list">
+                  {suggestions.map((t) => (
+                    <div className="row" key={t.currency + "-" + t.from + "-" + t.to}>
+                      <span className="overview-transfer-names">
+                        <strong>{memberName(g, t.from)}</strong>
+                        <span className="muted" aria-hidden="true"> → </span>
+                        <strong>{memberName(g, t.to)}</strong>
+                      </span>
+                      <div className="overview-transfer-amt">
+                        <b className="num">{homeMoney.totalText({ [t.currency]: t.amount })}</b>
+                        {t.currency !== homeMoney.home && <div className="muted num">Pay {money(t.amount, t.currency)}</div>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="muted overview-empty">Everyone is settled up.</p>
+              )}
+            </div>
+            <div className="overview-card-foot">
+              <span className="muted">
+                {suggestions.length
+                  ? `${activeMembers.length} active ${activeMembers.length === 1 ? "member" : "members"}`
+                  : "No payments needed"}
+              </span>
+              <button type="button" className="btn btn-xs" onClick={() => setTab("settle")}>
+                Open money flow
+              </button>
+            </div>
           </section>
         </div>
       )}

@@ -233,3 +233,19 @@ it('refunds specific receipt items through the Worker, CLI and MCP',async()=>{
   const entries=(await (await call('maya','/v1/snapshot')).json<{entries:Entry[]}>()).entries;
   expect(entries.filter(x=>x.refundOf===e.id).map(x=>x.refundItems)).toEqual(expect.arrayContaining([['item-wine'],['item-pasta']]));
 });
+
+it('gives refunded items back in the consumption report',()=>{
+  const total=bill.items.reduce((s,i)=>s+i.amount,bill.tax+bill.tip);
+  const e:Entry={id:'expense-net',groupID:group,title:'Trattoria',amount:total,currency:'USD',paidBy:alex,
+    splits:itemSplit(bill,alex),kind:'expense',splitMode:'exact',createdAt:'2026-11-22T20:00:00Z',bill};
+  const wine=billConsumption(bill,alex).items[0];
+  const refund:Entry={id:'refund-net',groupID:group,title:'Refund: Wine',amount:wine.gross,currency:'USD',paidBy:alex,
+    splits:wine.portions.map(p=>({memberID:p.memberID,amount:p.amount})),kind:'refund',splitMode:'exact',createdAt:'2026-11-23T12:00:00Z',refundOf:e.id,refundItems:['item-wine']};
+  const credit:Entry={...refund,id:'credit-net',title:'Credit',amount:100,splits:[{memberID:maya,amount:100}],refundOf:undefined,refundItems:undefined};
+  const report=consumptionReport([e,refund,credit],'USD');
+  expect(report.people.reduce((s,p)=>s+p.amount,0)).toBe(total-wine.gross-100);
+  expect(report.people.reduce((s,p)=>s+p.tax,0)).toBe(bill.tax-wine.tax);
+  const mayaRow=report.people.find(p=>p.memberID===maya)!;
+  expect(mayaRow.lines.filter(l=>l.itemID==='item-wine').reduce((s,l)=>s+l.amount,0)).toBe(0);
+  expect(mayaRow.lines.find(l=>l.entryID==='credit-net')).toMatchObject({title:'Credit',amount:-100});
+});

@@ -151,6 +151,11 @@ type Breakdown = { amount: number; items: number; tax: number; tip: number };
  * Null when the share cannot be allocated.
  */
 function convertParts(parts: Breakdown[], target: number): (Breakdown | null)[] {
+  // Refund lines are negative; convert their magnitudes and give the sign back.
+  if (parts.length && parts.every((p) => p.amount <= 0 && p.items <= 0 && p.tax <= 0 && p.tip <= 0) && parts.some((p) => p.amount < 0)) {
+    const flip = (b: Breakdown) => ({ amount: -b.amount, items: -b.items, tax: -b.tax, tip: -b.tip });
+    return convertParts(parts.map(flip), Math.abs(target)).map((b) => (b ? flip(b) : null));
+  }
   const spread = (total: number, weights: number[]) =>
     total === 0 || weights.every((w) => w === 0) ? weights.map(() => 0) : allocate(total, weights, Number.MAX_SAFE_INTEGER);
   try {

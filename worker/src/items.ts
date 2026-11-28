@@ -101,17 +101,33 @@ export function billConsumption(b:Bill,payer:string) {
   }
   return {items,people:[...people.values()]};
 }
-/** One consumption line per person: receipt items for itemized expenses, otherwise the expense itself. */
-export function entryConsumption(e:Entry) {
+/**
+ * One consumption line per person: receipt items for itemized expenses, otherwise the expense itself.
+ * Refunds give consumption back as negative lines: an item refund returns exactly those items'
+ * portions (item, tax and tip), any other refund one line per credited person.
+ */
+export function entryConsumption(e:Entry,all:Entry[]=[]) {
+  if(e.kind==='refund') {
+    const original=e.refundItems && all.find(o=>o.id===e.refundOf && o.kind==='expense');
+    if(original && original.bill) {
+      const items=billConsumption(original.bill,original.paidBy).items.filter(i=>e.refundItems!.includes(i.id));
+      const lines=items.flatMap(i=>i.portions.filter(p=>p.amount).map(p=>({memberID:p.memberID,amount:-p.amount,items:-p.items,tax:-p.tax,tip:-p.tip,
+        entryID:e.id,itemID:i.id as string|null,title:'Refund: '+i.title})));
+      const exact=e.splits.every(s=>lines.filter(l=>l.memberID===s.memberID).reduce((n,l)=>n-l.amount,0)===s.amount) &&
+        lines.every(l=>e.splits.some(s=>s.memberID===l.memberID));
+      if(exact) return lines;
+    }
+    return e.splits.filter(s=>s.amount).map(s=>({memberID:s.memberID,amount:-s.amount,items:-s.amount,tax:0,tip:0,entryID:e.id,itemID:null as string|null,title:e.title}));
+  }
   if(e.bill) return billConsumption(e.bill,e.paidBy).items.flatMap(i=>i.portions.map(p=>({...p,entryID:e.id,itemID:i.id as string|null,title:i.title})));
   return e.splits.filter(s=>s.amount).map(s=>({memberID:s.memberID,amount:s.amount,items:s.amount,tax:0,tip:0,entryID:e.id,itemID:null as string|null,title:e.title}));
 }
-/** Consumption by person across expenses in one currency: their lines and item, tax and tip totals. */
+/** Consumption by person across expenses and refunds in one currency: their lines and item, tax and tip totals. */
 export function consumptionReport(entries:Entry[],currency:string) {
-  const expenses=entries.filter(e=>e.kind==='expense' && e.currency===currency)
+  const expenses=entries.filter(e=>(e.kind==='expense' || e.kind==='refund') && e.currency===currency)
     .sort((a,b)=>a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
   const people=new Map<string,{memberID:string;amount:number;items:number;tax:number;tip:number;lines:ReturnType<typeof entryConsumption>}>();
-  for(const line of expenses.flatMap(entryConsumption)) {
+  for(const line of expenses.flatMap(e=>entryConsumption(e,entries))) {
     const p=people.get(line.memberID)??{memberID:line.memberID,amount:0,items:0,tax:0,tip:0,lines:[]};
     p.amount+=line.amount; p.items+=line.items; p.tax+=line.tax; p.tip+=line.tip; p.lines.push(line);
     people.set(line.memberID,p);

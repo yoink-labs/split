@@ -1,103 +1,176 @@
 import SwiftUI
 
+/// Every transaction in a group as a scannable table: one line per row with
+/// date, description, payer and amount columns on a wide display, and a
+/// two-line row on a phone.
 struct GroupTransactionsView: View {
     let group: ExpenseGroup
     let entries: [LedgerEntry]
     let open: (LedgerEntry) -> Void
     let exportPDF: () -> Void
+    var combine: (() -> Void)? = nil
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-    @ScaledMetric(relativeTo: .subheadline) private var amountWidth = 126.0
+    @Environment(\.horizontalSizeClass) private var sizeClass
+    @ScaledMetric(relativeTo: .subheadline) private var amountWidth = 120.0
+    @ScaledMetric(relativeTo: .subheadline) private var dateWidth = 64.0
+    @ScaledMetric(relativeTo: .subheadline) private var payerWidth = 140.0
+    @State private var width: CGFloat = 0
+
+    /// Columns only where the description still gets most of the row.
+    private var wide: Bool { width >= 640 && !dynamicTypeSize.isAccessibilitySize }
 
     var body: some View {
         if entries.isEmpty {
             ContentUnavailableView("No transactions yet", systemImage: "list.bullet.rectangle",
                                    description: Text("Recorded expenses and payments appear here."))
         } else {
-            HStack {
-                Text("\(entries.count) \(entries.count == 1 ? "transaction" : "transactions")")
-                    .font(.headline)
-                    .foregroundStyle(Palette.ink)
-                    .accessibilityAddTraits(.isHeader)
-                Spacer()
-                Button(action: exportPDF) {
-                    Text("Export PDF")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(Palette.evergreen)
-                        .frame(minHeight: HitTarget.minimum)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
+            VStack(alignment: .leading, spacing: Spacing.s) {
+                header
+                table
             }
-            table
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
         }
+    }
+
+    private var header: some View {
+        HStack(alignment: .center, spacing: Spacing.xs) {
+            Text("\(entries.count) \(entries.count == 1 ? "transaction" : "transactions")")
+                .font(.headline)
+                .foregroundStyle(Palette.ink)
+                .accessibilityAddTraits(.isHeader)
+            Spacer(minLength: Spacing.xs)
+            if let combine {
+                Button(action: combine) {
+                    Label("Combine", systemImage: "rectangle.on.rectangle")
+                }
+                .buttonStyle(GhostButton())
+                .accessibilityLabel("Combine expenses")
+            }
+            Button(action: exportPDF) {
+                Label("Export PDF", systemImage: "arrow.down.doc")
+            }
+            .buttonStyle(GhostButton())
+        }
+        .labelStyle(AdaptiveLabelStyle(iconOnly: width < 420))
     }
 
     private var table: some View {
         let names = Dictionary(group.members.map { ($0.id, $0.name) }, uniquingKeysWith: { name, _ in name })
         return LazyVStack(spacing: 0) {
-            if !dynamicTypeSize.isAccessibilitySize {
-                HStack(spacing: 10) {
-                    Text("Transaction").frame(maxWidth: .infinity, alignment: .leading)
+            if wide {
+                HStack(spacing: Spacing.s) {
+                    Text("Date").frame(width: dateWidth, alignment: .leading)
+                    Text("Description").frame(maxWidth: .infinity, alignment: .leading)
+                    Text("Paid by").frame(width: payerWidth, alignment: .leading)
                     Text("Amount").frame(width: amountWidth, alignment: .trailing)
+                    Color.clear.frame(width: 10)
                 }
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
-                .padding(.horizontal, 14)
+                .padding(.horizontal, Spacing.m)
                 .padding(.vertical, 10)
-                .padding(.trailing, 17)
+                .background(Palette.raised.opacity(0.6))
                 .accessibilityHidden(true)
-                RowDivider(inset: 14)
+                Divider().overlay(Palette.line)
             }
             ForEach(entries) { entry in
                 Button { open(entry) } label: {
-                    row(entry, names: names)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 10)
-                        .frame(minHeight: HitTarget.minimum)
-                        .contentShape(Rectangle())
+                    Group {
+                        if wide { wideRow(entry, names: names) } else { compactRow(entry, names: names) }
+                    }
+                    .padding(.horizontal, Spacing.m)
+                    .padding(.vertical, wide ? 9 : 10)
+                    .frame(minHeight: HitTarget.minimum)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityElement(children: .combine)
                 .accessibilityHint("Shows who paid and how the amount was split")
-                if entry.id != entries.last?.id { RowDivider(inset: 14) }
+                if entry.id != entries.last?.id { RowDivider(inset: wide ? Spacing.m : Spacing.m + 32 + Spacing.s) }
             }
         }
         .background(Palette.card, in: RoundedRectangle(cornerRadius: Radius.card))
+        .clipShape(RoundedRectangle(cornerRadius: Radius.card))
         .overlay(RoundedRectangle(cornerRadius: Radius.card).strokeBorder(Palette.line).allowsHitTesting(false))
     }
 
-    private func row(_ entry: LedgerEntry, names: [String: String]) -> some View {
-        let category = (entry.isSettlement ? "Payment" : entry.isRefund ? "Refund" : CategoryMeta.named(entry.category).name)
+    private func category(_ entry: LedgerEntry) -> String {
+        (entry.isSettlement ? "Payment" : entry.isRefund ? "Refund" : CategoryMeta.named(entry.category).name)
             + (entry.isPending ? " · Pending" : "")
-        let date = Exchange.date(fromDay: entry.day)?.formatted(date: .abbreviated, time: .omitted) ?? entry.day
+    }
+
+    private func payer(_ entry: LedgerEntry, names: [String: String]) -> String {
         let payers = entry.allPayers
-        let payer = names[payers.first?.memberID ?? entry.paidBy] ?? "Former member"
-        let layout = dynamicTypeSize.isAccessibilitySize
-            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 5))
-            : AnyLayout(HStackLayout(spacing: 10))
-        return layout {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(entry.title).font(.subheadline.weight(.semibold)).foregroundStyle(Palette.ink)
-                Text("\(date) · \(category)")
-                Text(entry.isRefund ? "Refund to \(payer)" : payers.count > 1 ? "\(payers.count) payers" : "\(payer) paid")
+        let name = names[payers.first?.memberID ?? entry.paidBy] ?? "Former member"
+        return payers.count > 1 ? "\(payers.count) people" : name
+    }
+
+    private func amount(_ entry: LedgerEntry) -> some View {
+        Text(Money.text(entry.signedAmount, entry.currency))
+            .font(.splitAmount(15))
+            .foregroundStyle(entry.isRefund ? Palette.positive : Palette.ink)
+            .lineLimit(1)
+            .minimumScaleFactor(0.75)
+    }
+
+    private var chevron: some View {
+        Image(systemName: "chevron.right")
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(.tertiary)
+            .frame(width: 10)
+            .accessibilityHidden(true)
+    }
+
+    private func wideRow(_ entry: LedgerEntry, names: [String: String]) -> some View {
+        HStack(spacing: Spacing.s) {
+            Text(LedgerDate.short(entry.createdAt))
+                .font(.subheadline.monospacedDigit())
+                .foregroundStyle(.secondary)
+                .frame(width: dateWidth, alignment: .leading)
+            HStack(spacing: Spacing.s) {
+                EntryBadge(title: entry.title, category: entry.isSettlement ? "Payment" : entry.category, size: 28)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(entry.title).font(.subheadline.weight(.semibold)).foregroundStyle(Palette.ink).lineLimit(1)
+                    Text(category(entry)).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                }
             }
-            .font(.caption)
-            .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity, alignment: .leading)
-            HStack(spacing: 7) {
-                Text(Money.text(entry.signedAmount, entry.currency))
-                    .font(.subheadline.weight(.semibold).monospacedDigit())
-                    .foregroundStyle(entry.isRefund ? Palette.positive : Palette.ink)
-                    .multilineTextAlignment(.trailing)
-                    .frame(width: dynamicTypeSize.isAccessibilitySize ? nil : amountWidth,
-                           alignment: .trailing)
-                Image(systemName: "chevron.right")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.tertiary)
-                    .frame(width: 10)
-                    .accessibilityHidden(true)
+            Text(payer(entry, names: names))
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .frame(width: payerWidth, alignment: .leading)
+            amount(entry).frame(width: amountWidth, alignment: .trailing)
+            chevron
+        }
+    }
+
+    private func compactRow(_ entry: LedgerEntry, names: [String: String]) -> some View {
+        HStack(spacing: Spacing.s) {
+            EntryBadge(title: entry.title, category: entry.isSettlement ? "Payment" : entry.category, size: 32)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(entry.title).font(.subheadline.weight(.semibold)).foregroundStyle(Palette.ink).lineLimit(1)
+                Text("\(LedgerDate.short(entry.createdAt)) · " + (entry.isRefund ? "Refund to \(payer(entry, names: names))" : "\(payer(entry, names: names)) paid"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            amount(entry).layoutPriority(1)
+            chevron
+        }
+    }
+}
+
+/// Shows a label's title and icon, or only its icon where space is tight.
+struct AdaptiveLabelStyle: LabelStyle {
+    var iconOnly: Bool
+    func makeBody(configuration: Configuration) -> some View {
+        if iconOnly {
+            configuration.icon
+        } else {
+            HStack(spacing: 6) { configuration.icon; configuration.title }
         }
     }
 }

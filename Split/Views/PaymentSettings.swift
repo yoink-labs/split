@@ -28,6 +28,7 @@ struct PaymentSettings: View {
 
     var body: some View {
         Form {
+            Group {
             if groupID != nil {
                 Section {
                     Toggle("Use my profile payment methods", isOn: $inherit)
@@ -84,7 +85,11 @@ struct PaymentSettings: View {
                 }
             }
             if let error { Section { InlineError(text: error) } }
+            }
+            .listRowBackground(Palette.card)
         }
+        .scrollContentBackground(.hidden)
+        .background(AppBackground())
         .disabled(busy)
         .navigationTitle("Payment methods")
         .navigationBarTitleDisplayMode(.inline)

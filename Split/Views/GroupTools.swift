@@ -41,6 +41,7 @@ struct GroupTools: View {
     var body: some View {
         NavigationStack {
             Form {
+                Group {
                 Section {
                     TextField("Group name", text: $name)
                         .accessibilityIdentifier("group-settings-name")
@@ -180,6 +181,8 @@ struct GroupTools: View {
 
                 if let error { Section { InlineError(text: error) } }
                 if let message { Section { Label(message, systemImage: "checkmark.circle.fill").foregroundStyle(Palette.evergreen) } }
+                }
+                .listRowBackground(Palette.card)
             }
             .scrollContentBackground(.hidden)
             .background(AppBackground())

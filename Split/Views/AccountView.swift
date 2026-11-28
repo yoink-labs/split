@@ -43,7 +43,7 @@ struct AccountView: View {
                     if size == .regular {
                         HStack(alignment: .top, spacing: 18) {
                             profileLink.frame(maxWidth: .infinity)
-                            freeCard.frame(maxWidth: 300, maxHeight: .infinity, alignment: .topLeading)
+                            freeCard.frame(maxWidth: 320, maxHeight: .infinity, alignment: .topLeading)
                         }
                         .fixedSize(horizontal: false, vertical: true)
                     } else {
@@ -152,10 +152,10 @@ struct AccountView: View {
         }
         .padding(18)
         .background(
-            LinearGradient(colors: [Palette.hero, Palette.hero.opacity(0.94)], startPoint: .topLeading, endPoint: .bottomTrailing),
-            in: RoundedRectangle(cornerRadius: Radius.header)
+            LinearGradient(colors: [Palette.hero, Palette.hero.opacity(0.92)], startPoint: .topLeading, endPoint: .bottomTrailing),
+            in: RoundedRectangle(cornerRadius: Radius.header + 4, style: .continuous)
         )
-        .overlay(RoundedRectangle(cornerRadius: Radius.header).stroke(Palette.lime.opacity(0.16), lineWidth: 1))
+        .overlay(RoundedRectangle(cornerRadius: Radius.header + 4, style: .continuous).strokeBorder(Palette.lime.opacity(0.14)))
         .accessibilityElement(children: .combine)
     }
 
@@ -174,9 +174,20 @@ struct AccountView: View {
                 .font(.subheadline)
                 .foregroundStyle(Palette.ink.opacity(0.78))
                 .fixedSize(horizontal: false, vertical: true)
+            if size == .regular { Spacer(minLength: 0) }
+            Button { showTipJar = true } label: {
+                Label("Tip the devs", systemImage: "heart")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Palette.evergreen)
+                    .frame(minHeight: HitTarget.minimum)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
         }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 16)
+        .padding(.top, 16)
+        .padding(.bottom, 4)
+        .frame(maxWidth: .infinity, maxHeight: size == .regular ? .infinity : nil, alignment: .topLeading)
         .background(Palette.mint)
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(Palette.evergreen.opacity(0.16), lineWidth: 1))

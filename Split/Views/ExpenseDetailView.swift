@@ -148,13 +148,13 @@ struct EntryDetails: View {
                     }
                     if entry.isPending { pendingCard }
                     if entry.isRefund { refundOfCard }
-                    if entry.kind == "expense" && (!refunds.isEmpty || canRefund) { refundsCard }
-                    if entry.exchange != nil { settlementCard }
-                    if showsBreakdownFirst { breakdown }
-                    if entry.kind == "expense" || entry.receiptIDs?.isEmpty == false { receiptCard(entry.receiptIDs ?? []) }
-                    if let bill = entry.bill {
+                    // Who owes what comes first; open items to claim sit right
+                    // above it because they change it. Edge cases follow.
+                    if let bill = entry.bill, bill.openCount > 0 { purchasesCard(bill) }
+                    breakdown
+                    if let bill = entry.bill, bill.openCount == 0 {
                         purchasesCard(bill)
-                    } else if let item = try? Consumption.items(entry).first {
+                    } else if entry.bill == nil, let item = try? Consumption.items(entry).first {
                         Card {
                             VStack(alignment: .leading, spacing: 8) {
                                 Text("Items").font(.headline)
@@ -166,8 +166,10 @@ struct EntryDetails: View {
                             }
                         }
                     }
-                    if !showsBreakdownFirst { breakdown }
                     if let notes = entry.notes, !notes.isEmpty { notesCard(notes) }
+                    if entry.kind == "expense" || entry.receiptIDs?.isEmpty == false { receiptCard(entry.receiptIDs ?? []) }
+                    if entry.exchange != nil { settlementCard }
+                    if entry.kind == "expense" && (!refunds.isEmpty || canRefund) { refundsCard }
                     if !chargeHistory.isEmpty { chargeHistoryCard }
                     reactionsCard
                     Card {
@@ -258,7 +260,7 @@ struct EntryDetails: View {
         Card(padding: 20) {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(alignment: .top, spacing: 12) {
-                    CategoryBadge(category: entry.category, size: 48)
+                    EntryBadge(title: entry.title, category: entry.category, size: 48)
                     VStack(alignment: .leading, spacing: 4) {
                         Text(entry.kind == "settlement" ? "Payment" : entry.isRefund ? (entry.refundOf == nil ? "Credit" : "Refund") : (entry.category ?? "Expense"))
                             .font(.splitEyebrow)

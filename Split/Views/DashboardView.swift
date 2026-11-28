@@ -120,7 +120,7 @@ struct DashboardView: View {
                         .foregroundStyle(Palette.ink)
                         .lineLimit(1)
                         .minimumScaleFactor(0.8)
-                    Text(size == .regular ? "A short nudge keeps the ledger moving. Split is free, so reminders are too." : "Nudge the group and keep the ledger moving.")
+                    Text(size == .regular ? "Send a friendly summary of who owes what." : "Send a friendly summary.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
@@ -158,18 +158,35 @@ struct DashboardView: View {
         return "Split balance check\n\n" + lines.joined(separator: "\n") + "\n\nOpen Split to settle up."
     }
 
-    private var adaptiveGrid: some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 340), spacing: 18, alignment: .top)], alignment: .leading, spacing: 20) {
-            peopleSection
-            groupsSection
-            activitySection
-            insightsCard
+    /// Two independent columns on a wide display so a long list on one side
+    /// never leaves a hole on the other; one column on a phone.
+    @ViewBuilder private var adaptiveGrid: some View {
+        if size == .regular {
+            HStack(alignment: .top, spacing: Spacing.l) {
+                VStack(alignment: .leading, spacing: Spacing.section) {
+                    peopleSection
+                    activitySection
+                }
+                .frame(maxWidth: .infinity, alignment: .top)
+                VStack(alignment: .leading, spacing: Spacing.section) {
+                    groupsSection
+                    insightsCard
+                }
+                .frame(maxWidth: .infinity, alignment: .top)
+            }
+        } else {
+            VStack(alignment: .leading, spacing: Spacing.section) {
+                peopleSection
+                groupsSection
+                activitySection
+                insightsCard
+            }
         }
     }
 
     @ViewBuilder private var peopleSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            SectionHeader(title: "People", subtitle: dashboard.people.isEmpty ? "No open balances" : "Tap someone to see the full tab", actionTitle: dashboard.people.isEmpty ? nil : "All", action: nil)
+            SectionHeader(title: "People", subtitle: dashboard.people.isEmpty ? "No open balances" : "Who owes whom, across every group")
             Card(padding: 0) {
                 if visiblePeople.isEmpty {
                     EmptyPanel(title: "Everyone’s square", message: "When you share an expense, the balance lands here.", symbol: "checkmark.seal")
@@ -196,7 +213,7 @@ struct DashboardView: View {
 
     @ViewBuilder private var groupsSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            SectionHeader(title: "Groups", subtitle: "Trips, homes and shared tabs", actionTitle: visibleGroups.isEmpty ? nil : "See all", action: nil)
+            SectionHeader(title: "Groups", subtitle: "Trips, homes and shared tabs")
             if visibleGroups.isEmpty {
                 Card {
                     VStack(alignment: .leading, spacing: Spacing.s) {
@@ -269,14 +286,14 @@ struct DashboardView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                     VStack(alignment: .leading, spacing: 3) {
                         Text("Analytics").font(.headline).foregroundStyle(Palette.ink)
-                        Text("Spending over time, by category, person and currency — free, like everything else.").font(.caption).foregroundStyle(.secondary)
+                        Text("Where the money went, by category, person and month.").font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()
                     Image(systemName: "chevron.right").font(.caption2.weight(.bold)).foregroundStyle(.tertiary)
                 }
             }
-            .buttonStyle(.plain)
         }
+        .buttonStyle(.plain)
     }
 
     private var footer: some View {

@@ -22,6 +22,7 @@ struct GroupMemberEditor: View {
     var body: some View {
         NavigationStack {
             Form {
+                Group {
                 if member.removed != true {
                     if member.userID == nil {
                         Section {
@@ -91,7 +92,11 @@ struct GroupMemberEditor: View {
                 if busy { ProgressView() }
                 if let notice { Label(notice, systemImage: "checkmark.circle") }
                 if let error { InlineError(text: error) }
+                }
+                .listRowBackground(Palette.card)
             }
+            .scrollContentBackground(.hidden)
+            .background(AppBackground())
             .disabled(busy)
             .navigationTitle(member.name)
             .navigationBarTitleDisplayMode(.inline)

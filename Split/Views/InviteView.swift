@@ -21,6 +21,7 @@ struct InviteView: View {
     @State private var inviteToRevoke: ActiveInvite?
     @State private var inviteError: String?
     @State private var revoking = false
+    @State private var width: CGFloat = 0
     private var current: ExpenseGroup { store.group(group.id) ?? group }
     private var placeholders: [Person] { current.members.filter { $0.userID == nil && $0.removed != true } }
     private var joined: [Person] { current.members.filter { $0.userID != nil && $0.removed != true } }
@@ -30,17 +31,19 @@ struct InviteView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            if sizeClass == .regular && canManage {
-                HStack(alignment: .top, spacing: 20) {
+        VStack(alignment: .leading, spacing: Spacing.l) {
+            if width >= 720 && canManage {
+                HStack(alignment: .top, spacing: Spacing.l) {
                     peopleColumn
-                    inviteColumn.frame(maxWidth: 380)
+                    inviteColumn.frame(width: min(360, width * 0.42))
                 }
             } else {
+                if canManage { groupInvite }
                 peopleColumn
-                if canManage { inviteColumn }
+                if canManage { inviteExtras }
             }
         }
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
         .task(id: canManage) { await loadInvites() }
         .alert("Revoke this invitation?", isPresented: Binding(
             get: { inviteToRevoke != nil },
@@ -65,30 +68,53 @@ struct InviteView: View {
     // MARK: - Group invitation
 
     private var inviteColumn: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: Spacing.m) {
             groupInvite
+            inviteExtras
+        }
+    }
+
+    private var inviteExtras: some View {
+        VStack(alignment: .leading, spacing: 12) {
             if let notice { Label(notice, systemImage: "checkmark.circle").font(.subheadline) }
             if !active.isEmpty {
-                SectionHeader(title: "Active invites")
-                Card {
+                SectionHeader(title: "Open invitations", subtitle: "Links that still work. Revoke one to stop it.")
+                Card(padding: 0) {
                     ForEach(active) { invite in
-                        VStack(alignment: .leading, spacing: 0) {
-                            HStack {
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text(invite.recipientName.map { $0 + " (in Split)" } ?? invite.memberName.map { "For " + $0 } ?? "General group invite")
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack(spacing: Spacing.s) {
+                                if let name = invite.recipientName ?? invite.memberName {
+                                    Avatar(name: name, size: 32)
+                                } else {
+                                    Image(systemName: "link")
+                                        .font(.footnote.weight(.semibold))
+                                        .frame(width: 32, height: 32)
+                                        .background(Palette.lime.opacity(0.45), in: Circle())
+                                        .foregroundStyle(Palette.ink)
+                                        .accessibilityHidden(true)
+                                }
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(invite.recipientName ?? invite.memberName ?? "Group link")
                                         .font(.subheadline.weight(.semibold))
-                                    if let email = invite.recipientEmail {
-                                        Text(email).font(.subheadline)
-                                    }
-                                    Text("Expires \(invite.expirationDate.formatted(date: .abbreviated, time: .omitted))")
+                                        .foregroundStyle(Palette.ink)
+                                        .lineLimit(1)
+                                    Text([invite.recipientName != nil ? "Split account" : invite.memberName != nil ? "Personal link" : "Anyone can join",
+                                          invite.recipientEmail,
+                                          "expires \(invite.expirationDate.formatted(.dateTime.month(.abbreviated).day()))"]
+                                        .compactMap { $0 }.joined(separator: " · "))
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
+                                        .lineLimit(1)
                                 }
-                                Spacer()
+                                Spacer(minLength: 0)
                                 Button(role: .destructive) { inviteToRevoke = invite } label: {
-                                    Image(systemName: "trash")
+                                    Image(systemName: "xmark.circle.fill")
+                                        .font(.title3)
+                                        .symbolRenderingMode(.hierarchical)
+                                        .foregroundStyle(.secondary)
                                         .frame(minWidth: HitTarget.minimum, minHeight: HitTarget.minimum)
                                 }
+                                .buttonStyle(.plain)
                                 .accessibilityLabel(invite.memberName.map { "Revoke invite for " + $0 } ?? "Revoke group invite")
                                 .disabled(revoking || sending)
                             }
@@ -99,7 +125,10 @@ struct InviteView: View {
                                     .disabled(sending || revoking)
                             }
                         }
-                        if invite.id != active.last?.id { Divider() }
+                        .padding(.leading, Spacing.m)
+                        .padding(.trailing, Spacing.xxs)
+                        .padding(.vertical, 6)
+                        if invite.id != active.last?.id { RowDivider(inset: Spacing.m + 32 + Spacing.s) }
                     }
                 }
             }
@@ -189,13 +218,14 @@ struct InviteView: View {
                     .background(Palette.lime, in: RoundedRectangle(cornerRadius: 13, style: .continuous))
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Invite to \(current.name)")
+                    Text("Invite people")
                         .font(.headline)
                         .foregroundStyle(Palette.onHero)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Text("Anyone with the link or code can join.")
+                    Text("Anyone with the link or code joins \(current.name).")
                         .font(.caption)
-                        .foregroundStyle(Palette.lime.opacity(0.7))
+                        .foregroundStyle(Palette.lime.opacity(0.75))
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             if let link = links["group"] {
@@ -234,7 +264,7 @@ struct InviteView: View {
                     .foregroundStyle(Palette.lime.opacity(0.6))
                     .fixedSize(horizontal: false, vertical: true)
             } else {
-                Text("Create a link, QR code and short code. It works for seven days.")
+                Text("Share a link, QR code or short code. It works for seven days.")
                     .font(.subheadline)
                     .foregroundStyle(Palette.onHero.opacity(0.8))
                     .fixedSize(horizontal: false, vertical: true)
@@ -243,42 +273,63 @@ struct InviteView: View {
             if let error = errors["group"] { heroError(error) }
         }
         .padding(20)
-        .background(Palette.hero, in: RoundedRectangle(cornerRadius: Radius.header))
-        .overlay(RoundedRectangle(cornerRadius: Radius.header).stroke(Palette.lime.opacity(0.16), lineWidth: 1))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            LinearGradient(colors: [Palette.hero, Palette.hero.opacity(0.92)], startPoint: .topLeading, endPoint: .bottomTrailing),
+            in: RoundedRectangle(cornerRadius: Radius.header + 4, style: .continuous)
+        )
+        .overlay(RoundedRectangle(cornerRadius: Radius.header + 4, style: .continuous).strokeBorder(Palette.lime.opacity(0.14)))
     }
 
     // MARK: - People
 
     private var peopleColumn: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                SectionHeader(title: "Members")
-                Spacer()
+        VStack(alignment: .leading, spacing: Spacing.m) {
+            HStack(alignment: .center, spacing: Spacing.s) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("\(joined.count + placeholders.count) members").font(.headline).foregroundStyle(Palette.ink)
+                    Text(placeholders.isEmpty ? "Everyone has joined" : "\(joined.count) joined · \(placeholders.count) not on Split yet")
+                        .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                }
+                Spacer(minLength: 0)
                 if canManage {
-                    Button { adding = true } label: { Label("Add person", systemImage: "person.badge.plus") }
+                    Button { adding = true } label: { Label("Add person", systemImage: "person.badge.plus").lineLimit(1) }
                         .buttonStyle(GhostButton())
+                        .fixedSize()
                 }
             }
             if !joined.isEmpty {
-                SectionHeader(title: "Joined")
-                Card {
+                Card(padding: 0) {
                     ForEach(joined) { member in
                         memberRow(member)
-                        if member.id != joined.last?.id { Divider() }
+                            .padding(.leading, Spacing.m)
+                            .padding(.trailing, Spacing.xxs)
+                            .padding(.vertical, 4)
+                        if member.id != joined.last?.id { RowDivider(inset: Spacing.m + 36 + 10) }
                     }
                 }
             }
             if !placeholders.isEmpty {
-                SectionHeader(title: "Placeholders")
-                ForEach(placeholders) { member in placeholderRow(member) }
+                SectionHeader(title: "Not on Split yet",
+                              subtitle: "Their history is kept. Send a personal link so they can claim it.")
+                    .padding(.top, Spacing.xxs)
+                Card(padding: 0) {
+                    ForEach(placeholders) { member in
+                        placeholderRow(member)
+                        if member.id != placeholders.last?.id { RowDivider(inset: Spacing.m + 36 + 10) }
+                    }
+                }
             }
             let archived = current.members.filter { $0.removed == true }
             if !archived.isEmpty {
-                SectionHeader(title: "Archived")
-                Card {
+                SectionHeader(title: "Removed").padding(.top, Spacing.xxs)
+                Card(padding: 0) {
                     ForEach(archived) { member in
                         memberRow(member)
-                        if member.id != archived.last?.id { Divider() }
+                            .padding(.leading, Spacing.m)
+                            .padding(.trailing, Spacing.xxs)
+                            .padding(.vertical, 4)
+                        if member.id != archived.last?.id { RowDivider(inset: Spacing.m + 36 + 10) }
                     }
                 }
             }
@@ -290,17 +341,18 @@ struct InviteView: View {
         HStack {
             NavigationLink(value: LedgerRoute.member(group: current.id, seat: member.id)) {
                 HStack(spacing: 10) {
-                    Avatar(name: member.name, size: 34)
-                    VStack(alignment: .leading, spacing: 3) {
+                    Avatar(name: member.name, size: 36)
+                    VStack(alignment: .leading, spacing: 2) {
                         Text(member.userID == session.userID ? "You" : member.name)
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(Palette.ink)
-                        if let email = claimEmails[member.id] {
-                            Text("Claim email \(email)").font(.caption).foregroundStyle(.secondary)
+                            .lineLimit(1)
+                        if let email = claimEmails[member.id] ?? member.email {
+                            Text(email).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                         }
                         let addresses = Set(active.filter { $0.memberID == member.id }.compactMap(\.recipientEmail))
                         ForEach(addresses.sorted(), id: \.self) { email in
-                            Text("Invited \(email)").font(.caption).foregroundStyle(.secondary)
+                            Text("Invited \(email)").font(.caption).foregroundStyle(.secondary).lineLimit(1)
                         }
                     }
                 }
@@ -322,9 +374,11 @@ struct InviteView: View {
 
     private func placeholderRow(_ member: Person) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            memberRow(member)
-            if canManage && links[member.id] == nil {
-                createButton(key: member.id, member: member, title: "Create personal link", onHero: false)
+            HStack(spacing: Spacing.xs) {
+                memberRow(member)
+                if canManage && links[member.id] == nil {
+                    createButton(key: member.id, member: member, title: "Invite", onHero: false)
+                }
             }
             if let link = links[member.id] {
                 HStack(spacing: 8) {
@@ -336,15 +390,18 @@ struct InviteView: View {
                     copyButton(link, key: member.id, onHero: false)
                     Spacer(minLength: 0)
                 }
+                .padding(.leading, 46)
                 Text("Only \(member.name) should open this link. It links their account to this seat and its history.")
-                    .font(.caption2)
+                    .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, 46)
             }
-            if let error = errors[member.id] { InlineError(text: error).font(.caption) }
+            if let error = errors[member.id] { InlineError(text: error).font(.caption).padding(.leading, 46) }
         }
-        .padding(14)
-        .glassSurface(cornerRadius: 16, tint: Palette.card.opacity(0.5))
+        .padding(.leading, Spacing.m)
+        .padding(.trailing, Spacing.xxs)
+        .padding(.vertical, 6)
     }
 
     // MARK: - Actions
@@ -362,16 +419,16 @@ struct InviteView: View {
         } label: {
             HStack(spacing: 6) {
                 if busy == key { ProgressView().controlSize(.small).tint(onHero ? Palette.hero : Palette.ink) }
-                else { Image(systemName: "link") }
+                else if onHero { Image(systemName: "link") }
                 Text(busy == key ? "Creating…" : (errors[key] == nil ? title : "Try again"))
             }
             .font(.subheadline.weight(.semibold))
-            .padding(.horizontal, 16)
-            .frame(minHeight: 44)
-            .foregroundStyle(onHero ? Palette.hero : Palette.ink)
-            .background(onHero ? AnyShapeStyle(Palette.lime) : AnyShapeStyle(Palette.raised), in: Capsule())
-            .overlay(Capsule().stroke(onHero ? Color.clear : Palette.line, lineWidth: 1))
-            .contentShape(Capsule())
+            .padding(.horizontal, onHero ? 16 : 14)
+            .frame(minHeight: onHero ? 44 : 32)
+            .foregroundStyle(onHero ? Palette.hero : Palette.evergreen)
+            .background(onHero ? AnyShapeStyle(Palette.lime) : AnyShapeStyle(Palette.evergreen.opacity(0.12)), in: Capsule())
+            .frame(minHeight: HitTarget.minimum)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .fixedSize()

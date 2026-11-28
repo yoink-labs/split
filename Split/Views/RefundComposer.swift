@@ -82,6 +82,7 @@ struct RefundComposer: View {
     var body: some View {
         NavigationStack {
             Form {
+                Group {
                 if let original {
                     Section {
                         LabeledContent("Original", value: original.title)
@@ -198,7 +199,11 @@ struct RefundComposer: View {
                     }
                 }
                 if let error { Section { InlineError(text: error) } }
+                }
+                .listRowBackground(Palette.card)
             }
+            .scrollContentBackground(.hidden)
+            .background(AppBackground())
             .navigationTitle(resolving ? "Turn into refund" : original == nil ? "Record a credit" : "Record a refund")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -283,6 +288,7 @@ struct PendingSheet: View {
     var body: some View {
         NavigationStack {
             Form {
+                Group {
                 Section {
                     TextField("Why is it pending? (optional)", text: $note, axis: .vertical)
                         .lineLimit(2...5)
@@ -291,7 +297,11 @@ struct PendingSheet: View {
                     Text("Pending entries still count toward balances. Everyone sees balances with and without them, and settling up warns first.")
                 }
                 if let error { Section { InlineError(text: error) } }
+                }
+                .listRowBackground(Palette.card)
             }
+            .scrollContentBackground(.hidden)
+            .background(AppBackground())
             .navigationTitle("Mark as pending")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -329,6 +339,7 @@ struct AdjustAmountSheet: View {
     var body: some View {
         NavigationStack {
             Form {
+                Group {
                 Section {
                     HStack {
                         Text(entry.currency).foregroundStyle(.secondary)
@@ -351,7 +362,11 @@ struct AdjustAmountSheet: View {
                     }
                 }
                 if let error { Section { InlineError(text: error) } }
+                }
+                .listRowBackground(Palette.card)
             }
+            .scrollContentBackground(.hidden)
+            .background(AppBackground())
             .navigationTitle("Adjust amount")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

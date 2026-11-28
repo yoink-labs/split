@@ -22,12 +22,15 @@ struct GroupReceiptsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             ActionBar {
-                SplitActionButton(title: "Capture receipt", symbol: "camera", prominent: true) {
+                SplitActionButton(title: "Scan receipt", symbol: "doc.viewfinder", prominent: true) {
                     editingDraft = ReceiptDraft(groupID: group.id)
                 }
-                SplitActionButton(title: "Upload to inbox", symbol: "tray.and.arrow.down") { uploading = true }
-                SplitActionButton(title: "Add expense", symbol: "plus", action: addExpense)
+                SplitActionButton(title: "Save for later", symbol: "tray.and.arrow.down") { uploading = true }
             }
+            Text("Scan a receipt to split it item by item, or save the photo to the group inbox and turn it into an expense later.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
 
             ReceiptInboxSection(group: group, entries: entries, reload: inboxReload, search: search) { inboxCount = $0 }
 
@@ -39,7 +42,11 @@ struct GroupReceiptsView: View {
                 }
             } else {
                 TextField("Find a receipt", text: $query)
-                    .padding(.horizontal, 12)
+                    .padding(.leading, 34)
+                    .padding(.trailing, 12)
+                    .overlay(alignment: .leading) {
+                        Image(systemName: "magnifyingglass").foregroundStyle(.secondary).padding(.leading, 12).accessibilityHidden(true)
+                    }
                     .frame(minHeight: HitTarget.minimum)
                     .background(Palette.card, in: RoundedRectangle(cornerRadius: Radius.badge))
                     .overlay(RoundedRectangle(cornerRadius: Radius.badge).strokeBorder(Palette.line))
@@ -69,7 +76,7 @@ struct GroupReceiptsView: View {
                 }
 
                 receiptSection("Open receipts", matchingReceipts.filter { $0.bill?.closed == false })
-                receiptSection("Closed receipts & photos", matchingReceipts.filter { $0.bill?.closed != false })
+                receiptSection("Closed receipts and photos", matchingReceipts.filter { $0.bill?.closed != false })
 
                 if matchingDrafts.isEmpty && matchingReceipts.isEmpty && !search.isEmpty {
                     ContentUnavailableView.search(text: search)

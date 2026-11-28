@@ -57,11 +57,17 @@ struct InvitationsView: View {
         Card {
             VStack(alignment: .leading, spacing: 10) {
                 if invitation.kind == "friend" {
-                    Label("Friend request", systemImage: "person.crop.circle.badge.plus").font(.caption)
-                    Text(invitation.inviterName ?? "Split member").font(.headline)
-                    HStack {
-                        Button("Decline") { Task { await answer(invitation, accept: false) } }.buttonStyle(.bordered)
-                        Button("Accept") { Task { await answer(invitation, accept: true) } }.buttonStyle(.borderedProminent)
+                    HStack(spacing: 12) {
+                        Avatar(name: invitation.inviterName ?? "Split member", size: 40)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(invitation.inviterName ?? "Split member").font(.headline).foregroundStyle(Palette.ink)
+                            Text("Wants to add you as a friend").font(.subheadline).foregroundStyle(.secondary)
+                        }
+                        Spacer(minLength: 8)
+                        Button("Decline") { Task { await answer(invitation, accept: false) } }
+                            .buttonStyle(.bordered).buttonBorderShape(.capsule).tint(Palette.ink)
+                        Button("Accept") { Task { await answer(invitation, accept: true) } }
+                            .buttonStyle(.borderedProminent).buttonBorderShape(.capsule).tint(Palette.lime).foregroundStyle(Palette.hero)
                     }
                 } else {
                     Label("Placeholder linked", systemImage: "link").font(.caption)
@@ -113,9 +119,8 @@ private struct InvitationCard: View {
                         .background(Palette.lime.opacity(0.35), in: RoundedRectangle(cornerRadius: 12))
                         .foregroundStyle(Palette.evergreen)
                     VStack(alignment: .leading, spacing: 3) {
-                        Text(kindLabel.uppercased()).font(.caption2.weight(.bold)).foregroundStyle(.secondary)
                         Text(invitation.groupName).font(.headline).foregroundStyle(Palette.ink)
-                        Text("\(source) · \(invitation.memberCount) \(invitation.memberCount == 1 ? "member" : "members")")
+                        Text("\(kindLabel) · \(source) · \(invitation.memberCount) \(invitation.memberCount == 1 ? "member" : "members")")
                             .font(.subheadline).foregroundStyle(.secondary)
                     }
                 }
@@ -132,11 +137,14 @@ private struct InvitationCard: View {
                     Spacer()
                     Button("Decline") { respond(false) }
                         .buttonStyle(.bordered)
+                        .buttonBorderShape(.capsule)
                         .tint(Palette.ink)
                         .accessibilityLabel("Decline invitation to \(invitation.groupName)")
                     Button(working == invitation.id ? "Joining…" : "Accept") { respond(true) }
                         .buttonStyle(.borderedProminent)
-                        .tint(Palette.evergreen)
+                        .buttonBorderShape(.capsule)
+                        .tint(Palette.lime)
+                        .foregroundStyle(Palette.hero)
                         .accessibilityLabel("Accept invitation to \(invitation.groupName)")
                 }
                 .disabled(working != nil)

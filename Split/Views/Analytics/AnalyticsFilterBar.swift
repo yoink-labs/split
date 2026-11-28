@@ -24,9 +24,10 @@ struct AnalyticsFilterBar: View {
                 ScrollView(.horizontal) {
                     HStack(spacing: Spacing.xs) { chips }
                         .padding(.vertical, 2)
+                        .padding(.trailing, Spacing.l)
                 }
                 .scrollIndicators(.hidden)
-                .scrollClipDisabled()
+                .trailingScrollFade()
             }
             if range == .custom {
                 ViewThatFits(in: .horizontal) {

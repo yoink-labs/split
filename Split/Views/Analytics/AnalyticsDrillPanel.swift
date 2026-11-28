@@ -167,23 +167,27 @@ struct AnalyticsEntryRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: Spacing.s) {
-            Image(systemName: meta.symbol)
-                .font(.system(size: 14, weight: .semibold))
-                .frame(width: 34, height: 34)
-                .foregroundStyle(meta.tint)
-                .background(meta.tint.opacity(0.14), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .accessibilityHidden(true)
+            if let mark = MerchantMark.match(entry.title) {
+                MerchantBadge(mark: mark, size: 34).accessibilityHidden(true)
+            } else {
+                Image(systemName: meta.symbol)
+                    .font(.system(size: 14, weight: .semibold))
+                    .frame(width: 34, height: 34)
+                    .foregroundStyle(meta.tint)
+                    .background(meta.tint.opacity(0.14), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .accessibilityHidden(true)
+            }
             VStack(alignment: .leading, spacing: 3) {
                 Text(entry.title)
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(Palette.ink)
-                    .lineLimit(2)
+                    .lineLimit(1)
                 Text(detailLine)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .lineLimit(2)
+                    .lineLimit(1)
             }
-            Spacer(minLength: Spacing.xs)
+            .frame(maxWidth: .infinity, alignment: .leading)
             VStack(alignment: .trailing, spacing: 2) {
                 Text(row.home.map { format.money(entry.sign * $0.amount, estimated: foreign) } ?? Money.text(entry.signedAmount, entry.currency))
                     .font(.splitAmount(14))
@@ -202,6 +206,8 @@ struct AnalyticsEntryRow: View {
                         .lineLimit(1)
                 }
             }
+            .fixedSize()
+            .layoutPriority(1)
         }
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)

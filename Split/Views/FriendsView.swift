@@ -28,7 +28,13 @@ struct FriendsView: View {
                             FriendSidebarRow(person: person)
                         }
                         .buttonStyle(.plain)
-                        .listRowBackground(selection == person.key ? Palette.lime.opacity(0.20) : Color.clear)
+                        .listRowInsets(EdgeInsets(top: 6, leading: 14, bottom: 6, trailing: 14))
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .fill(selection == person.key && size == .regular ? Palette.lime.opacity(0.28) : Color.clear)
+                                .padding(.horizontal, 6)
+                        )
                         .tag(person.key)
                         .accessibilityLabel(accessibility(person))
                     }
@@ -52,7 +58,7 @@ struct FriendsView: View {
                 }
             }
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItemGroup(placement: .topBarTrailing) {
                     Button { managingFriends = true } label: { Label("Manage friends", systemImage: "person.crop.circle.badge.plus") }
                     Button { showCreate = true } label: { Label("New balance tab", systemImage: "plus") }
                 }
@@ -95,18 +101,10 @@ struct FriendSidebarRow: View {
                     .font(.body.weight(.semibold))
                     .foregroundStyle(Palette.ink)
                     .lineLimit(1)
-                Text("\(person.groupIDs.count) shared \(person.groupIDs.count == 1 ? "group" : "groups")")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                BalancePhrase(amounts: person.amounts, positive: "Owes you", negative: "You owe",
+                              settled: "Settled up · \(person.groupIDs.count) shared \(person.groupIDs.count == 1 ? "group" : "groups")")
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            BalanceLabel(amounts: person.amounts, positive: "owes you", negative: "you owe")
-            .layoutPriority(1)
-            Image(systemName: "chevron.right")
-                .font(.footnote.weight(.semibold))
-                .foregroundStyle(.tertiary)
-                .accessibilityHidden(true)
         }
         .padding(.vertical, Spacing.xxs)
         .frame(minHeight: HitTarget.minimum)
@@ -127,7 +125,7 @@ private struct FriendHistoryRow: View {
     var body: some View {
         let (net, netText) = me.map { fx.entryNet(entry, for: $0.id) } ?? (0, "")
         HStack(alignment: .center, spacing: 10) {
-            CategoryBadge(category: entry.category, size: 36)
+            EntryBadge(title: entry.title, category: entry.category, size: 36)
             VStack(alignment: .leading, spacing: 3) {
                 Text(entry.title)
                     .font(.subheadline.weight(.semibold))

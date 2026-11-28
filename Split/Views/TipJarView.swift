@@ -1,7 +1,7 @@
 import StoreKit
 import SwiftUI
 
-/// The pink "Tip the devs" capsule. Every entry point opens the same sheet.
+/// The soft pink "Tip the devs" capsule. Every entry point opens the same sheet.
 struct TipTheDevsButton: View {
     var action: () -> Void
 
@@ -14,10 +14,11 @@ struct TipTheDevsButton: View {
                     .font(.subheadline.weight(.semibold))
                     .lineLimit(1)
             }
-            .foregroundStyle(.white)
+            .foregroundStyle(Color(light: 0xC2185B, dark: 0xFF7EB3))
             .padding(.horizontal, 12)
             .padding(.vertical, 7)
-            .background(Color.pink, in: Capsule())
+            .background(Color.pink.opacity(0.13), in: Capsule())
+            .overlay(Capsule().strokeBorder(Color.pink.opacity(0.22), lineWidth: 0.75))
             .fixedSize()
             .frame(minHeight: HitTarget.minimum)
             .contentShape(Rectangle())

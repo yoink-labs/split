@@ -96,6 +96,9 @@ private struct ActiveInviteResponse: Decodable {
         guard let scope else { return }
         if demo {
             state.snapshot = Fixtures.snapshot(); demoComments = Fixtures.comments(); hasLoaded = true
+            #if DEBUG
+            if StressFixtures.enabled { StressFixtures.apply(to: &state.snapshot) }
+            #endif
             (demoInbox, demoPhotos) = Fixtures.inbox()
             demoPhotos.merge(Fixtures.ridePhotos()) { current, _ in current }
         }
@@ -961,6 +964,9 @@ private struct ActiveInviteResponse: Decodable {
     }
 
     func activeInvites(groupID: String) async throws -> [ActiveInvite] {
+        #if DEBUG
+        if demo && StressFixtures.enabled && groupID == StressFixtures.groupID { return StressFixtures.invites() }
+        #endif
         guard !demo else { return [] }
         let result = try await request(path: "/v1/groups/\(groupID)/invites")
         return try JSONDecoder().decode(ActiveInviteResponse.self, from: result).invites

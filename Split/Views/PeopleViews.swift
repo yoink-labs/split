@@ -17,6 +17,7 @@ struct MemberEditor: View {
     var body: some View {
         NavigationStack {
             Form {
+                Group {
                 Picker("Member type", selection:$placeholder) {
                     Text("Split user").tag(false)
                     Text("Placeholder").tag(true)
@@ -46,7 +47,11 @@ struct MemberEditor: View {
                 }
                 if busy { ProgressView() }
                 if let error { ErrorText(text:error) }
+                }
+                .listRowBackground(Palette.card)
             }
+            .scrollContentBackground(.hidden)
+            .background(AppBackground())
             .navigationTitle("Add person").navigationBarTitleDisplayMode(.inline)
             .disabled(busy)
             .toolbar {
@@ -88,13 +93,23 @@ struct JoinGroupView: View {
     var body: some View {
         NavigationStack {
             Form {
+                Group {
                 Section {
                     TextField("Invite code or link", text:$input, axis:.vertical)
                         .textInputAutocapitalization(.never).autocorrectionDisabled()
-                } footer: { Text("Ask someone in the group to share an invitation from the Members tab.") }
+                    PasteButton(payloadType: String.self) { strings in
+                        if let text = strings.first { input = text.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    }
+                    .buttonBorderShape(.capsule)
+                    .tint(Palette.evergreen)
+                } footer: { Text("Ask someone in the group to share an invitation from the Members tab, then paste the code or link here.") }
                 if let error { ErrorText(text:error) }
                 if working { ProgressView("Joining…") }
-            }.navigationTitle("Join group").navigationBarTitleDisplayMode(.inline)
+                }
+                .listRowBackground(Palette.card)
+            }
+            .scrollContentBackground(.hidden)
+            .background(AppBackground()).navigationTitle("Join group").navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement:.cancellationAction) { Button("Cancel") { dismiss() } }
                     ToolbarItem(placement:.confirmationAction) {

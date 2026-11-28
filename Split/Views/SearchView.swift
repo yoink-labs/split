@@ -138,7 +138,7 @@ struct SearchView: View {
                     SectionHeader(title: "Try a search", subtitle: "A group or category from your ledger")
                     FlowLayout(spacing: 8) {
                         ForEach(suggestions, id: \.self) { suggestion in
-                            Chip(title: suggestion, symbol: "arrow.up.left") {
+                            Chip(title: suggestion, symbol: "magnifyingglass") {
                                 query = suggestion
                             }
                         }

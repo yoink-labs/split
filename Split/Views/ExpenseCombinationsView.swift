@@ -24,12 +24,17 @@ struct ExpenseCombinationsView: View {
     var body: some View {
         NavigationStack {
             Form {
+                Group {
                 if let error { InlineError(text: error) }
                 suggestionsSection
                 selectionSection
                 splitSection
                 historySection
+                }
+                .listRowBackground(Palette.card)
             }
+            .scrollContentBackground(.hidden)
+            .background(AppBackground())
             .disabled(working)
             .navigationTitle("Combine expenses")
             .navigationBarTitleDisplayMode(.inline)

@@ -27,9 +27,16 @@ struct CategoryMeta: Identifiable, Equatable {
 
     static func named(_ name: String?) -> CategoryMeta {
         guard let name, !name.isEmpty else { return all[0] }
+        if let special = extra.first(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) { return special }
         return all.first { $0.name.caseInsensitiveCompare(name) == .orderedSame }
             ?? CategoryMeta(name: name, symbol: "tag", tint: Color(red: 0.42, green: 0.42, blue: 0.42))
     }
+
+    /// Display-only categories that never appear in the picker.
+    private static let extra: [CategoryMeta] = [
+        CategoryMeta(name: "Payment", symbol: "arrow.left.arrow.right", tint: Color(red: 0.09, green: 0.40, blue: 0.20)),
+        CategoryMeta(name: "Lodging", symbol: "bed.double", tint: Color(red: 0.30, green: 0.42, blue: 0.66)),
+    ]
 
     static let grid: [CategoryMeta] = all.filter { $0.name != "General" }
 }

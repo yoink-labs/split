@@ -61,7 +61,7 @@ struct AnalyticsView: View {
                             .frame(maxWidth: .infinity)
                         Divider().overlay(Palette.line).ignoresSafeArea(edges: .bottom)
                         ScrollView { drillPanel(context).padding(Spacing.m) }
-                            .frame(width: min(420, width * 0.38))
+                            .frame(width: min(440, max(340, width * 0.4)))
                     }
                 } else {
                     ScrollView {

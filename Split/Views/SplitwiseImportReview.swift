@@ -49,6 +49,7 @@ struct SplitwisePersonEditor: View {
     var body: some View {
         NavigationStack {
             Form {
+                Group {
                 Picker("Import as", selection: $choice) {
                     Text("Placeholder").tag(Choice.placeholder)
                     Text("This is me").tag(Choice.me)
@@ -69,7 +70,11 @@ struct SplitwisePersonEditor: View {
                     accountPicker
                 }
                 if let error { InlineError(text: error) }
+                }
+                .listRowBackground(Palette.card)
             }
+            .scrollContentBackground(.hidden)
+            .background(AppBackground())
             .navigationTitle(source)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

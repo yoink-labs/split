@@ -22,7 +22,7 @@ struct AnalyticsFormat {
         case .month:
             return long ? date.formatted(utc.month(.wide).year()) : date.formatted(utc.month(.abbreviated).year(.twoDigits))
         case .week:
-            return long ? "Week of " + date.formatted(utc.weekday(.abbreviated).month(.abbreviated).day().year()) : date.formatted(utc.month(.abbreviated).day())
+            return long ? "Week of " + date.formatted(utc.month(.abbreviated).day().year()) : date.formatted(utc.month(.abbreviated).day())
         case .day:
             return long ? date.formatted(utc.weekday(.abbreviated).month(.abbreviated).day().year()) : date.formatted(utc.month(.abbreviated).day())
         }

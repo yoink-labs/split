@@ -68,7 +68,11 @@ struct GroupsView: View {
                         .frame(minHeight: HitTarget.minimum)
                     }
                     .accessibilityIdentifier("groups-invitations-banner")
-                    .listRowBackground(Palette.lime.opacity(0.22))
+                    .listRowBackground(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .fill(Palette.lime.opacity(0.22))
+                            .padding(.horizontal, 6)
+                    )
                 }
                 if let error = store.error {
                     VStack(alignment: .leading, spacing: 6) {
@@ -83,9 +87,13 @@ struct GroupsView: View {
                         GroupSidebarRow(summary: summary)
                     }
                     .buttonStyle(.plain)
-                    .listRowInsets(EdgeInsets(top: 5, leading: 10, bottom: 5, trailing: 10))
+                    .listRowInsets(EdgeInsets(top: 6, leading: 14, bottom: 6, trailing: 14))
                     .listRowSeparator(.hidden)
-                    .listRowBackground(selection == summary.group.id ? Palette.lime.opacity(0.22) : Color.clear)
+                    .listRowBackground(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .fill(selection == summary.group.id && size == .regular ? Palette.lime.opacity(0.28) : Color.clear)
+                            .padding(.horizontal, 6)
+                    )
                     .tag(summary.group.id)
                     .accessibilityLabel(accessibility(summary))
                 }
@@ -167,6 +175,7 @@ struct GroupsView: View {
 
 struct GroupSidebarRow: View {
     var summary: GroupSummary
+    @Environment(\.dynamicTypeSize) private var typeSize
     private var kind: String {
         summary.group.kind == "trip" ? "Trip" : summary.group.kind == "home" ? "Home" : "Group"
     }
@@ -175,45 +184,25 @@ struct GroupSidebarRow: View {
             Image(systemName: summary.group.symbol)
                 .font(.body.weight(.semibold))
                 .frame(width: 40, height: 40)
-                .background(Palette.lime.opacity(0.55), in: RoundedRectangle(cornerRadius: Radius.badge))
+                .background(Palette.lime.opacity(0.55), in: RoundedRectangle(cornerRadius: Radius.badge, style: .continuous))
                 .foregroundStyle(Palette.ink)
                 .accessibilityHidden(true)
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: Spacing.s) {
-                    identity.fixedSize(horizontal: true, vertical: false)
-                    Spacer(minLength: 0)
-                    balance(alignment: .trailing).fixedSize(horizontal: true, vertical: false)
-                }
-                VStack(alignment: .leading, spacing: Spacing.xs) {
-                    identity
-                    balance(alignment: .leading)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(summary.group.name)
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(Palette.ink)
+                    .lineLimit(typeSize.isAccessibilitySize ? 3 : 1)
+                balanceLine
             }
-            Image(systemName: "chevron.right")
-                .font(.footnote.weight(.semibold))
-                .foregroundStyle(.tertiary)
-                .accessibilityHidden(true)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.vertical, Spacing.xxs)
         .frame(minHeight: HitTarget.minimum)
         .contentShape(Rectangle())
     }
 
-    private var identity: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(summary.group.name)
-                .font(.body.weight(.semibold))
-                .foregroundStyle(Palette.ink)
-            Text("\(summary.group.members.count) people · \(kind)")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-        }
-        .fixedSize(horizontal: false, vertical: true)
-    }
-
-    private func balance(alignment: HorizontalAlignment) -> some View {
-        BalanceLabel(amounts: summary.mine, positive: "you’re owed", negative: "you owe", alignment: alignment)
+    private var balanceLine: some View {
+        BalancePhrase(amounts: summary.mine, settled: "Settled up · \(summary.group.members.count) people")
     }
 }
 

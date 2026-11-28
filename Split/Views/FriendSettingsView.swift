@@ -16,6 +16,7 @@ struct FriendSettingsView: View {
 
     var body: some View {
         Form {
+            Group {
             Section("Send a friend request") {
                 TextField("Full email address", text: $email)
                     .textContentType(.emailAddress)
@@ -65,7 +66,11 @@ struct FriendSettingsView: View {
                 }
             }
             if let error { InlineError(text: error) }
+            }
+            .listRowBackground(Palette.card)
         }
+        .scrollContentBackground(.hidden)
+        .background(AppBackground())
         .disabled(working)
         .navigationTitle("Friends")
         .task { await load() }

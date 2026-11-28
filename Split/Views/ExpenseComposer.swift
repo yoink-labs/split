@@ -20,6 +20,8 @@ struct AddExpenseView: View {
     @State private var currency = ""
     @State private var purchaseDate = Date()
     @State private var category = ""
+    /// Set while the category came from a recognised merchant rather than the user.
+    @State private var autoCategory = false
     @State private var notes = ""
     @State private var handled = false
     @State private var pending = false
@@ -267,6 +269,11 @@ struct AddExpenseView: View {
                         .foregroundStyle(Palette.ink)
                         .keyboardType(.decimalPad)
                         .focused($amountFocused)
+                        .onChange(of: amount) { _, value in
+                            // A hardware keyboard or paste can still send letters.
+                            let clean = value.filter { $0.isASCII && ($0.isNumber || $0 == "." || $0 == ",") }
+                            if clean != value { amount = clean }
+                        }
                         .accessibilityIdentifier("expense-amount")
                         .accessibilityLabel("Amount in \(currency)")
                 }
@@ -343,7 +350,27 @@ struct AddExpenseView: View {
                 TextField("Description", text: $title)
                     .font(.body)
                     .textInputAutocapitalization(.sentences)
-                    .padding(.horizontal, 12)
+                    .padding(.leading, MerchantMark.match(title) == nil ? 12 : 48)
+                    .padding(.trailing, 12)
+                    .overlay(alignment: .leading) {
+                        // A recognised merchant shows its mark as you type.
+                        if let mark = MerchantMark.match(title) {
+                            MerchantBadge(mark: mark, size: 28)
+                                .padding(.leading, 10)
+                                .transition(.scale(scale: 0.6).combined(with: .opacity))
+                        }
+                    }
+                    .animation(.spring(response: 0.3, dampingFraction: 0.7), value: MerchantMark.match(title)?.name)
+                    .onChange(of: MerchantMark.match(title)?.name) { _, _ in
+                        guard original == nil else { return }
+                        if let suggested = MerchantMark.match(title)?.category, category.isEmpty || autoCategory {
+                            withAnimation(.snappy) { category = suggested }
+                            autoCategory = true
+                        } else if MerchantMark.match(title) == nil, autoCategory {
+                            withAnimation(.snappy) { category = "" }
+                            autoCategory = false
+                        }
+                    }
                     .padding(.vertical, 12)
                     .frame(minHeight: 48)
                     .background(Palette.raised)
@@ -368,29 +395,17 @@ struct AddExpenseView: View {
                         .foregroundStyle(.secondary)
                 }
                 Divider()
-                Button {
-                    handled.toggle()
-                } label: {
-                    HStack(alignment: .top, spacing: 12) {
-                        Image(systemName: handled ? "checkmark.square.fill" : "square")
-                            .font(.title3)
-                            .foregroundStyle(handled ? Palette.evergreen : .secondary)
-                            .accessibilityHidden(true)
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text("Already handled").font(.subheadline.weight(.semibold))
-                            Text("Keep the expense in spending history without adding it to balances.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                Toggle(isOn: $handled.animation(.snappy)) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Already handled").font(.subheadline.weight(.semibold))
+                        Text("Keep it in spending history without changing anyone’s balance.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
-                    .frame(minHeight: HitTarget.minimum, alignment: .topLeading)
-                    .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .tint(Palette.evergreen)
                 .disabled(!canSetHandled || pending)
-                .accessibilityValue(handled ? "On" : "Off")
-                .accessibilityAddTraits(handled ? .isSelected : [])
+                .accessibilityIdentifier("composer-handled")
                 Divider()
                 Toggle(isOn: $pending.animation(.snappy)) {
                     VStack(alignment: .leading, spacing: 3) {
@@ -955,6 +970,7 @@ struct AddExpenseView: View {
             : category.caseInsensitiveCompare(meta.name) == .orderedSame
         return Button {
             category = clearing ? "" : meta.name
+            autoCategory = false
             error = nil
         } label: {
             Chip(title: meta.name, symbol: meta.symbol, selected: isSelected)
@@ -1106,7 +1122,7 @@ struct AddExpenseView: View {
                     Task { await save(another: false) }
                 } label: {
                     HStack(spacing: 8) {
-                        if saving { ProgressView().tint(Palette.paper) }
+                        if saving { ProgressView().tint(Palette.hero) }
                         Text(saving ? "Saving…" : "Save expense")
                         if !saving, let total = totalAmount {
                             Text(Money.text(total, currency))

@@ -59,11 +59,11 @@ extension Color {
 extension Font {
     static func splitDisplay(_ size: CGFloat, weight: Font.Weight = .bold) -> Font {
         let scaled = min(UIFontMetrics.default.scaledValue(for: size), size * 1.5)
-        return .system(size: scaled, weight: weight, design: .default)
+        return .system(size: scaled, weight: weight, design: .rounded)
     }
     static func splitAmount(_ size: CGFloat, weight: Font.Weight = .semibold) -> Font {
         let scaled = min(UIFontMetrics.default.scaledValue(for: size), size * 1.45)
-        return .system(size: scaled, weight: weight, design: .default).monospacedDigit()
+        return .system(size: scaled, weight: weight, design: .rounded).monospacedDigit()
     }
     static var splitEyebrow: Font { .caption.weight(.semibold) }
 }
@@ -145,20 +145,24 @@ struct SplitIconAction: View {
     }
 }
 
+/// A filled confirm action (Save expense, Record payment). Lime by default
+/// so every primary action in the app reads the same.
 struct SolidButton: ButtonStyle {
-    var tint: Color = Palette.evergreen
-    var foreground: Color = Palette.paper
+    var tint: Color = Palette.lime
+    var foreground: Color = Palette.hero
+    @Environment(\.isEnabled) private var enabled
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.headline)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 12)
-            .frame(minHeight: 48)
-            .background(tint)
+            .padding(.horizontal, Spacing.m)
+            .frame(minHeight: 50)
+            .background(tint, in: Capsule())
             .foregroundStyle(foreground)
-            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .opacity(configuration.isPressed ? 0.72 : 1)
-            .scaleEffect(configuration.isPressed ? 0.985 : 1)
+            .contentShape(Capsule())
+            .opacity(enabled ? (configuration.isPressed ? 0.8 : 1) : 0.5)
+            .scaleEffect(configuration.isPressed ? 0.98 : 1)
             .animation(.snappy(duration: 0.16), value: configuration.isPressed)
     }
 }
@@ -223,7 +227,7 @@ struct BalanceHero: View {
 
     @EnvironmentObject private var fx: FXStore
     @Environment(\.dynamicTypeSize) private var typeSize
-
+    @Environment(\.horizontalSizeClass) private var sizeClass
 
     var body: some View {
         let target = fx.home
@@ -234,44 +238,68 @@ struct BalanceHero: View {
         let needsConversion = incomingApproximate || outgoingApproximate
         let missingRates = !incoming.missing.isEmpty || !outgoing.missing.isEmpty
         let net = incoming.amount - outgoing.amount
-        let layout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 12))
-            : AnyLayout(HStackLayout(alignment: .top, spacing: 16))
-
-        VStack(alignment: .leading, spacing: 12) {
-            Text(subtitle).font(.subheadline.weight(.semibold)).foregroundStyle(Palette.onHero)
+        let wide = sizeClass == .regular && !typeSize.isAccessibilitySize
+        let headline = VStack(alignment: .leading, spacing: 6) {
+            Text(subtitle).font(.subheadline.weight(.semibold)).foregroundStyle(Palette.onHero.opacity(0.82))
             Text(missingRates ? "Net balance unavailable" : balanceText(net, currency: target, approximate: needsConversion, signed: true))
-                .font(.title.bold().monospacedDigit())
+                .font(.splitAmount(wide ? 40 : 32, weight: .bold))
                 .foregroundStyle(net < 0 && !missingRates ? Palette.heroNegative : Palette.lime)
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
                 .contentTransition(.numericText())
                 .accessibilityLabel(missingRates ? "Net balance unavailable" : "Net balance, " + balanceText(net, currency: target, approximate: needsConversion, signed: true))
-
-            Rectangle().fill(Palette.lime.opacity(0.18)).frame(height: 1)
-                .accessibilityHidden(true)
-
-            layout {
-                stat("You owe", amount: outgoing.missing.isEmpty ? outgoing.amount : nil, approximate: outgoingApproximate, tint: Palette.heroNegative)
-                stat("You’re owed", amount: incoming.missing.isEmpty ? incoming.amount : nil, approximate: incomingApproximate, tint: Palette.lime)
-            }
-
             if needsConversion {
                 Text(missingRates ? (fx.refreshing ? "Getting exchange rates…" : "Some exchange rates are unavailable.")
-                                  : (fx.offline ? "Approximate · Using saved rates" : "Approximate · Available exchange rates"))
+                                  : (fx.offline ? "Converted to \(target) with saved rates" : "Converted to \(target) at current rates"))
                     .font(.caption)
-                    .foregroundStyle(Palette.onHero.opacity(0.75))
+                    .foregroundStyle(Palette.onHero.opacity(0.6))
             }
         }
-        .padding(16)
+        let stats = Group {
+            stat("You owe", amount: outgoing.missing.isEmpty ? outgoing.amount : nil, approximate: outgoingApproximate, tint: Palette.heroNegative)
+            stat("You’re owed", amount: incoming.missing.isEmpty ? incoming.amount : nil, approximate: incomingApproximate, tint: Palette.lime)
+        }
+
+        Group {
+            if wide {
+                HStack(alignment: .center, spacing: Spacing.xl) {
+                    headline.frame(maxWidth: .infinity, alignment: .leading)
+                    Rectangle().fill(Palette.lime.opacity(0.16)).frame(width: 1).padding(.vertical, 4)
+                        .accessibilityHidden(true)
+                    HStack(alignment: .top, spacing: Spacing.xl) { stats }
+                        .frame(maxWidth: 360)
+                }
+                .fixedSize(horizontal: false, vertical: true)
+            } else {
+                VStack(alignment: .leading, spacing: 14) {
+                    headline
+                    Rectangle().fill(Palette.lime.opacity(0.16)).frame(height: 1)
+                        .accessibilityHidden(true)
+                    if typeSize.isAccessibilitySize {
+                        VStack(alignment: .leading, spacing: 12) { stats }
+                    } else {
+                        HStack(alignment: .top, spacing: 16) { stats }
+                    }
+                }
+            }
+        }
+        .padding(wide ? Spacing.xl : 18)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Palette.hero, in: RoundedRectangle(cornerRadius: Radius.header))
-        .overlay(RoundedRectangle(cornerRadius: Radius.header).strokeBorder(Palette.lime.opacity(0.16)))
+        .background(
+            LinearGradient(colors: [Palette.hero, Palette.hero.opacity(0.92)], startPoint: .topLeading, endPoint: .bottomTrailing),
+            in: RoundedRectangle(cornerRadius: Radius.header + 4, style: .continuous)
+        )
+        .overlay(RoundedRectangle(cornerRadius: Radius.header + 4, style: .continuous).strokeBorder(Palette.lime.opacity(0.14)))
     }
 
     private func stat(_ title: String, amount: Int64?, approximate: Bool, tint: Color) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(title).font(.subheadline).foregroundStyle(Palette.onHero.opacity(0.75))
+            Text(title).font(.subheadline).foregroundStyle(Palette.onHero.opacity(0.7))
             Text(amount.map { balanceText($0, currency: fx.home, approximate: approximate) } ?? "Unavailable")
-                .font(.headline.monospacedDigit())
+                .font(.splitAmount(19, weight: .semibold))
                 .foregroundStyle(tint)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
                 .contentTransition(.numericText())
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -409,11 +437,19 @@ struct Chip: View {
     var title: String
     var symbol: String? = nil
     var selected: Bool = false
+    /// Shows a trailing clear mark, for a chip whose tap removes a filter.
+    var removable: Bool = false
     var action: (() -> Void)? = nil
     var body: some View {
         let label = HStack(spacing: 5) {
             if let symbol { Image(systemName: symbol).font(.caption.weight(.semibold)) }
-            Text(title).font(.subheadline.weight(.semibold))
+            Text(title).font(.subheadline.weight(.semibold)).lineLimit(1)
+            if removable {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.subheadline)
+                    .opacity(0.75)
+                    .accessibilityHidden(true)
+            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
@@ -476,17 +512,22 @@ struct EntryRow: View {
         return "Someone"
     }
 
+    /// Width actually available to the row. A regular-width screen can still
+    /// put the row in a narrow column, so the layout follows the space.
+    @State private var width: CGFloat = 0
+
     var body: some View {
         Group {
-            if size == .compact { compactBody } else { regularBody }
+            if size == .compact || width < 520 { compactBody } else { regularBody }
         }
         .padding(.vertical, 2)
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
         .accessibilityElement(children: .combine)
     }
 
     private var iconView: some View {
         ZStack(alignment: .bottomTrailing) {
-            CategoryBadge(category: entry.category, size: 40)
+            EntryBadge(title: entry.title, category: entry.category, size: 40)
             if entry.isSettlement {
                 Image(systemName: "checkmark.circle.fill")
                     .font(.system(size: 15, weight: .bold))
@@ -515,18 +556,20 @@ struct EntryRow: View {
             .fixedSize(horizontal: false, vertical: true)
     }
 
-    @ViewBuilder private var metaLine: some View {
-        HStack(spacing: 4) {
-            Text(entry.isSettlement ? "\(name(entry.paidBy)) settled up"
-                 : entry.isRefund ? (entry.refundOf == nil ? "Credit from \(name(entry.paidBy))" : "Refund to \(name(entry.paidBy))")
-                 : "\(name(entry.paidBy)) paid")
-            if showGroup { Text("· \(group.name)") }
-            if showDate, let date = ISO8601DateFormatter().date(from: entry.createdAt) {
-                Text("· \(date.formatted(.dateTime.month(.abbreviated).day()))")
-            }
-        }
-        .font(.caption)
-        .foregroundStyle(.secondary)
+    /// One line, truncated at the end, so long names never break the row into
+    /// narrow columns: "Jason Huang paid · Buenos Aires and Rio… · Nov 28".
+    private var metaLine: some View {
+        let who = entry.isSettlement ? "\(name(entry.paidBy)) paid \(entry.splits.first.map { name($0.memberID) } ?? "someone")"
+            : entry.isRefund ? (entry.refundOf == nil ? "Credit from \(name(entry.paidBy))" : "Refund to \(name(entry.paidBy))")
+            : "\(name(entry.paidBy)) paid"
+        var parts = [who]
+        if showDate { parts.append(LedgerDate.short(entry.createdAt)) }
+        if showGroup { parts.append(group.name) }
+        return Text(parts.joined(separator: " · "))
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .truncationMode(.tail)
     }
 
     private var originalTitle: String? {
@@ -554,9 +597,10 @@ struct EntryRow: View {
 
     @ViewBuilder private var openLine: some View {
         if let bill = entry.bill, bill.openCount > 0 {
-            Text("\(bill.openCount) open \(bill.openCount == 1 ? "purchase" : "purchases") · \(fx.entryText(entry, amount: bill.openTotal))")
+            Label("\(bill.openCount) unclaimed · \(fx.entryText(entry, amount: bill.openTotal))", systemImage: "circle.dashed")
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(Palette.amber)
+                .lineLimit(1)
         }
     }
 
@@ -607,6 +651,7 @@ struct EntryRow: View {
                     titleView
                     Spacer(minLength: 4)
                     EntryAmount(entry: entry, size: 15)
+                        .fixedSize()
                         .layoutPriority(1)
                 }
                 metaLine
@@ -632,11 +677,13 @@ struct EntryRow: View {
             }
             Spacer(minLength: 6)
             VStack(alignment: .trailing, spacing: 3) {
-                EntryAmount(entry: entry, size: 15)
+                EntryAmount(entry: entry, size: 16)
+                    .fixedSize()
                 netLine
                     .multilineTextAlignment(.trailing)
             }
-            .frame(maxWidth: 150, alignment: .trailing)
+            .frame(minWidth: 110, maxWidth: 190, alignment: .trailing)
+            .layoutPriority(1)
         }
     }
 }

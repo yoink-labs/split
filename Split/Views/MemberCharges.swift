@@ -195,8 +195,9 @@ struct MemberCharges: View {
                 }
             }
             .frame(minHeight: HitTarget.minimum)
+            .padding(.trailing, Spacing.l)
         }
-        .scrollClipDisabled()
+        .trailingScrollFade()
         .accessibilityLabel("Choose a group")
     }
 
@@ -272,7 +273,7 @@ struct MemberCharges: View {
                       value: fx.portionText(entry, memberID: statement.person.id),
                       valueCaption: "of \(fx.entryText(entry, amount: entry.amount))",
                       valueTint: share == 0 ? Color.secondary : Palette.ink) {
-                CategoryBadge(category: entry.category, size: 40)
+                EntryBadge(title: entry.title, category: entry.category, size: 40)
             }
             .accessibilityValue("\(isMe ? "Your" : "Their") share \(fx.portionText(entry, memberID: statement.person.id)) of \(fx.entryText(entry, amount: entry.amount))")
         }

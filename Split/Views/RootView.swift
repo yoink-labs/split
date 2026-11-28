@@ -118,10 +118,7 @@ struct WelcomeView: View {
                 .frame(width: 44, height: 44)
                 .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
                 .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Split").font(.splitDisplay(27)).foregroundStyle(Palette.ink)
-                Text("Split expenses").font(.caption).foregroundStyle(.secondary)
-            }
+            Text("Split").font(.splitDisplay(27)).foregroundStyle(Palette.ink)
             Spacer(minLength: 8)
             TipTheDevsButton { showTipJar = true }
         }
@@ -130,8 +127,8 @@ struct WelcomeView: View {
     private var hero: some View {
         VStack(alignment: .leading, spacing: 18) {
             VStack(alignment: .leading, spacing: 10) {
-                Text("Shared expenses,\nwithout the invoice.")
-                    .font(.splitDisplay(38))
+                Text("Shared expenses, without the invoice.")
+                    .font(.splitDisplay(36))
                     .foregroundStyle(Palette.ink)
                     .fixedSize(horizontal: false, vertical: true)
                 Text("Track who paid, who owes, and who is square. Every Splitwise feature you use, plus free currency conversion — no ads and no Pro tier.")
@@ -200,7 +197,7 @@ struct WelcomeView: View {
             Button { Task { await session.social(apple: true) } } label: {
                 Label("Continue with Apple", systemImage: "apple.logo")
             }
-            .buttonStyle(SolidButton())
+            .buttonStyle(SolidButton(tint: Color(light: 0x000000, dark: 0xFFFFFF), foreground: Color(light: 0xFFFFFF, dark: 0x000000)))
             Button { Task { await session.social(apple: false) } } label: {
                 HStack(spacing: 10) {
                     Text("G").font(.headline.weight(.bold))
@@ -208,11 +205,12 @@ struct WelcomeView: View {
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 12)
-                .frame(minHeight: 48)
-                .background(Palette.card)
-                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Palette.line, lineWidth: 1))
+                .frame(minHeight: 50)
+                .background(Palette.card, in: Capsule())
+                .overlay(Capsule().strokeBorder(Palette.line, lineWidth: 1))
+                .contentShape(Capsule())
             }
+            .buttonStyle(.plain)
             .foregroundStyle(Palette.ink)
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 8) { emailButton; demoButton }
@@ -328,20 +326,39 @@ struct EmailView: View {
     var body: some View {
         NavigationStack {
             Form {
+                Group {
                 Section {
-                    Text(session.awaitingCode ? "Check your inbox" : "Your Yoink account").font(.title2.bold())
-                    Text(session.awaitingCode ? "Enter the six-digit code we emailed you." : "Sign in with a code. The same account works across Yoink Labs.")
-                        .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(session.awaitingCode ? "Check your inbox" : "Your Yoink account")
+                            .font(.splitDisplay(26))
+                            .foregroundStyle(Palette.ink)
+                        Text(session.awaitingCode ? "Enter the six-digit code we emailed you." : "Sign in with a code. The same account works across Yoink Labs.")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                    .accessibilityElement(children: .combine)
                 }
+                .listRowBackground(Color.clear)
+                .listRowInsets(EdgeInsets(top: 0, leading: 8, bottom: 0, trailing: 8))
                 if session.awaitingCode {
                     Section {
                         TextField("Six-digit code", text: $code)
                             .keyboardType(.numberPad)
                             .textContentType(.oneTimeCode)
                             .accessibilityIdentifier("email-code")
-                        Button("Verify code") { Task { await session.verify(code) } }.disabled(code.count != 6)
-                        Button("Send a new code") { Task { await session.resend() } }
                     }
+                    Section {
+                        Button("Verify code") { Task { await session.verify(code) } }
+                            .buttonStyle(SolidButton())
+                            .disabled(code.count != 6)
+                        Button("Send a new code") { Task { await session.resend() } }
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(Palette.evergreen)
+                            .frame(maxWidth: .infinity, minHeight: HitTarget.minimum)
+                    }
+                    .listRowBackground(Color.clear)
+                    .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
+                    .listRowSeparator(.hidden)
                 } else {
                     Section {
                         Picker("Account", selection: $create) {
@@ -362,12 +379,19 @@ struct EmailView: View {
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
+                    }
+                    Section {
                         Button("Email me a code") { Task { await session.sendCode(email: email, password: password, create: create) } }
+                            .buttonStyle(SolidButton())
                             .disabled(!email.contains("@") || (create && password.count < 15))
                     }
+                    .listRowBackground(Color.clear)
+                    .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
                 }
                 if session.working { ProgressView() }
                 if let error = session.error { Section { InlineError(text: error) } }
+                }
+                .listRowBackground(Palette.card)
             }
             .scrollContentBackground(.hidden)
             .background(AppBackground())

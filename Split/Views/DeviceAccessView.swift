@@ -44,6 +44,7 @@ struct DeviceAccessView: View {
 
     var body: some View {
         Form {
+            Group {
             // Device access is a live-account screen; the background matches the rest of the app.
 
             Section("Connect a computer") {
@@ -91,6 +92,8 @@ struct DeviceAccessView: View {
                     }
                 }
             }
+            }
+            .listRowBackground(Palette.card)
         }
         .scrollContentBackground(.hidden)
         .background(AppBackground())

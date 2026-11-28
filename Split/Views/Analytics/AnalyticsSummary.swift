@@ -75,12 +75,12 @@ struct AnalyticsSummary: View {
         if let member {
             stat("Paid", format.money(report.people.first { $0.key == member.key }?.paid ?? 0))
         } else {
-            stat("Average expense", format.money(report.average))
+            stat("Average", format.money(report.average))
         }
     }
 
     private func largestStat(_ largest: SpendAnalytics.CategoryTotal) -> some View {
-        stat("Largest category", AnalyticsCategory.meta(largest.id).label, detail: "\(largest.percent)%")
+        stat("Top category", AnalyticsCategory.meta(largest.id).label, detail: "\(largest.percent)%")
     }
 
     private func stat(_ title: String, _ value: String, detail: String? = nil) -> some View {

@@ -36,6 +36,7 @@ enum GroupDetailSheet: Identifiable {
 
 struct GroupDetail: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.horizontalSizeClass) private var sizeClass
     @EnvironmentObject private var fx: FXStore
     var groupID: String
     var onPresentSheet: ((GroupDetailSheet) -> Void)? = nil
@@ -47,6 +48,7 @@ struct GroupDetail: View {
     @State private var combining = false
     @State private var exportingPDF = false
     @State private var section: Section = .overview
+    @State private var statsWidth: CGFloat = 600
     @State private var filter: LedgerFilter = .all
     @State private var query = ""
     @State private var category = ""
@@ -113,26 +115,20 @@ struct GroupDetail: View {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 18) {
                         header(group)
-                        if store.isDemo { Label("Sample group · changes stay in this preview", systemImage: "sparkles").font(.caption).foregroundStyle(.secondary) }
                         if store.pending > 0 { Label("\(store.pending) pending · saved on this device", systemImage: "arrow.triangle.2.circlepath").font(.caption).foregroundStyle(.secondary) }
                         if let error = store.error { InlineError(text: error) }
                         workspacePicker
                             .accessibilityIdentifier("group-workspace")
                             .frame(minHeight: HitTarget.minimum)
-                        if section == .overview || section == .ledger { expenseActions(group) }
                         switch section {
                         case .overview:
                             overview(group)
                         case .transactions:
-                            if group.members.contains(where: { $0.userID == store.currentUserID && $0.userID != nil && $0.removed != true }) {
-                                Button { combining = true } label: { Label("Combine expenses", systemImage: "rectangle.on.rectangle") }
-                                    .buttonStyle(GhostButton())
-                            }
-                            GroupTransactionsView(group: group, entries: entries) {
-                                present(.transaction($0))
-                            } exportPDF: {
-                                exportingPDF = true
-                            }
+                            let canCombine = group.members.contains(where: { $0.userID == store.currentUserID && $0.userID != nil && $0.removed != true })
+                            GroupTransactionsView(group: group, entries: entries,
+                                                  open: { present(.transaction($0)) },
+                                                  exportPDF: { exportingPDF = true },
+                                                  combine: canCombine ? { combining = true } : nil)
                         case .ledger:
                             expensesSection(group)
                         case .members:
@@ -197,14 +193,29 @@ struct GroupDetail: View {
         }
     }
 
+    /// The segmented control where all five tabs fit; otherwise a row of
+    /// scrolling pills, so every tab stays visible instead of hiding in a menu.
     @ViewBuilder private var workspacePicker: some View {
-        if dynamicTypeSize.isAccessibilitySize {
-            sectionPicker.pickerStyle(.menu)
-        } else {
-            ViewThatFits(in: .horizontal) {
-                sectionPicker.pickerStyle(.segmented).frame(minWidth: 330)
-                sectionPicker.pickerStyle(.menu)
+        ViewThatFits(in: .horizontal) {
+            sectionPicker.pickerStyle(.segmented).frame(minWidth: 440)
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: Spacing.xs) {
+                        ForEach(Section.allCases, id: \.self) { tab in
+                            Chip(title: tab.rawValue, selected: section == tab) {
+                                withAnimation(.snappy(duration: 0.25)) { section = tab }
+                            }
+                            .id(tab)
+                        }
+                    }
+                    .padding(.vertical, 2)
+                    .padding(.trailing, Spacing.l)
+                }
+                .trailingScrollFade()
+                .onChange(of: section) { _, tab in withAnimation(.snappy) { proxy.scrollTo(tab, anchor: .center) } }
             }
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("Group workspace")
         }
     }
 
@@ -224,31 +235,32 @@ struct GroupDetail: View {
 
     private func header(_ group: ExpenseGroup) -> some View {
         let people = group.members.filter { $0.removed != true }
-        return VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top, spacing: 12) {
-                Image(systemName: group.symbol)
-                    .font(.headline)
-                    .frame(width: 44, height: 44)
-                    .background(Palette.evergreen.opacity(0.12), in: RoundedRectangle(cornerRadius: Radius.badge))
-                    .foregroundStyle(Palette.evergreen)
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(group.name)
-                        .font(.title2.bold())
-                        .foregroundStyle(Palette.ink)
-                        .accessibilityAddTraits(.isHeader)
-                    Text("\(group.kind == "trip" ? "Trip" : group.kind == "home" ? "Home" : "Friends") · \(group.currency) · \(people.count) \(people.count == 1 ? "person" : "people")")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                    if let dates = tripDates(group) {
-                        Text(dates).font(.subheadline).foregroundStyle(.secondary)
-                    }
-                    if let description = group.description {
-                        Text(description).font(.subheadline).foregroundStyle(.secondary)
-                    }
+        let kind = group.kind == "trip" ? "Trip" : group.kind == "home" ? "Home" : "Friends"
+        let meta = [kind, group.currency, "\(people.count) \(people.count == 1 ? "person" : "people")", tripDates(group)]
+            .compactMap { $0 }.joined(separator: " · ")
+        return HStack(alignment: .center, spacing: Spacing.s) {
+            Image(systemName: group.symbol)
+                .font(.system(size: 20, weight: .semibold))
+                .frame(width: 48, height: 48)
+                .background(Palette.lime.opacity(0.55), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .foregroundStyle(Palette.ink)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(group.name)
+                    .font(.splitDisplay(24))
+                    .foregroundStyle(Palette.ink)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.85)
+                    .accessibilityAddTraits(.isHeader)
+                Text(meta)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                if let description = group.description {
+                    Text(description).font(.subheadline).foregroundStyle(.tertiary).lineLimit(2)
                 }
-                Spacer(minLength: 0)
             }
+            Spacer(minLength: 0)
         }
     }
 
@@ -275,6 +287,81 @@ struct GroupDetail: View {
         }
     }
 
+    /// Your position in the group, the one thing to act on, in the ink card
+    /// shared with Home; the two everyday actions sit right under it.
+    private func positionCard(_ group: ExpenseGroup) -> some View {
+        let balances = summary?.mine ?? [:]
+        let net = fx.total(balances, in: fx.home)
+        let settled = balances.values.allSatisfy { $0 == 0 }
+        let wide = sizeClass == .regular && !dynamicTypeSize.isAccessibilitySize
+        let caption = !net.missing.isEmpty ? "Some exchange rates are unavailable"
+            : settled ? "Nobody owes you and you owe nobody"
+            : net.amount > 0 ? "you’re owed in this group" : "you owe in this group"
+        let figure = VStack(alignment: .leading, spacing: 4) {
+            Text("Your balance")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Palette.onHero.opacity(0.75))
+            if settled {
+                Label("Settled up", systemImage: "checkmark.circle.fill")
+                    .font(.splitAmount(30, weight: .bold))
+                    .foregroundStyle(Palette.lime)
+            } else {
+                Text(fx.homeTotalText(balances, magnitude: true))
+                    .font(.splitAmount(wide ? 36 : 30, weight: .bold))
+                    .foregroundStyle(net.missing.isEmpty && net.amount < 0 ? Palette.heroNegative : Palette.lime)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+                    .contentTransition(.numericText())
+            }
+            Button { present(.balances(group)) } label: {
+                HStack(spacing: 4) {
+                    Text(caption)
+                    Image(systemName: "chevron.right").font(.caption2.weight(.bold))
+                }
+                .font(.subheadline)
+                .foregroundStyle(Palette.onHero.opacity(0.75))
+                .frame(minHeight: 28)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(caption). Show everyone’s balances")
+        }
+        let add = SplitActionButton(title: "Add expense", symbol: "plus", prominent: true) { present(.expense(group)) }
+            .accessibilityIdentifier("group-add-expense")
+        let settle = SplitActionButton(title: "Settle up", symbol: "arrow.left.arrow.right") { present(.settlement(group)) }
+            .environment(\.colorScheme, .dark)
+        let stacked = VStack(alignment: .leading, spacing: Spacing.m) {
+            figure
+            ActionBar { add; settle }
+        }
+        return Group {
+            if wide {
+                // Side by side only when both buttons keep their full titles.
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .center, spacing: Spacing.xl) {
+                        figure.fixedSize(horizontal: true, vertical: false)
+                        Spacer(minLength: 0)
+                        HStack(spacing: Spacing.xs) {
+                            add.fixedSize(horizontal: true, vertical: false)
+                            settle.fixedSize(horizontal: true, vertical: false)
+                        }
+                    }
+                    stacked
+                }
+            } else {
+                stacked
+            }
+        }
+        .padding(wide ? Spacing.xl : 18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            LinearGradient(colors: [Palette.hero, Palette.hero.opacity(0.92)], startPoint: .topLeading, endPoint: .bottomTrailing),
+            in: RoundedRectangle(cornerRadius: Radius.header + 4, style: .continuous)
+        )
+        .overlay(RoundedRectangle(cornerRadius: Radius.header + 4, style: .continuous).strokeBorder(Palette.lime.opacity(0.14)))
+    }
+
+    /// Group-wide figures in one strip instead of a grid of wrapping cards.
     private func overviewTotals(_ group: ExpenseGroup) -> some View {
         let me = group.members.filter { $0.userID == store.currentUserID && $0.userID != nil }
         let expenses = entries.filter(\.isSpending)
@@ -283,44 +370,94 @@ struct GroupDetail: View {
         let share = projected.count == expenses.count
             ? (expenses.contains { $0.currency != fx.home } ? "≈ " : "") + Money.text(spending?.share ?? 0, fx.home)
             : "Rate unavailable"
-        let balances = summary?.mine ?? [:]
-        let net = fx.total(balances, in: fx.home)
-        return LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 10)], alignment: .leading, spacing: 10) {
-            statistic("Group spend", value: fx.spendingText(expenses))
-            statistic("Your share", value: share)
-            statistic("Your net balance", value: fx.homeTotalText(balances, signed: true),
-                      tint: !net.missing.isEmpty ? Palette.ink : net.amount < 0 ? Palette.negative : Palette.positive)
-            Button { section = .receipts } label: {
-                statistic("Unclaimed items", value: String(openCount), tint: openCount > 0 ? Palette.amber : Palette.positive)
+        let cells = Group {
+            Button { insights = true } label: {
+                statistic("Group spend", value: fx.spendingText(expenses), detail: "\(expenses.count) \(expenses.count == 1 ? "expense" : "expenses")", chevron: true)
             }
             .buttonStyle(.plain)
+            .accessibilityHint("Opens spending insights")
+            statDivider
+            statistic("Your share", value: share, detail: "What you consumed")
+            statDivider
+            Button { section = .receipts } label: {
+                statistic("Unclaimed items", value: String(openCount), detail: openCount > 0 ? "Waiting on receipts" : "All claimed",
+                          tint: openCount > 0 ? Palette.amber : Palette.ink, chevron: openCount > 0)
+            }
+            .buttonStyle(.plain)
+            .disabled(openCount == 0)
             .accessibilityHint("Opens receipts")
+        }
+        return Group {
+            if dynamicTypeSize.isAccessibilitySize || statsWidth < 520 {
+                VStack(alignment: .leading, spacing: 0) { cells }
+            } else {
+                HStack(alignment: .top, spacing: 0) { cells }
+            }
+        }
+        .padding(.vertical, statsWidth < 520 ? Spacing.xxs : Spacing.s)
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { statsWidth = $0 }
+        .background(Palette.card, in: RoundedRectangle(cornerRadius: Radius.card))
+        .overlay(RoundedRectangle(cornerRadius: Radius.card).strokeBorder(Palette.line))
+    }
+
+    @ViewBuilder private var statDivider: some View {
+        if dynamicTypeSize.isAccessibilitySize || statsWidth < 520 {
+            Divider().overlay(Palette.line).padding(.leading, Spacing.m)
+        } else {
+            Rectangle().fill(Palette.line).frame(width: 1).padding(.vertical, 4).accessibilityHidden(true)
         }
     }
 
-    private func statistic(_ label: String, value: String, tint: Color = Palette.ink) -> some View {
-        Card(padding: 12) {
-            VStack(alignment: .leading, spacing: 5) {
-                Text(label).font(.subheadline).foregroundStyle(.secondary)
-                Text(value).font(.title3.weight(.semibold).monospacedDigit()).foregroundStyle(tint)
+    private func statistic(_ label: String, value: String, detail: String, tint: Color = Palette.ink, chevron: Bool = false) -> some View {
+        let caption = HStack(spacing: 4) {
+            Text(label).font(.footnote.weight(.medium)).foregroundStyle(.secondary).lineLimit(1)
+            if chevron && statsWidth >= 520 {
+                Image(systemName: "chevron.right").font(.caption2.weight(.bold)).foregroundStyle(.tertiary)
             }
-            .frame(minHeight: 60, alignment: .topLeading)
-            .accessibilityElement(children: .combine)
         }
+        let figure = Text(value)
+            .font(.splitAmount(sizeClass == .regular ? 20 : 17, weight: .semibold))
+            .foregroundStyle(tint)
+            .lineLimit(1)
+            .minimumScaleFactor(0.6)
+        return Group {
+            if statsWidth < 520 && !dynamicTypeSize.isAccessibilitySize {
+                HStack(spacing: Spacing.s) {
+                    VStack(alignment: .leading, spacing: 1) {
+                        caption
+                        Text(detail).font(.caption).foregroundStyle(.tertiary).lineLimit(1)
+                    }
+                    Spacer(minLength: Spacing.xs)
+                    figure.layoutPriority(1)
+                    if chevron {
+                        Image(systemName: "chevron.right").font(.caption2.weight(.bold)).foregroundStyle(.tertiary)
+                    }
+                }
+                .padding(.vertical, 10)
+            } else {
+                VStack(alignment: .leading, spacing: 3) {
+                    caption
+                    figure
+                    Text(detail).font(.caption).foregroundStyle(.tertiary).lineLimit(1)
+                }
+            }
+        }
+        .padding(.horizontal, Spacing.m)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
     }
 
     private func overview(_ group: ExpenseGroup) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: Spacing.m) {
+            positionCard(group)
             overviewTotals(group)
             PendingSettlementsView(groupID: group.id)
-            ActionBar {
-                SplitActionButton(title: "Spending insights", symbol: "chart.bar.xaxis") { insights = true }
-                SplitActionButton(title: "Balances", symbol: "chart.pie") { present(.balances(group)) }
-            }
-            SectionHeader(title: "Recent activity", actionTitle: entries.isEmpty ? nil : "View ledger") {
+            SectionHeader(title: "Recent activity", actionTitle: entries.isEmpty ? nil : "See all") {
                 clearLedgerFilters()
                 section = .ledger
             }
+            .padding(.top, Spacing.xxs)
             if entries.isEmpty {
                 Card {
                     EmptyPanel(title: "No expenses yet", message: "Add a shared expense or save a receipt for later.", symbol: "receipt")
@@ -336,7 +473,11 @@ struct GroupDetail: View {
         return VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
                 TextField("Search ledger", text: $query)
-                    .padding(.horizontal, 12)
+                    .padding(.leading, 34)
+                    .padding(.trailing, 12)
+                    .overlay(alignment: .leading) {
+                        Image(systemName: "magnifyingglass").foregroundStyle(.secondary).padding(.leading, 12).accessibilityHidden(true)
+                    }
                     .frame(minHeight: HitTarget.minimum)
                     .background(Palette.card, in: RoundedRectangle(cornerRadius: Radius.badge))
                     .overlay(RoundedRectangle(cornerRadius: Radius.badge).strokeBorder(Palette.line))
@@ -367,6 +508,15 @@ struct GroupDetail: View {
                         .labelStyle(.iconOnly)
                 }
                 .accessibilityValue(filter.rawValue)
+                Button { present(.expense(group)) } label: {
+                    Image(systemName: "plus")
+                        .font(.body.weight(.semibold))
+                        .frame(width: HitTarget.minimum, height: HitTarget.minimum)
+                        .foregroundStyle(Palette.hero)
+                        .glassCapsule(tint: Palette.lime)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Add expense")
             }
 
             if hasLedgerFilters || !query.isEmpty {
@@ -719,10 +869,10 @@ struct SettleUpView: View {
                         }
                     }
                 }
-                formCard
                 if transfer == nil && !suggestions.isEmpty {
                     suggestionsCard
                 }
+                formCard
                 if let error { InlineError(text: error) }
                 Button { save() } label: {
                     Label(saving ? "Sending…" : "Request approval", systemImage: "checkmark")
@@ -759,27 +909,41 @@ struct SettleUpView: View {
     private var formCard: some View {
         Card {
             VStack(alignment: .leading, spacing: 14) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Paid by").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                    Text("You").font(.subheadline.weight(.semibold))
-                }
-                HStack {
-                    Image(systemName: "arrow.down")
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(Palette.evergreen)
-                    Text("to").font(.caption).foregroundStyle(.secondary)
-                }
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Who gets it?").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                    Picker("To", selection: $to) {
-                        ForEach(activeMembers.filter { $0.id != from }) { member in
-                            Text(member.id == me?.id ? "You" : member.name).tag(member.id)
-                        }
+                HStack(spacing: Spacing.s) {
+                    VStack(spacing: 4) {
+                        Avatar(name: session.displayName, size: 44)
+                        Text("You").font(.caption.weight(.semibold)).foregroundStyle(Palette.ink)
                     }
-                    .pickerStyle(.menu)
-                    .labelsHidden()
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(minWidth: 64)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel("Paid by you")
+                    Image(systemName: "arrow.right")
+                        .font(.headline)
+                        .foregroundStyle(Palette.evergreen)
+                        .frame(maxWidth: .infinity)
+                        .accessibilityHidden(true)
+                    Menu {
+                        Picker("Who gets it?", selection: $to) {
+                            ForEach(activeMembers.filter { $0.id != from }) { member in
+                                Text(member.name).tag(member.id)
+                            }
+                        }
+                    } label: {
+                        VStack(spacing: 4) {
+                            Avatar(name: recipient?.name ?? "?", size: 44)
+                            HStack(spacing: 3) {
+                                Text(recipient?.name ?? "Choose").font(.caption.weight(.semibold)).lineLimit(1)
+                                Image(systemName: "chevron.up.chevron.down").font(.caption2.weight(.bold))
+                            }
+                            .foregroundStyle(Palette.ink)
+                        }
+                        .frame(minWidth: 64, maxWidth: 180)
+                        .contentShape(Rectangle())
+                    }
+                    .accessibilityLabel("Who gets it?")
+                    .accessibilityValue(recipient?.name ?? "Nobody chosen")
                 }
+                .padding(.vertical, Spacing.xxs)
                 Divider().overlay(Palette.line)
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     TextField("0.00", text: $amount)
@@ -850,24 +1014,37 @@ struct SettleUpView: View {
     }
 
     private var suggestionsCard: some View {
-        Card {
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Suggested payments").font(.headline).foregroundStyle(Palette.ink)
+        VStack(alignment: .leading, spacing: Spacing.xs) {
+            SectionHeader(title: "Suggested", subtitle: "The fewest payments that square you up. Tap one to fill it in.")
+            Card(padding: 0) {
                 ForEach(suggestions) { suggestion in
-                    Button { apply(suggestion) } label: {
-                        HStack(spacing: 10) {
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text("\(name(suggestion.from)) → \(name(suggestion.to))").font(.subheadline.weight(.semibold)).foregroundStyle(Palette.ink)
-                                Text(Money.text(suggestion.amount, suggestion.currency)).font(.caption).foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            Image(systemName: "arrow.up.left").font(.caption.weight(.bold)).foregroundStyle(Palette.evergreen)
+                    let chosen = to == suggestion.to && currency == suggestion.currency && Money.parse(amount) == suggestion.amount
+                    Button { withAnimation(.snappy) { apply(suggestion) } } label: {
+                        HStack(spacing: Spacing.s) {
+                            Avatar(name: name(suggestion.to), size: 36)
+                            Text("Pay \(name(suggestion.to))")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(Palette.ink)
+                                .lineLimit(1)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            Text(Money.text(suggestion.amount, suggestion.currency))
+                                .font(.splitAmount(15))
+                                .foregroundStyle(Palette.ink)
+                                .fixedSize()
+                            Image(systemName: chosen ? "checkmark.circle.fill" : "circle")
+                                .font(.title3)
+                                .foregroundStyle(chosen ? Palette.evergreen : Color.secondary.opacity(0.5))
+                                .contentTransition(.symbolEffect(.replace))
+                                .accessibilityHidden(true)
                         }
-                        .frame(minHeight: 44)
+                        .padding(.horizontal, Spacing.m)
+                        .padding(.vertical, 10)
+                        .frame(minHeight: 52)
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    if suggestion.id != suggestions.last?.id { Divider().overlay(Palette.line) }
+                    .accessibilityAddTraits(chosen ? .isSelected : [])
+                    if suggestion.id != suggestions.last?.id { RowDivider(inset: Spacing.m + 36 + Spacing.s) }
                 }
             }
         }

@@ -127,6 +127,36 @@ struct BalanceLabel: View {
     }
 }
 
+/// A balance as one readable phrase for list rows: "You’re owed ≈ USD 2,300.17",
+/// with the amount in the balance colour, or the settled text.
+struct BalancePhrase: View {
+    @EnvironmentObject private var fx: FXStore
+    var amounts: [String: Int64]
+    var positive = "You’re owed"
+    var negative = "You owe"
+    var settled = "Settled up"
+
+    var body: some View {
+        let result = fx.total(amounts, in: fx.home)
+        Group {
+            if amounts.values.allSatisfy({ $0 == 0 }) {
+                Text(settled).foregroundStyle(.secondary)
+            } else if !result.missing.isEmpty {
+                Text(fx.homeTotalText(amounts, magnitude: true)).foregroundStyle(.secondary)
+            } else {
+                Text(result.amount > 0 ? positive + " " : negative + " ").foregroundStyle(.secondary)
+                    + Text(fx.homeTotalText(amounts, magnitude: true))
+                    .font(.splitAmount(15, weight: .semibold))
+                    .foregroundStyle(result.amount > 0 ? Palette.positive : Palette.negative)
+            }
+        }
+        .font(.subheadline)
+        .lineLimit(1)
+        .minimumScaleFactor(0.85)
+        .contentTransition(.numericText())
+    }
+}
+
 // MARK: - Rows
 
 /// The standard ledger row: a leading badge, a title and detail line, and a
@@ -342,5 +372,18 @@ struct HeroStats: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+}
+
+extension View {
+    /// Fades the trailing edge of a horizontal scroller so a clipped item
+    /// reads as "more this way" instead of a cut-off pill, without letting
+    /// content slide under a side toolbar or the fold.
+    func trailingScrollFade() -> some View {
+        mask(
+            LinearGradient(stops: [.init(color: .black, location: 0), .init(color: .black, location: 0.9),
+                                   .init(color: .black.opacity(0), location: 1)],
+                           startPoint: .leading, endPoint: .trailing)
+        )
     }
 }

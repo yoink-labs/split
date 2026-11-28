@@ -222,7 +222,8 @@ struct ActivityFeedView: View {
                     Chip(
                         title: activeGroupName,
                         symbol: "person.3",
-                        selected: true
+                        selected: true,
+                        removable: true
                     ) {
                         groupID = nil
                     }

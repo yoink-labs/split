@@ -21,6 +21,7 @@ struct GroupPDFExportView: View {
 
     var body: some View {
         Form {
+            Group {
             if memberID != nil {
                 Picker("Audience", selection: $personal) {
                     Text("Group").tag(false)
@@ -54,6 +55,8 @@ struct GroupPDFExportView: View {
                     .disabled(sections.isEmpty || store.group(groupID) == nil)
             }
             if let error { Section { InlineError(text: error) } }
+            }
+            .listRowBackground(Palette.card)
         }
         .scrollContentBackground(.hidden)
         .background(AppBackground())

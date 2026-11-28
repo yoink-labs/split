@@ -30,6 +30,10 @@ struct EntryDetails: View {
     @State private var optimisticLike: Bool?
     @State private var liking = false
     @State private var likeError: String?
+    @State private var refunding = false
+    @State private var resolvingRefund = false
+    @State private var markingPending = false
+    @State private var adjusting = false
 
     init(entry: LedgerEntry, group: ExpenseGroup, embedded: Bool = false, showsBreakdownFirst: Bool = false) {
         self.initial = entry
@@ -44,8 +48,20 @@ struct EntryDetails: View {
     private var liveGroup: ExpenseGroup { store.group(group.id) ?? group }
     private var me: Person? { Analytics.me(in: liveGroup, userID: session.userID) }
     private var editable: Bool { entry.editable == true || store.isDemo }
+    /// Author or an active payer (the receiver, for a refund) can mark pending and resolve, as on the Worker.
+    private var canResolve: Bool {
+        guard entry.isSpending, me?.removed != true else { return false }
+        return editable || entry.allPayers.contains { payer in
+            liveGroup.members.contains { $0.id == payer.memberID && $0.userID == session.userID && $0.removed != true }
+        }
+    }
+    private var refunds: [LedgerEntry] { entry.kind == "expense" ? Refunds.linked(to: entry, in: store.entries) : [] }
+    private var refundOriginal: LedgerEntry? { entry.refundOf.flatMap { id in store.entries.first { $0.id == id } } }
+    private var canRefund: Bool {
+        entry.kind == "expense" && me != nil && me?.removed != true && Refunds.remaining(of: entry, refunds: refunds) > 0
+    }
     private var canSetHandled: Bool {
-        entry.kind == "expense" && entry.allPayers.contains { payer in
+        entry.kind == "expense" && !entry.isPending && entry.allPayers.contains { payer in
             liveGroup.members.contains { $0.id == payer.memberID && $0.userID == session.userID && $0.removed != true }
         }
     }
@@ -69,6 +85,10 @@ struct EntryDetails: View {
         return entry.commentCount ?? 0
     }
     private var paidByText: String {
+        if entry.isRefund {
+            let receiver = displayName(entry.paidBy)
+            return entry.refundOf == nil ? "Credit from \(receiver)" : "\(receiver) received the refund"
+        }
         let names = entry.allPayers.map { displayName($0.memberID) }
         guard let first = names.first else { return "No payer recorded" }
         if names.count == 1 { return "\(first) paid" }
@@ -104,6 +124,9 @@ struct EntryDetails: View {
             ScrollView {
                 VStack(spacing: 16) {
                     hero
+                    if entry.isPending { pendingCard }
+                    if entry.isRefund { refundOfCard }
+                    if entry.kind == "expense" && (!refunds.isEmpty || canRefund) { refundsCard }
                     if entry.exchange != nil { settlementCard }
                     if showsBreakdownFirst { breakdown }
                     if let ids = entry.receiptIDs, !ids.isEmpty { receiptCard(ids) }
@@ -117,7 +140,7 @@ struct EntryDetails: View {
                         }
                     }
                     .id("comments")
-                    if editable || canSetHandled { actionsCard }
+                    if editable || canSetHandled || canResolve { actionsCard }
                     if let error { InlineError(text: error) }
                 }
                 .padding(16)
@@ -127,7 +150,7 @@ struct EntryDetails: View {
             .scrollDismissesKeyboard(.interactively)
         }
         .background(AppBackground())
-        .navigationTitle(entry.kind == "settlement" ? "Payment" : "Expense")
+        .navigationTitle(entry.kind == "settlement" ? "Payment" : entry.isRefund ? (entry.refundOf == nil ? "Credit" : "Refund") : "Expense")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             if !embedded {
@@ -146,6 +169,10 @@ struct EntryDetails: View {
         .sheet(isPresented: $editing) {
             AddExpenseView(group: liveGroup, original: entry)
         }
+        .sheet(isPresented: $refunding) { RefundComposer(group: liveGroup, original: entry) }
+        .sheet(isPresented: $resolvingRefund) { RefundComposer(group: liveGroup, original: entry, resolving: true) }
+        .sheet(isPresented: $markingPending) { PendingSheet(entry: entry) }
+        .sheet(isPresented: $adjusting) { AdjustAmountSheet(entry: entry) }
         .confirmationDialog(
             "Delete this entry and update balances?",
             isPresented: $deleting,
@@ -176,7 +203,7 @@ struct EntryDetails: View {
                 HStack(alignment: .top, spacing: 12) {
                     CategoryBadge(category: entry.category, size: 48)
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(entry.kind == "settlement" ? "Payment" : (entry.category ?? "Expense"))
+                        Text(entry.kind == "settlement" ? "Payment" : entry.isRefund ? (entry.refundOf == nil ? "Credit" : "Refund") : (entry.category ?? "Expense"))
                             .font(.splitEyebrow)
                             .foregroundStyle(.secondary)
                         Text(entry.title)
@@ -186,8 +213,7 @@ struct EntryDetails: View {
                     }
                     Spacer(minLength: 8)
                 }
-                AmountText(minor: entry.amount, currency: entry.currency, size: 34, entry: entry)
-                    .accessibilityLabel("Amount \(fx.entryText(entry, amount: entry.amount))")
+                EntryAmount(entry: entry, size: 34)
                 if entry.currency != fx.home {
                     Text("Charged \(Money.text(entry.amount, entry.currency))")
                         .font(.caption).foregroundStyle(.secondary)
@@ -242,6 +268,14 @@ struct EntryDetails: View {
             Text("Recorded")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(Palette.evergreen)
+        } else if entry.isRefund, let me {
+            let net = Ledger.net(entry, for: me.id)
+            Text(net > 0 ? "You get back \(fx.entryText(entry, amount: net))"
+                 : net < 0 ? "You owe \(fx.entryText(entry, amount: abs(net))) · \(entry.refundOf == nil ? "credit you’re giving" : "refund you received for others")" : "Not involved")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(net > 0 ? Palette.positive : net < 0 ? Palette.negative : Palette.muted)
+                .multilineTextAlignment(.trailing)
+                .fixedSize(horizontal: false, vertical: true)
         } else if let me {
             let net = Ledger.net(entry, for: me.id)
             Text(net > 0
@@ -254,6 +288,119 @@ struct EntryDetails: View {
                 .multilineTextAlignment(.trailing)
                 .fixedSize(horizontal: false, vertical: true)
         }
+    }
+
+    // MARK: - Pending and refunds
+
+    private var pendingCard: some View {
+        Card {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    PendingBadge(note: nil)
+                    Spacer()
+                    Text("Counts toward balances").font(.caption).foregroundStyle(.secondary)
+                }
+                Text(entry.pendingNote ?? "This cost may still change.")
+                    .font(.subheadline)
+                    .foregroundStyle(Palette.ink)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let me {
+                    let net = Ledger.net(entry.settling, for: me.id)
+                    if net != 0 {
+                        Text("Without it, your balance in this group changes by \(Money.text(-net, entry.settling.currency, signed: true)).")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                if canResolve {
+                    FlowLayout(spacing: 8) {
+                        Button { Task { await confirmPending() } } label: { Label("Confirm", systemImage: "checkmark") }
+                            .buttonStyle(GhostButton())
+                            .disabled(working)
+                            .accessibilityIdentifier("pending-confirm")
+                        if entry.bill == nil && entry.kind == "expense" {
+                            Button { adjusting = true } label: { Label("Adjust amount", systemImage: "plusminus") }
+                                .buttonStyle(GhostButton())
+                                .accessibilityIdentifier("pending-adjust")
+                        }
+                        if entry.kind == "expense" && canRefund {
+                            Button { resolvingRefund = true } label: { Label("Turn into refund", systemImage: "arrow.uturn.backward") }
+                                .buttonStyle(GhostButton())
+                                .accessibilityIdentifier("pending-refund")
+                        }
+                    }
+                }
+            }
+        }
+        .overlay(RoundedRectangle(cornerRadius: Radius.card).strokeBorder(Palette.amber.opacity(0.45)))
+    }
+
+    @ViewBuilder private var refundOfCard: some View {
+        Card {
+            VStack(alignment: .leading, spacing: 8) {
+                SectionHeader(title: entry.refundOf == nil ? "Standalone credit" : "Refund of")
+                if let original = refundOriginal {
+                    NavigationLink(value: LedgerRoute.entry(group: liveGroup.id, id: original.id)) {
+                        HStack {
+                            Text(original.title).font(.subheadline.weight(.semibold)).foregroundStyle(Palette.ink)
+                            Spacer()
+                            Text(Money.text(original.amount, original.currency)).font(.splitAmount(15))
+                            Image(systemName: "chevron.right").font(.caption2.weight(.bold)).foregroundStyle(.tertiary)
+                        }
+                        .frame(minHeight: 40)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                } else {
+                    Text(entry.refundOf == nil
+                         ? "Gives money back without an original expense. The credited people’s balances go up."
+                         : "The original expense is no longer available.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    private var refundsCard: some View {
+        let refunded = Refunds.refundedTotal(refunds)
+        return Card {
+            VStack(alignment: .leading, spacing: 10) {
+                SectionHeader(title: "Refunds",
+                              subtitle: "\(Money.text(refunded, entry.currency)) refunded · \(Money.text(Refunds.remaining(of: entry, refunds: refunds), entry.currency)) left",
+                              actionTitle: canRefund && !entry.isPending ? "Add" : nil,
+                              action: { refunding = true })
+                ForEach(refunds) { refund in
+                    NavigationLink(value: LedgerRoute.entry(group: liveGroup.id, id: refund.id)) {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(refund.title).font(.subheadline.weight(.medium)).foregroundStyle(Palette.ink)
+                                Text(refund.splits.map { "\(displayName($0.memberID)) \(Money.text($0.amount, refund.currency))" }.joined(separator: ", "))
+                                    .font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                                if refund.isPending { PendingBadge(note: refund.pendingNote) }
+                            }
+                            Spacer()
+                            EntryAmount(entry: refund, size: 15)
+                            Image(systemName: "chevron.right").font(.caption2.weight(.bold)).foregroundStyle(.tertiary)
+                        }
+                        .frame(minHeight: 40)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+                if refunds.isEmpty {
+                    Text("Nothing refunded yet.").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    private func confirmPending() async {
+        guard !working else { return }
+        working = true
+        error = nil
+        defer { working = false }
+        do { try await store.resolve(entry, .confirm) }
+        catch { self.error = error.localizedDescription }
     }
 
     // MARK: - Money and receipt
@@ -305,7 +452,7 @@ struct EntryDetails: View {
         Card {
             VStack(alignment: .leading, spacing: 10) {
                 SectionHeader(
-                    title: entry.kind == "settlement" ? "Paid" : "Paid by",
+                    title: entry.kind == "settlement" ? "Paid" : entry.isRefund ? (entry.refundOf == nil ? "Credit from" : "Received by") : "Paid by",
                     subtitle: entry.allPayers.count > 1 ? "Split across \(entry.allPayers.count) people" : nil
                 )
                 ForEach(entry.allPayers, id: \.memberID) { payer in
@@ -343,8 +490,8 @@ struct EntryDetails: View {
         Card {
             VStack(alignment: .leading, spacing: 10) {
                 SectionHeader(
-                    title: entry.isSettlement ? "Paid to" : "Split with",
-                    subtitle: entry.isSettlement ? nil : splitSubtitle
+                    title: entry.isSettlement ? "Paid to" : entry.isRefund ? "Credited to" : "Split with",
+                    subtitle: entry.isSettlement || entry.isRefund ? nil : splitSubtitle
                 )
                 ForEach(entry.splits, id: \.memberID) { portion in
                     NavigationLink(value: LedgerRoute.member(group: liveGroup.id, seat: portion.memberID)) {
@@ -457,6 +604,20 @@ struct EntryDetails: View {
                     .buttonStyle(GhostButton())
                     .accessibilityIdentifier("entry-edit")
                     .accessibilityLabel("Edit this expense")
+                }
+                if canResolve && !entry.isPending && !entry.isHandled {
+                    Button { markingPending = true } label: {
+                        Label("Mark as pending", systemImage: "clock")
+                    }
+                    .buttonStyle(GhostButton())
+                    .accessibilityIdentifier("entry-mark-pending")
+                }
+                if canRefund && !entry.isPending {
+                    Button { refunding = true } label: {
+                        Label("Record refund", systemImage: "arrow.uturn.backward")
+                    }
+                    .buttonStyle(GhostButton())
+                    .accessibilityIdentifier("entry-refund")
                 }
                 if canSetHandled {
                     Button {
@@ -571,6 +732,7 @@ struct EntryDetails: View {
         error = nil
         defer { working = false }
         do {
+            guard refunds.isEmpty else { throw LedgerError.invalid("Delete this expense’s refunds first.") }
             try await store.change(entry, to: nil)
             dismiss()
         } catch {

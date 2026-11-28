@@ -17,7 +17,10 @@ export const currencies = `
 export type SplitMode = 'equal' | 'exact' | 'percent' | 'shares' | 'adjustment';
 export interface Portion { memberID: string; amount: number }
 export interface Payer { memberID: string; amount: number }
-export interface Entry { handled?: boolean; exchange?:Exchange; bill?:Bill; category?:string; receiptIDs?:string[]; payers?:Payer[]; notes?:string; id: string; groupID: string; title: string; amount: number; currency: string; paidBy: string; splits: Portion[]; kind: 'expense' | 'settlement'; splitMode: SplitMode; createdAt: string }
+/** kind 'refund': paidBy received the money back (from a vendor, or holds it for a credit) and splits are the credits
+ * owed to each person. Its balance effect is the mirror image of an expense. refundOf links the original expense. */
+export type EntryKind = 'expense' | 'settlement' | 'refund';
+export interface Entry { handled?: boolean; pending?: boolean; pendingNote?: string; refundOf?: string; exchange?:Exchange; bill?:Bill; category?:string; receiptIDs?:string[]; payers?:Payer[]; notes?:string; id: string; groupID: string; title: string; amount: number; currency: string; paidBy: string; splits: Portion[]; kind: EntryKind; splitMode: SplitMode; createdAt: string }
 export class InputError extends Error {}
 export function allocate(total: number, weights: number[], maximumTotal = 100_000_000_000): number[] {
   if (!Number.isSafeInteger(total) || total <= 0 || total > maximumTotal || !weights.length || weights.length > 50 || weights.some(w => !Number.isSafeInteger(w) || w < 0 || w > 100_000_000_000) || weights.every(w => w === 0)) throw new InputError('Enter valid amounts and at least one participant.');
@@ -47,7 +50,7 @@ function readPayers(value: unknown, memberIDs: string[], total: number, paidBy: 
 export function validateEntry(value: unknown, memberIDs: string[], previous?:Bill): Entry {
   if (!value || typeof value !== 'object') throw new InputError('Invalid entry.');
   const e = value as Entry;
-  if (!validID(e.id) || !validID(e.groupID) || typeof e.title !== 'string' || !e.title.trim() || e.title.length > 120 || !Number.isSafeInteger(e.amount) || e.amount <= 0 || e.amount > 100_000_000_000 || !currencies.includes(e.currency as typeof currencies[number]) || !memberIDs.includes(e.paidBy) || !['expense','settlement'].includes(e.kind) || !['equal','exact','percent','shares','adjustment'].includes(e.splitMode) || typeof e.createdAt !== 'string' || !Number.isFinite(Date.parse(e.createdAt))) throw new InputError('Check the entry amount, currency, and payer.');
+  if (!validID(e.id) || !validID(e.groupID) || typeof e.title !== 'string' || !e.title.trim() || e.title.length > 120 || !Number.isSafeInteger(e.amount) || e.amount <= 0 || e.amount > 100_000_000_000 || !currencies.includes(e.currency as typeof currencies[number]) || !memberIDs.includes(e.paidBy) || !['expense','settlement','refund'].includes(e.kind) || !['equal','exact','percent','shares','adjustment'].includes(e.splitMode) || typeof e.createdAt !== 'string' || !Number.isFinite(Date.parse(e.createdAt))) throw new InputError('Check the entry amount, currency, and payer.');
   if (!Array.isArray(e.splits) || !e.splits.length || e.splits.length > memberIDs.length || new Set(e.splits.map(s=>s.memberID)).size !== e.splits.length || e.splits.some(s=>!memberIDs.includes(s.memberID) || !Number.isSafeInteger(s.amount) || s.amount < 0) || e.splits.reduce((n,s)=>n+s.amount,0) !== e.amount) throw new InputError('The split must match the total exactly.');
   if (e.kind === 'settlement' && (e.splits.length !== 1 || e.splits[0].memberID === e.paidBy)) throw new InputError('Choose two different people.');
   const extras:Partial<Entry>={};
@@ -55,6 +58,24 @@ export function validateEntry(value: unknown, memberIDs: string[], previous?:Bil
     if(typeof e.handled!=='boolean' || e.kind!=='expense') throw new InputError('Only expenses can be marked as already handled.');
     if(e.handled) extras.handled=true;
   }
+  if(e.pending!==undefined) {
+    if(typeof e.pending!=='boolean' || e.kind==='settlement') throw new InputError('Only expenses and refunds can be pending.');
+    if(e.pending && extras.handled) throw new InputError('An expense that was already handled cannot be pending.');
+    if(e.pending) extras.pending=true;
+  }
+  if(e.pendingNote!=null) {
+    const note=typeof e.pendingNote==='string' ? e.pendingNote.trim() : '';
+    if(typeof e.pendingNote!=='string' || note.length>500) throw new InputError('Write a pending note of up to 500 characters.');
+    if(note && !extras.pending) throw new InputError('Only a pending entry can have a pending note.');
+    if(note) extras.pendingNote=note;
+  }
+  if(e.kind==='refund') {
+    if(e.payers!=null || e.bill!=null) throw new InputError('A refund goes back to one person and has no receipt items.');
+    if(e.refundOf!=null && !validID(e.refundOf)) throw new InputError('Choose the expense this refund belongs to.');
+    if(e.refundOf===e.id) throw new InputError('A refund cannot refund itself.');
+    if(e.splits.every(s=>s.memberID===e.paidBy || s.amount===0)) throw new InputError('Credit the refund to someone other than the person who received it.');
+    if(e.refundOf!=null) extras.refundOf=e.refundOf;
+  } else if(e.refundOf!=null) throw new InputError('Only refunds can refer to an original expense.');
   if(e.payers!=null) extras.payers=readPayers(e.payers,memberIDs,e.amount,e.paidBy,e.kind);
   if(e.notes!=null) {
     if(typeof e.notes!=='string') throw new InputError('Write a note of up to 2,000 characters.');
@@ -64,7 +85,7 @@ export function validateEntry(value: unknown, memberIDs: string[], previous?:Bil
   }
   if(e.exchange!=null) extras.exchange=readExchange(e);
   if(e.category!=null) {
-    if(e.kind!=='expense' || typeof e.category!=='string' || !e.category.trim() || e.category.length>50) throw new InputError('Choose a valid category.');
+    if(e.kind==='settlement' || typeof e.category!=='string' || !e.category.trim() || e.category.length>50) throw new InputError('Choose a valid category.');
     extras.category=e.category.trim();
   }
   if(e.bill!=null) {
@@ -79,11 +100,19 @@ export function validateEntry(value: unknown, memberIDs: string[], previous?:Bil
 export function validID(id: unknown): id is string { return typeof id === 'string' && /^[a-zA-Z0-9_-]{8,80}$/.test(id); }
 /** Payers in canonical form. Older entries with a single payer keep their stored shape. */
 export function entryPayers(e: Entry): Payer[] { return e.payers?.length ? e.payers : [{memberID:e.paidBy, amount:e.amount}]; }
-export function balances(entries: Entry[], currency: string, { includeHandled = false } = {}): Record<string,number> {
+/** +1 for expenses and payments, -1 for refunds and credits, which give money back. */
+export function entrySign(e: Pick<Entry,'kind'>): 1 | -1 { return e.kind==='refund' ? -1 : 1; }
+/**
+ * Net balance per member. Pending entries count by default: their money has already moved, and
+ * resolving one (confirm, adjust or refund) only changes the balance from there. Pass
+ * includePending:false for the confirmed-only view.
+ */
+export function balances(entries: Entry[], currency: string, { includeHandled = false, includePending = true } = {}): Record<string,number> {
   const result: Record<string,number> = {};
-  for (const e of entries.filter(e=>includeHandled || !e.handled).map(settlementEntry).filter(e=>e.currency===currency)) {
-    for (const p of entryPayers(e)) result[p.memberID]=(result[p.memberID]??0)+p.amount;
-    for (const s of e.splits) result[s.memberID]=(result[s.memberID]??0)-s.amount;
+  for (const e of entries.filter(e=>(includeHandled || !e.handled) && (includePending || !e.pending)).map(settlementEntry).filter(e=>e.currency===currency)) {
+    const sign=entrySign(e);
+    for (const p of entryPayers(e)) result[p.memberID]=(result[p.memberID]??0)+sign*p.amount;
+    for (const s of e.splits) result[s.memberID]=(result[s.memberID]??0)-sign*s.amount;
   }
   return result;
 }

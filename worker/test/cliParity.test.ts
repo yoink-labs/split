@@ -202,7 +202,7 @@ describe('CLI parity', () => {
       settlements: []
     });
     expect((await alex.run('balances', { group }))[0].settlements).toEqual([]);
-    expect((await alex.run('groups_export', { group })).content).toContain('Handled,50.00,-50.00');
+    expect((await alex.run('groups_export', { group })).content).toContain('Handled,,50.00,-50.00');
     expect((await alex.run('groups_export', { group, format:'summary' })).content).toContain('USD,Alex,active,100.00,50.00,50.00');
     await expect(maya.run('expenses_handled', { group, expense: expense.id, state: 'unhandled' })).rejects.toMatchObject({ status: 403 });
     expect(await alex.run('expenses_handled', { group, expense: expense.id, state: 'unhandled' })).toMatchObject({ handled: false });

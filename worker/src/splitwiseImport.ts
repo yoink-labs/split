@@ -13,7 +13,7 @@ const key = (name: string) => name.trim().toLowerCase();
 type Person = { name: string; displayName?: string; memberID?: string; userID?: string; me?: boolean };
 type Seat = { id: string; userID: string | null; removedAt: string | null; canonicalID: string | null };
 type Share = { name: string; amount: number };
-type Row = { title: unknown; day: unknown; payer: unknown; amount: unknown; currency: unknown; category?: unknown; payment?: unknown; splits: unknown; payers?: unknown; exchange?: Entry['exchange'] };
+type Row = { title: unknown; day: unknown; payer: unknown; amount: unknown; currency: unknown; category?: unknown; payment?: unknown; refund?: unknown; splits: unknown; payers?: unknown; exchange?: Entry['exchange'] };
 
 export async function importSplitwise(db: D1Database, user: string, b: Record<string, unknown>) {
   const rows = b.rows as Row[], people = b.people as Person[];
@@ -131,7 +131,8 @@ export async function importSplitwise(db: D1Database, user: string, b: Record<st
   const today = new Date().toISOString().slice(0, 10);
   for (const row of rows) {
     if (!row || typeof row !== 'object' || typeof row.day !== 'string' || !/^\d{4}-\d\d-\d\d$/.test(row.day)) throw new InputError('Invalid import row.');
-    const payment = row.payment === true;
+    const payment = row.payment === true, refund = row.refund === true;
+    if (refund && (payment || row.payers != null)) throw new InputError('Invalid import row.');
     const splits = shares(row.splits).map(s => ({ memberID: resolve(s.name), amount: s.amount }));
     const payers = row.payers === undefined || row.payers === null ? undefined : shares(row.payers).map(s => ({ memberID: resolve(s.name), amount: s.amount }));
     const paidBy = resolve(row.payer);
@@ -148,7 +149,7 @@ export async function importSplitwise(db: D1Database, user: string, b: Record<st
     }
     const e = validateEntry({
       id: 'splitwise-entry', groupID: group, title: row.title, paidBy, amount: row.amount, currency: row.currency,
-      kind: payment ? 'settlement' : 'expense', category: payment || row.category == null ? undefined : row.category,
+      kind: payment ? 'settlement' : refund ? 'refund' : 'expense', category: payment || row.category == null ? undefined : row.category,
       splitMode: 'exact', createdAt: row.day + 'T12:00:00Z', splits, exchange, ...(payers && payers.length > 1 ? { payers } : {}),
     }, memberIDs);
     // Hash the original transaction so a rate change can't create a duplicate.

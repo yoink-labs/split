@@ -12,6 +12,7 @@ import { financeRoute } from './finance';
 import { createRemoteJWKSet, jwtVerify } from 'jose';
 import { currencies, entryPayers, InputError, validID, validateEntry } from './ledger';
 import { importSplitwise } from './splitwiseImport';
+import { groupAliases, hasRefunds, pendingRoute, refundedExpenseGuard, refundGuard } from './refunds';
 import { pendingSettlements, recordSettlement, respondToSettlement } from './settlements';
 const jwks = createRemoteJWKSet(new URL('https://clerk.yoinklabs.dev/.well-known/jwks.json'));
 interface Member {id:string; groupID:string; userID:string|null; name:string; email?:string; phone?:string; payment?:string; accountPayment?:string; viewerRemoved?:string|null; removedAt?:string|null; avatarURL?:string|null}
@@ -48,6 +49,8 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
   if(purchase) return purchase;
   const social=await socialRoute(request,env,userID);
   if(social) return social;
+  const pending=await pendingRoute(request,env,userID);
+  if(pending) return pending;
   if(path==='/v1/profile/payment-methods' && request.method==='POST')
     return saveAccountPayments(request,env.DB,userID);
   if(path==='/v1/snapshot' && request.method==='GET') {
@@ -185,9 +188,13 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
       if(b.photos!==undefined) throw new InputError('Attach receipt photos to an expense.');
       return recordSettlement(env.DB,e,userID);
     }
+    const prior=e.kind==='refund' && e.refundOf ? await env.DB.prepare('SELECT author,payload FROM entries WHERE id=?').bind(e.id).first<{author:string;payload:string}>() : null;
+    if(prior?.author===userID && prior.payload===payload) return json({ok:true});
+    const guard=prior ? undefined : await refundGuard(env.DB,e,await groupAliases(env.DB,e.groupID));
     // Reserve pending payment IDs so approval can never collide with an expense.
-    await env.DB.batch([env.DB.prepare('INSERT INTO entries SELECT ?,?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM settlement_requests WHERE id=?) ON CONFLICT(id) DO NOTHING').bind(e.id,e.groupID,userID,payload,new Date().toISOString(),e.id), ...attachments(env.DB,e,userID,payload,b.photos)]);
+    await env.DB.batch([env.DB.prepare(`INSERT INTO entries SELECT ?,?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM settlement_requests WHERE id=?)${guard?' AND '+guard.sql:''} ON CONFLICT(id) DO NOTHING`).bind(e.id,e.groupID,userID,payload,new Date().toISOString(),e.id,...(guard?.binds??[])), ...attachments(env.DB,e,userID,payload,b.photos)]);
     const saved=await env.DB.prepare('SELECT author,payload FROM entries WHERE id=?').bind(e.id).first<{author:string;payload:string}>();
+    if(!saved && guard) throw new HTTPError(409,'The original expense or its refunds changed. Refresh and try again.');
     if(saved?.author!==userID||saved.payload!==payload)throw new HTTPError(409,'An entry already uses this ID.');
     return json({ok:true});
   }
@@ -236,11 +243,15 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
         .bind(saved.group_id).all<{member_id:string;canonical_id:string}>()).results.map(a=>[a.member_id,a.canonical_id]));
     const canonical=resolveEntry(old,aliases);
     let payload: string | undefined;
+    let guard: {sql:string;binds:unknown[]} | undefined;
+    if (deleting && old.kind==='expense' && await hasRefunds(env.DB,saved.group_id,revise[1]))
+      throw new InputError('This expense has refunds. Delete its refunds first.');
     if (!deleting) {
       if (old.kind==='settlement') throw new InputError('Payments cannot be edited.');
       const updated=validateEntry(preserveStatementAmount(b.entry,canonical),ids,canonical.bill);
-      if(updated.id!==revise[1] || updated.groupID!==saved.group_id || updated.createdAt!==old.createdAt || updated.kind!==old.kind)
+      if(updated.id!==revise[1] || updated.groupID!==saved.group_id || updated.createdAt!==old.createdAt || updated.kind!==old.kind || updated.refundOf!==old.refundOf)
         throw new InputError('Invalid edit.');
+      guard=updated.kind==='refund' ? await refundGuard(env.DB,updated,aliases) : await refundedExpenseGuard(env.DB,updated,aliases);
       if(Boolean(updated.handled)!==Boolean(canonical.handled)) {
         const viewer=(await env.DB.prepare('SELECT id FROM members WHERE group_id=? AND user_id=? AND removed_at IS NULL')
           .bind(saved.group_id,userID).first<{id:string}>())?.id;
@@ -263,10 +274,12 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
       if (JSON.stringify(original)!==JSON.stringify(canonical)) throw new HTTPError(409,'This entry changed. Refresh and try again.');
     }
     const statement=deleting
-      ? await env.DB.prepare('INSERT OR IGNORE INTO deleted_entries SELECT id FROM entries WHERE id=? AND (?=0 OR payload=?)')
+      ? await env.DB.prepare(`INSERT OR IGNORE INTO deleted_entries SELECT id FROM entries WHERE id=? AND (?=0 OR payload=?)
+        AND NOT EXISTS (SELECT 1 FROM entries r WHERE r.group_id=entries.group_id AND json_extract(r.payload,'$.refundOf')=entries.id
+          AND r.id NOT IN (SELECT entry_id FROM deleted_entries))`)
         .bind(revise[1],Number(conditional),saved.payload)
-      : await env.DB.prepare('UPDATE entries SET payload=? WHERE id=? AND payload=? AND id NOT IN (SELECT entry_id FROM deleted_entries)')
-        .bind(payload!,revise[1],saved.payload);
+      : await env.DB.prepare(`UPDATE entries SET payload=? WHERE id=? AND payload=? AND id NOT IN (SELECT entry_id FROM deleted_entries)${guard?' AND '+guard.sql:''}`)
+        .bind(payload!,revise[1],saved.payload,...(guard?.binds??[]));
     const [result]=await env.DB.batch([statement,...(deleting?[]:attachments(env.DB,JSON.parse(payload!),userID,payload!,b.photos))]);
     if (!result.meta.changes && !(deleting && await env.DB.prepare('SELECT entry_id FROM deleted_entries WHERE entry_id=?').bind(revise[1]).first()))
       throw new HTTPError(409,'This entry changed. Refresh and try again.');

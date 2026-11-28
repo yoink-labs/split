@@ -1,5 +1,5 @@
 import { categoryMeta } from "./categories";
-import { entryPayers, type Expense } from "./data";
+import { entryPayers, isSpend, sign, type Expense } from "./data";
 
 /** Pure, integer-cent aggregation behind the group Analytics tab. No floating point touches an amount. */
 
@@ -105,11 +105,11 @@ export function percents(amounts: number[]) {
 const portion = (parts: { memberID: string; amount: number }[], id: string) =>
   parts.reduce((sum, part) => sum + (part.memberID === id ? part.amount : 0), 0);
 
-/** The rows an analytics view covers: expenses only, inside the date range, involving the member. */
+/** The rows an analytics view covers: expenses and refunds (negative amounts, so spending is net of refunds), inside the date range, involving the member. */
 export function analyticsRows(entries: Expense[], project: (entry: Expense) => Expense | null, home: string, filter: AnalyticsFilter) {
   const rows: AnalyticsRow[] = [];
   for (const entry of entries) {
-    if (entry.kind !== "expense") continue;
+    if (!isSpend(entry)) continue;
     const day = entry.createdAt.slice(0, 10);
     if (filter.from && day < filter.from) continue;
     if (filter.to && day > filter.to) continue;
@@ -117,10 +117,11 @@ export function analyticsRows(entries: Expense[], project: (entry: Expense) => E
     if (member && !entry.splits.some((s) => s.memberID === member && s.amount > 0)
       && !entryPayers(entry).some((p) => p.memberID === member && p.amount > 0)) continue;
     const projected = project(entry);
-    const amount = projected ? member ? portion(projected.splits, member) : projected.amount : null;
+    const direction = sign(entry);
+    const amount = projected ? direction * (member ? portion(projected.splits, member) : projected.amount) : null;
     rows.push({
       entry, home: projected, day, category: categoryMeta(entry.category).id,
-      amount, original: member ? portion(entry.splits, member) : entry.amount,
+      amount, original: direction * (member ? portion(entry.splits, member) : entry.amount),
       estimated: entry.currency !== home,
     });
   }
@@ -163,13 +164,14 @@ export function analyze(
   }
   const categoryList = [...byCategory].map(([id, value]) => ({ id, ...value }))
     .sort((a, b) => b.amount - a.amount || a.id.localeCompare(b.id));
-  const categoryPercents = percents(categoryList.map((item) => item.amount));
+  const categoryPercents = percents(categoryList.map((item) => Math.max(0, item.amount)));
 
   const people = memberIDs.map((memberID) => {
     let paid = 0, share = 0, count = 0;
     for (const row of priced) {
-      const p = portion(entryPayers(row.home!), memberID);
-      const s = portion(row.home!.splits, memberID);
+      const direction = sign(row.entry);
+      const p = direction * portion(entryPayers(row.home!), memberID);
+      const s = direction * portion(row.home!.splits, memberID);
       paid += p;
       share += s;
       if (p || s) count += 1;
@@ -187,7 +189,7 @@ export function analyze(
   }
   const currencyList = [...byCurrency].map(([currency, value]) => ({ currency, ...value }))
     .sort((a, b) => (b.home ?? -1) - (a.home ?? -1) || a.currency.localeCompare(b.currency));
-  const currencyPercents = percents(currencyList.map((item) => item.home ?? 0));
+  const currencyPercents = percents(currencyList.map((item) => Math.max(0, item.home ?? 0)));
 
   return {
     rows, priced, excluded: rows.length - priced.length, total,

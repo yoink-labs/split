@@ -350,6 +350,46 @@ struct AmountText: View {
     }
 }
 
+/// An entry's amount. Refunds read as money coming back: a minus sign in the credit colour.
+struct EntryAmount: View {
+    var entry: LedgerEntry
+    var size: CGFloat = 15
+    @EnvironmentObject private var fx: FXStore
+    private var label: String {
+        let text = fx.entryText(entry, amount: entry.amount)
+        guard entry.isRefund else { return text }
+        return text.hasPrefix("≈ ") ? "≈ −" + text.dropFirst(2) : "−" + text
+    }
+    var body: some View {
+        Text(label)
+            .font(.splitAmount(size))
+            .foregroundStyle(entry.isRefund ? Palette.positive : Palette.ink)
+            .lineLimit(1)
+            .minimumScaleFactor(0.6)
+            .contentTransition(.numericText())
+            .accessibilityLabel(entry.isRefund ? "Refund \(fx.entryText(entry, amount: entry.amount))" : fx.entryText(entry, amount: entry.amount))
+    }
+}
+
+/// Marks an entry whose cost may still change, with its reason when one was given.
+struct PendingBadge: View {
+    var note: String?
+    var body: some View {
+        HStack(spacing: 4) {
+            Label("Pending", systemImage: "clock")
+                .font(.caption2.weight(.bold))
+                .padding(.horizontal, 6).padding(.vertical, 2)
+                .background(Palette.amber.opacity(0.16), in: Capsule())
+                .foregroundStyle(Palette.amber)
+            if let note, !note.isEmpty {
+                Text(note).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Pending" + (note.map { ". \($0)" } ?? ""))
+    }
+}
+
 struct CategoryBadge: View {
     var category: String?
     var size: CGFloat = 34
@@ -419,6 +459,7 @@ struct PersonBalanceRow: View {
 
 struct EntryRow: View {
     @EnvironmentObject private var fx: FXStore
+    @EnvironmentObject private var store: ExpenseStore
     var entry: LedgerEntry
     var group: ExpenseGroup
     var currentUserID: String?
@@ -452,6 +493,16 @@ struct EntryRow: View {
                     .font(.system(size: 15, weight: .bold))
                     .foregroundStyle(Palette.paper, Palette.evergreen)
                     .offset(x: 3, y: 3)
+            } else if entry.isRefund {
+                Image(systemName: "arrow.uturn.backward.circle.fill")
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundStyle(Palette.paper, Palette.positive)
+                    .offset(x: 3, y: 3)
+            } else if entry.isPending {
+                Image(systemName: "clock.badge.questionmark.fill")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(Palette.paper, Palette.amber)
+                    .offset(x: 3, y: 3)
             }
         }
         .accessibilityHidden(true)
@@ -467,7 +518,9 @@ struct EntryRow: View {
 
     @ViewBuilder private var metaLine: some View {
         HStack(spacing: 4) {
-            Text(entry.isSettlement ? "\(name(entry.paidBy)) settled up" : "\(name(entry.paidBy)) paid")
+            Text(entry.isSettlement ? "\(name(entry.paidBy)) settled up"
+                 : entry.isRefund ? (entry.refundOf == nil ? "Credit from \(name(entry.paidBy))" : "Refund to \(name(entry.paidBy))")
+                 : "\(name(entry.paidBy)) paid")
             if showGroup { Text("· \(group.name)") }
             if showDate, let date = ISO8601DateFormatter().date(from: entry.createdAt) {
                 Text("· \(date.formatted(.dateTime.month(.abbreviated).day()))")
@@ -475,6 +528,23 @@ struct EntryRow: View {
         }
         .font(.caption)
         .foregroundStyle(.secondary)
+    }
+
+    private var originalTitle: String? {
+        guard let id = entry.refundOf else { return nil }
+        return store.entries.first { $0.id == id }?.title
+    }
+
+    @ViewBuilder private var statusLine: some View {
+        if entry.isRefund {
+            Label(originalTitle.map { "Refund of \($0)" } ?? (entry.refundOf == nil ? "Credit" : "Refund"), systemImage: "arrow.uturn.backward")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(Palette.positive)
+                .lineLimit(1)
+        }
+        if entry.isPending {
+            PendingBadge(note: entry.pendingNote)
+        }
     }
 
     @ViewBuilder private var noteLine: some View {
@@ -512,13 +582,19 @@ struct EntryRow: View {
             Label("Handled", systemImage: "checkmark.circle")
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(Palette.positive)
+        } else if entry.isRefund && mine != 0 {
+            Text(mine > 0 ? "you get back \(fx.entryText(entry, amount: mine))" : "you owe \(fx.entryText(entry, amount: abs(mine))) · \(entry.refundOf == nil ? "credit you’re giving" : "refund you received for others")")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(mine > 0 ? Palette.positive : Palette.negative)
+                .lineLimit(2)
+                .minimumScaleFactor(0.7)
         } else if entry.kind == "expense" && mine != 0 {
             Text(mine > 0 ? "you lent \(fx.entryText(entry, amount: mine))" : "you owe \(fx.entryText(entry, amount: abs(mine)))")
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(mine > 0 ? Palette.positive : Palette.negative)
                 .lineLimit(2)
                 .minimumScaleFactor(0.7)
-        } else if entry.kind == "expense" {
+        } else if entry.isSpending {
             Text("not involved").font(.caption2).foregroundStyle(.tertiary).lineLimit(1)
         }
     }
@@ -530,10 +606,11 @@ struct EntryRow: View {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     titleView
                     Spacer(minLength: 4)
-                    AmountText(minor: entry.amount, currency: entry.currency, size: 15, entry: entry)
+                    EntryAmount(entry: entry, size: 15)
                         .layoutPriority(1)
                 }
                 metaLine
+                statusLine
                 netLine
                 noteLine
                 openLine
@@ -548,13 +625,14 @@ struct EntryRow: View {
             VStack(alignment: .leading, spacing: 4) {
                 titleView
                 metaLine
+                statusLine
                 noteLine
                 openLine
                 socialLine
             }
             Spacer(minLength: 6)
             VStack(alignment: .trailing, spacing: 3) {
-                AmountText(minor: entry.amount, currency: entry.currency, size: 15, entry: entry)
+                EntryAmount(entry: entry, size: 15)
                 netLine
                     .multilineTextAlignment(.trailing)
             }

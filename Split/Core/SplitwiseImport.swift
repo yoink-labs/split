@@ -20,7 +20,8 @@ struct SplitwiseGroup: Identifiable, Equatable {
     var fingerprint: String
 
     var currencies: [String] { Array(Set(rows.map(\.currency))).sorted() }
-    var expenseCount: Int { rows.filter { !$0.payment }.count }
+    var expenseCount: Int { rows.filter { !$0.payment && $0.refund != true }.count }
+    var refundCount: Int { rows.filter { $0.refund == true }.count }
     var paymentCount: Int { rows.filter(\.payment).count }
     /// The currency most rows use, a sensible group currency.
     var mainCurrency: String {
@@ -38,8 +39,10 @@ struct SplitwiseGroup: Identifiable, Equatable {
     static func balances(_ rows: [CSVExpense]) -> [String: [String: Int64]] {
         var result: [String: [String: Int64]] = [:]
         for row in rows {
-            for payer in row.allPayers { result[row.currency, default: [:]][payer.name, default: 0] += payer.amount }
-            for share in row.splits { result[row.currency, default: [:]][share.name, default: 0] -= share.amount }
+            // A refund is the mirror image of an expense: the receiver holds money owed to the credited people.
+            let sign: Int64 = row.refund == true ? -1 : 1
+            for payer in row.allPayers { result[row.currency, default: [:]][payer.name, default: 0] += sign * payer.amount }
+            for share in row.splits { result[row.currency, default: [:]][share.name, default: 0] -= sign * share.amount }
         }
         return result
     }
@@ -256,6 +259,19 @@ enum SplitwiseCSV {
             if isPayment {
                 expenses.append(CSVExpense(title: clean, day: date, payer: positive[0].0, amount: credit, currency: currency, category: nil, payment: true,
                                            splits: [CSVShare(name: negative[0].0, amount: credit)], sourceID: nil, sourceGroup: nil, exchange: nil))
+                continue
+            }
+            // Splitwise writes a refund as a negative cost. With one receiver (the only negative net) it
+            // becomes a Split refund: the positive nets are credits, plus the receiver's own credit.
+            if cost < 0 && negative.count == 1 {
+                let total = max(-cost, credit), own = total - credit
+                var credits = positive.map { CSVShare(name: $0.0, amount: $0.1) }
+                if own > 0 { credits.append(CSVShare(name: negative[0].0, amount: own)) }
+                let order = memberColumns.map(\.1)
+                credits.sort { (order.firstIndex(of: $0.name) ?? 0) < (order.firstIndex(of: $1.name) ?? 0) }
+                let categoryName = category.isEmpty || generalWords.contains(key(category)) ? nil : SplitwiseCSV.category(category)
+                expenses.append(CSVExpense(title: clean, day: date, payer: negative[0].0, amount: total, currency: currency, category: categoryName, payment: false,
+                                           splits: credits, sourceID: nil, sourceGroup: nil, exchange: nil, refund: true))
                 continue
             }
             // Cost is what was spent; the nets only say who is up or down. People with a positive

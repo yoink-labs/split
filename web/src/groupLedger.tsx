@@ -1,14 +1,14 @@
 import { useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { CATEGORIES, categoryMeta } from "./categories";
-import { breakdown, entryPayers, memberPath, moneyCompact, settlementEntry, type Expense, type Group } from "./data";
+import { breakdown, entryPayers, isSpend, memberPath, moneyCompact, settlementEntry, sign, type Expense, type Group } from "./data";
 import { openItems, TransactionTable } from "./transactionTable";
 import { useHomeMoney } from "./homeMoney";
 import { Picker } from "./picker";
 import { Avatar, CategoryIcon } from "./ui";
 
 type LedgerView = "summary" | "transactions";
-type Status = "all" | "receipt" | "open" | "recurring";
+type Status = "all" | "receipt" | "open" | "recurring" | "pending" | "refund";
 
 const percent = new Intl.NumberFormat(undefined, { style: "percent", maximumFractionDigits: 1 });
 const shareOf = (amount: number, total: number) => total ? amount / total : 0;
@@ -16,11 +16,11 @@ const categoryOf = (entry: Expense) => entry.category ?? "Other";
 
 function position(entry: Expense, id?: string) {
   const involved = !!id && [...entryPayers(entry), ...entry.splits].some((part) => part.memberID === id);
-  if (!involved || entry.handled || entry.kind !== "expense") return { involved, net: 0, currency: entry.currency };
+  if (!involved || entry.handled || entry.kind === "settlement") return { involved, net: 0, currency: entry.currency };
   const settled = settlementEntry(entry);
   const paid = entryPayers(settled).reduce((sum, part) => sum + (part.memberID === id ? part.amount : 0), 0);
   const share = settled.splits.reduce((sum, part) => sum + (part.memberID === id ? part.amount : 0), 0);
-  return { involved, net: paid - share, currency: settled.currency };
+  return { involved, net: sign(entry) * (paid - share), currency: settled.currency };
 }
 
 export function GroupLedger({
@@ -52,6 +52,8 @@ export function GroupLedger({
     if (status === "receipt" && !entry.bill && !entry.receiptIDs?.length) return [];
     if (status === "open" && !openItems(entry)) return [];
     if (status === "recurring" && (!entry.recurrence || entry.recurrence === "off")) return [];
+    if (status === "pending" && !entry.pending) return [];
+    if (status === "refund" && entry.kind !== "refund") return [];
     const mine = position(entry, memberID);
     if ((involved && !mine.involved) || (owes && mine.net >= 0)) return [];
     return [{ entry, mine }];
@@ -108,6 +110,7 @@ export function GroupLedger({
                 options={[
                   { value: "all", label: "Any status" }, { value: "open", label: "Needs claiming" },
                   { value: "receipt", label: "Has receipt" }, { value: "recurring", label: "Recurring" },
+                  { value: "pending", label: "Pending" }, { value: "refund", label: "Refunds & credits" },
                 ]} />
             </div>
             <div className="ledger-filter-foot">
@@ -115,11 +118,12 @@ export function GroupLedger({
               {hasFilters && <button type="button" className="btn btn-xs btn-ghost" onClick={clearFilters}>Clear filters</button>}
             </div>
             {owes && <p className="muted ledger-note">Shows expenses where your share exceeds what you paid, excluding expenses marked handled. Settle Up shows what you owe after payments.</p>}
+            {entries.some((e) => e.pending) && <p className="muted ledger-note">Pending entries count toward balances. Their cost may still change until someone confirms, adjusts or refunds them.</p>}
           </section>
 
           <TransactionTable
             key={[search, category, payer, person, status, involved, owes].join("|")}
-            g={g} entries={filtered.map(({ entry }) => entry)} label="Transactions table"
+            g={g} entries={filtered.map(({ entry }) => entry)} all={entries} label="Transactions table"
             inspectedID={inspectedID} onInspect={onInspect}
             empty={entries.length ? "No transactions match these filters." : "No transactions yet."}
             extra={memberID ? { header: "Your position", cell: (entry) => {
@@ -127,6 +131,8 @@ export function GroupLedger({
               return mine.net ? (
                 <strong className={mine.net < 0 ? "neg" : "pos"}>
                   {mine.net < 0 ? "Owe" : "Owed"} {moneyCompact(Math.abs(mine.net), mine.currency)}
+                  {entry.kind === "refund" && mine.net < 0 && entry.paidBy === memberID && (entry.refundOf ? " · refund you received for others" : " · credit you're giving")}
+                  {entry.pending && <small className="muted">Pending</small>}
                 </strong>
               ) : <span className="muted">{entry.handled ? "Handled" : !mine.involved ? "—" : entry.kind === "settlement" ? "Payment" : "Even"}</span>;
             } } : undefined}
@@ -144,7 +150,8 @@ function LedgerSummary({ g, entries, memberID, onCategory }: {
   onCategory: (category: string) => void;
 }) {
   const homeMoney = useHomeMoney();
-  const expenses = entries.filter((e) => e.kind === "expense");
+  const expenses = entries.filter(isSpend);
+  const refundCount = expenses.filter((e) => e.kind === "refund").length;
   const projected = expenses.map(homeMoney.project);
   const missing = projected.some((entry) => entry === null);
   const foreign = expenses.some((entry) => entry.currency !== homeMoney.home);
@@ -174,7 +181,8 @@ function LedgerSummary({ g, entries, memberID, onCategory }: {
                 <strong className="num statement-total">{format(spend.total)}</strong>
               </div>
               <dl>
-                <div><dt>Expenses</dt><dd>{matching.length}</dd></div>
+                <div><dt>Expenses</dt><dd>{matching.filter((e) => e.kind === "expense").length}</dd></div>
+                {refundCount > 0 && <div><dt>Refunds</dt><dd>{matching.filter((e) => e.kind === "refund").length}</dd></div>}
                 {!missing && <div><dt>Payments</dt><dd>{entries.length - expenses.length}</dd></div>}
                 {memberID && <div><dt>Your share</dt><dd>{format(myShare)}</dd></div>}
               </dl>

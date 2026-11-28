@@ -127,16 +127,17 @@ private struct FriendHistoryRow: View {
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(Palette.ink)
                     .lineLimit(2)
-                Text("\(entry.isSettlement ? "Payment" : (entry.category ?? "Expense")) · \(group.name) · \(date)")
+                Text("\(entry.isSettlement ? "Payment" : entry.isRefund ? "Refund" : (entry.category ?? "Expense"))\(entry.isPending ? " · Pending" : "") · \(group.name) · \(date)")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
             Spacer(minLength: 6)
             VStack(alignment: .trailing, spacing: 2) {
-                AmountText(minor: entry.amount, currency: entry.currency, size: 14, entry: entry)
-                if entry.kind == "expense" && net != 0 {
-                    Text(net > 0 ? "you lent \(fx.entryText(entry, amount: net))" : "you owe \(fx.entryText(entry, amount: abs(net)))")
+                EntryAmount(entry: entry, size: 14)
+                if entry.isSpending && net != 0 {
+                    Text(entry.isRefund ? (net > 0 ? "you get back \(fx.entryText(entry, amount: net))" : "you owe \(fx.entryText(entry, amount: abs(net))) · \(entry.refundOf == nil ? "credit you’re giving" : "refund you received for others")")
+                         : net > 0 ? "you lent \(fx.entryText(entry, amount: net))" : "you owe \(fx.entryText(entry, amount: abs(net)))")
                         .font(.caption2.weight(.semibold))
                         .foregroundStyle(net > 0 ? Palette.positive : Palette.negative)
                         .lineLimit(2)

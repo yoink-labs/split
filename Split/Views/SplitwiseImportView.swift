@@ -419,6 +419,7 @@ private struct ImportDraftCard: View {
 
     private var stats: String {
         var parts = ["\(draft.parsed.expenseCount) \(draft.parsed.expenseCount == 1 ? "expense" : "expenses")"]
+        if draft.parsed.refundCount > 0 { parts.append("\(draft.parsed.refundCount) \(draft.parsed.refundCount == 1 ? "refund" : "refunds")") }
         if draft.parsed.paymentCount > 0 { parts.append("\(draft.parsed.paymentCount) \(draft.parsed.paymentCount == 1 ? "payment" : "payments")") }
 
         return parts.joined(separator: " · ")
@@ -572,9 +573,9 @@ private struct ImportDraftCard: View {
                             .accessibilityHidden(true)
                         VStack(alignment: .leading, spacing: 1) {
                             Text(row.title).font(.subheadline).foregroundStyle(Palette.ink).lineLimit(1)
-                            Text("\(FXQuote.shortDay(row.day)) · \(row.allPayers.map { mappedName($0.name) }.joined(separator: " & ")) paid")
+                            Text("\(FXQuote.shortDay(row.day)) · \(row.allPayers.map { mappedName($0.name) }.joined(separator: " & ")) \(row.refund == true ? "received a refund" : "paid")")
                                 .font(.caption).foregroundStyle(.secondary)
-                            Text((row.payment ? "Received by " : "Split between ") + row.splits.map { mappedName($0.name) }.joined(separator: ", "))
+                            Text((row.payment ? "Received by " : row.refund == true ? "Credited to " : "Split between ") + row.splits.map { mappedName($0.name) }.joined(separator: ", "))
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                         Spacer(minLength: 8)

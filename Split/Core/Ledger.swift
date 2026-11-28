@@ -99,6 +99,11 @@ struct LedgerEntry: Codable, Identifiable, Equatable {
     var likeCount: Int? = nil
     var likedByMe: Bool? = nil
     var handled: Bool? = nil
+    /// The original expense a refund gives money back for. Absent for standalone credits.
+    var refundOf: String? = nil
+    /// Pending entries count toward balances by default but may still change.
+    var pending: Bool? = nil
+    var pendingNote: String? = nil
     /// Payers in canonical form. Older entries paid by one person.
     var allPayers: [Payer] {
         if let payers, !payers.isEmpty { return payers }
@@ -106,6 +111,14 @@ struct LedgerEntry: Codable, Identifiable, Equatable {
     }
     var isSettlement: Bool { kind == "settlement" }
     var isHandled: Bool { handled == true }
+    /// A refund or credit: `paidBy` received the money back and `splits` are each person's credit.
+    var isRefund: Bool { kind == "refund" }
+    var isPending: Bool { pending == true }
+    /// Expenses and refunds both count toward spending; refunds subtract.
+    var isSpending: Bool { kind == "expense" || kind == "refund" }
+    /// −1 for refunds, the mirror image of an expense; +1 otherwise.
+    var sign: Int64 { isRefund ? -1 : 1 }
+    var signedAmount: Int64 { sign * amount }
     var hasReceipt: Bool { bill != nil || receiptIDs?.isEmpty == false }
     var openPurchaseCount: Int { bill?.closed == false ? bill?.openCount ?? 0 : 0 }
     var day: String { String(createdAt.prefix(10)) }
@@ -259,21 +272,28 @@ enum Ledger {
         }
         return zip(people, amounts).map { Portion(memberID: $0, amount: $1) }
     }
-    static func balances(_ entries: [LedgerEntry], currency: String) -> [String:Int64] {
+    /// Net balance per member. Pending entries count by default (their money already moved);
+    /// pass `includePending: false` for the confirmed-only view.
+    static func balances(_ entries: [LedgerEntry], currency: String, includePending: Bool = true) -> [String:Int64] {
         var values: [String:Int64] = [:]
-        for entry in entries where !entry.isHandled {
+        for entry in entries where !entry.isHandled && (includePending || !entry.isPending) {
             let e = entry.settling
             guard e.currency == currency else { continue }
-            for payer in e.allPayers { values[payer.memberID, default: 0] += payer.amount }
-            for s in e.splits { values[s.memberID, default: 0] -= s.amount }
+            for payer in e.allPayers { values[payer.memberID, default: 0] += e.sign * payer.amount }
+            for s in e.splits { values[s.memberID, default: 0] -= e.sign * s.amount }
         }
         return values
     }
+    /// Signed: a refund's receiver has paid −amount, and each credit is a negative share.
     static func paid(_ entry: LedgerEntry, by memberID: String) -> Int64 {
-        entry.allPayers.filter { $0.memberID == memberID }.reduce(0) { $0 + $1.amount }
+        entry.sign * entry.allPayers.filter { $0.memberID == memberID }.reduce(0) { $0 + $1.amount }
     }
     static func share(_ entry: LedgerEntry, of memberID: String) -> Int64 {
-        entry.splits.filter { $0.memberID == memberID }.reduce(0) { $0 + $1.amount }
+        entry.sign * entry.splits.filter { $0.memberID == memberID }.reduce(0) { $0 + $1.amount }
+    }
+    /// Entries in a currency that are still pending and would change balances.
+    static func pendingEntries(_ entries: [LedgerEntry], currency: String) -> [LedgerEntry] {
+        entries.filter { $0.isPending && !$0.isHandled && $0.settling.currency == currency }
     }
     static func net(_ entry: LedgerEntry, for memberID: String) -> Int64 {
         entry.isHandled ? 0 : paid(entry, by: memberID) - share(entry, of: memberID)

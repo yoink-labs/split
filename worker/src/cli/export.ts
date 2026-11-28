@@ -1,7 +1,7 @@
 // Group exports for the CLI and MCP. Amounts stay in integer minor units until formatted as decimals.
 import { settlementEntry } from '../exchange';
 import { breakdown, grossItems } from '../items';
-import { Entry, entryPayers } from '../ledger';
+import { Entry, entryPayers, entrySign } from '../ledger';
 
 interface Member { id: string; name: string; userID: string|null; removed?: boolean; payment?: Record<string,string> }
 interface Group { id: string; name: string; currency: string; kind?: string; description?: string; startDate?: string; endDate?: string; members: Member[] }
@@ -38,7 +38,7 @@ export function exportGroup(group: Group, entries: Entry[], format: 'ledger'|'su
     return { filename: slug + '-summary.csv', mimeType: 'text/csv', content: table(rows) + plan };
   }
   const header = ['Date', 'Type', 'Title', 'Category', 'Notes', 'Original Currency', 'Original Amount', 'FX Rate', 'FX Source',
-    'Settlement Currency', 'Settlement Amount', 'Paid By', 'Split', 'Receipt Items', 'Expense Status', ...group.members.map(m => m.name)];
+    'Settlement Currency', 'Settlement Amount', 'Paid By', 'Split', 'Receipt Items', 'Expense Status', 'Refund Of', ...group.members.map(m => m.name)];
   const rows = sorted.map(e => {
     const se = settlementEntry(e), payers = entryPayers(se);
     return [e.createdAt.slice(0, 10), e.kind, e.title, e.category ?? '', e.notes ?? '', e.currency, e.amount,
@@ -46,8 +46,9 @@ export function exportGroup(group: Group, entries: Entry[], format: 'ledger'|'su
       payers.map(p => nameOf(p.memberID) + ' ' + decimal(p.amount)).join('; '),
       se.splits.map(p => nameOf(p.memberID) + ' ' + decimal(p.amount)).join('; '),
       e.bill ? grossItems(e.bill).map(i => i.title + ' ' + decimal(i.gross) + ' [' + (i.memberIDs.map(nameOf).join('+') || 'open') + ']').join('; ') : '',
-      e.handled ? 'Handled' : '',
-      ...group.members.map(m => payers.filter(p => p.memberID === m.id).reduce((s, p) => s + p.amount, 0) - (se.splits.find(p => p.memberID === m.id)?.amount ?? 0))];
+      e.handled ? 'Handled' : e.pending ? 'Pending' + (e.pendingNote ? ': ' + e.pendingNote : '') : '',
+      e.refundOf ? sorted.find(o => o.id === e.refundOf)?.title ?? e.refundOf : '',
+      ...group.members.map(m => entrySign(e) * (payers.filter(p => p.memberID === m.id).reduce((s, p) => s + p.amount, 0) - (se.splits.find(p => p.memberID === m.id)?.amount ?? 0)))];
   });
   return { filename: slug + '.csv', mimeType: 'text/csv', content: table([header, ...rows]) };
 }

@@ -239,11 +239,30 @@ struct MemberCharges: View {
                     .background(Palette.evergreen.opacity(0.12), in: RoundedRectangle(cornerRadius: Radius.badge))
                     .accessibilityHidden(true)
             }
+        } else if entry.isRefund {
+            let credit = -Ledger.share(entry, of: statement.person.id)
+            LedgerRow(title: entry.title,
+                      detail: "\(date) · \(entry.refundOf == nil ? "Credit from" : "Refund to") \(memberName(entry.paidBy, in: statement.group))"
+                        + (entry.isPending ? " · Pending" : ""),
+                      value: entry.paidBy == statement.person.id
+                        ? "Owe " + fx.entryText(entry, amount: entry.amount - credit)
+                        : credit == 0 ? fx.portionText(entry, memberID: statement.person.id) : "−" + fx.portionText(entry, memberID: statement.person.id),
+                      valueCaption: entry.paidBy == statement.person.id
+                        ? (entry.refundOf == nil ? "credit \(isMe ? "you’re" : "they’re") giving" : "refund \(isMe ? "you" : "they") received for others")
+                        : "refund of \(fx.entryText(entry, amount: entry.amount))",
+                      valueTint: entry.paidBy == statement.person.id ? Palette.negative : credit == 0 ? Color.secondary : Palette.positive) {
+                Image(systemName: "arrow.uturn.backward")
+                    .font(.body.weight(.semibold))
+                    .frame(width: 40, height: 40)
+                    .foregroundStyle(Palette.positive)
+                    .background(Palette.positive.opacity(0.12), in: RoundedRectangle(cornerRadius: Radius.badge))
+                    .accessibilityHidden(true)
+            }
         } else {
             let share = Ledger.share(entry, of: statement.person.id)
             let payers = entry.allPayers.map { memberName($0.memberID, in: statement.group) }
             LedgerRow(title: entry.title,
-                      detail: "\(date) · \(payers.count > 1 ? "\(payers.count) people" : payers.first ?? "Someone") paid",
+                      detail: "\(date) · \(payers.count > 1 ? "\(payers.count) people" : payers.first ?? "Someone") paid" + (entry.isPending ? " · Pending" : ""),
                       value: fx.portionText(entry, memberID: statement.person.id),
                       valueCaption: "of \(fx.entryText(entry, amount: entry.amount))",
                       valueTint: share == 0 ? Color.secondary : Palette.ink) {

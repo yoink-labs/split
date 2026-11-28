@@ -38,12 +38,12 @@ struct InsightsView: View {
     }
 
     private var currency: String { fx.home }
-    private var scopeEntries: [LedgerEntry] { originalEntries.filter { $0.kind == "expense" }.compactMap(fx.homeEntry) }
+    private var scopeEntries: [LedgerEntry] { originalEntries.filter(\.isSpending).compactMap(fx.homeEntry) }
     private var missingRates: Bool {
-        originalEntries.contains { $0.kind == "expense" && fx.homeEntry($0) == nil }
+        originalEntries.contains { $0.isSpending && fx.homeEntry($0) == nil }
     }
     private var usesEstimates: Bool {
-        originalEntries.contains { $0.kind == "expense" && $0.currency != fx.home }
+        originalEntries.contains { $0.isSpending && $0.currency != fx.home }
     }
 
     private var monthly: [MonthTotal] {
@@ -136,9 +136,9 @@ struct InsightsView: View {
     private var daily: [DayTotal] {
         guard let month = monthly.first?.month else { return [] }
         var totals: [Int: Int64] = [:]
-        for entry in scopeEntries.map(\.settling) where entry.currency == currency && entry.kind == "expense" && String(entry.createdAt.prefix(7)) == month {
+        for entry in scopeEntries.map(\.settling) where entry.currency == currency && entry.isSpending && String(entry.createdAt.prefix(7)) == month {
             guard let day = Int(entry.createdAt.dropFirst(8).prefix(2)) else { continue }
-            totals[day, default: 0] += entry.amount
+            totals[day, default: 0] += entry.signedAmount
         }
         return totals.keys.sorted().map { DayTotal(day: $0, amount: totals[$0] ?? 0) }
     }
@@ -161,7 +161,7 @@ struct InsightsView: View {
     private var rangeLabel: String? {
         let days = scopeEntries
             .map(\.settling)
-            .filter { $0.currency == currency && $0.kind == "expense" }
+            .filter { $0.currency == currency && $0.isSpending }
             .map(\.day)
             .sorted()
         guard let firstDay = days.first, let lastDay = days.last,

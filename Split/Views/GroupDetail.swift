@@ -7,6 +7,7 @@ enum GroupDetailSheet: Identifiable {
     case balances(ExpenseGroup)
     case receipt(LedgerEntry)
     case transaction(LedgerEntry)
+    case credit(ExpenseGroup)
 
     var id: String {
         switch self {
@@ -16,6 +17,7 @@ enum GroupDetailSheet: Identifiable {
         case .balances(let group): "balances-\(group.id)"
         case .receipt(let entry): "receipt-\(entry.id)"
         case .transaction(let entry): "transaction-\(entry.id)"
+        case .credit(let group): "credit-\(group.id)"
         }
     }
 
@@ -27,6 +29,7 @@ enum GroupDetailSheet: Identifiable {
         case .balances(let group): GroupBalancesView(groupID: group.id)
         case .receipt(let entry): EntrySheet(entry: entry)
         case .transaction(let entry): EntrySheet(entry: entry, showsBreakdownFirst: true)
+        case .credit(let group): RefundComposer(group: group)
         }
     }
 }
@@ -54,7 +57,8 @@ struct GroupDetail: View {
     }
 
     private enum LedgerFilter: String, CaseIterable {
-        case all = "All entries", receipt = "With receipts", open = "Open purchases", recurring = "Recurring"
+        case all = "All entries", receipt = "With receipts", open = "Open purchases", recurring = "Recurring",
+             pending = "Pending", refunds = "Refunds and credits"
 
         func includes(_ entry: LedgerEntry) -> Bool {
             switch self {
@@ -62,6 +66,8 @@ struct GroupDetail: View {
             case .receipt: entry.hasReceipt
             case .open: entry.openPurchaseCount > 0
             case .recurring: entry.recurrence != nil && entry.recurrence != "off"
+            case .pending: entry.isPending
+            case .refunds: entry.isRefund
             }
         }
     }
@@ -129,6 +135,7 @@ struct GroupDetail: View {
                     ToolbarItemGroup(placement: .topBarTrailing) {
                         Button { present(.balances(group)) } label: { Label("Balances", systemImage: "chart.pie") }
                         Menu {
+                            Button { present(.credit(group)) } label: { Label("Record a credit", systemImage: "arrow.uturn.backward") }
                             Button { insights = true } label: { Label("Insights", systemImage: "chart.bar.xaxis") }
                             Button { settings = true } label: { Label("Group settings", systemImage: "slider.horizontal.3") }
                         } label: {
@@ -250,7 +257,7 @@ struct GroupDetail: View {
 
     private func overviewTotals(_ group: ExpenseGroup) -> some View {
         let me = group.members.filter { $0.userID == store.currentUserID && $0.userID != nil }
-        let expenses = entries.filter { $0.kind == "expense" }
+        let expenses = entries.filter(\.isSpending)
         let projected = expenses.compactMap(fx.homeEntry)
         let spending = Analytics.personSpend(group, entries: projected, currency: fx.home, people: me).first
         let share = projected.count == expenses.count
@@ -392,7 +399,7 @@ struct GroupDetail: View {
         return formatter.date(from: month) ?? Date()
     }
     private func monthTotal(_ entries: [LedgerEntry]) -> String? {
-        entries.contains { $0.kind == "expense" } ? fx.spendingText(entries) : nil
+        entries.contains(where: \.isSpending) ? fx.spendingText(entries) : nil
     }
 }
 
@@ -415,6 +422,9 @@ struct GroupBalancesView: View {
                     if let group {
                         if let error = store.error { InlineError(text: error) }
                         convertedSection(group)
+                        ForEach(currencies, id: \.self) { currency in
+                            pendingSection(group, currency: currency)
+                        }
                         ForEach(currencies, id: \.self) { currency in
                             currencySection(group, currency: currency)
                         }
@@ -488,6 +498,59 @@ struct GroupBalancesView: View {
         return person?.userID == store.currentUserID ? "You" : (person?.name ?? "Member")
     }
 
+    /// Balances with and without pending entries, so the group can see what is confirmed.
+    @ViewBuilder private func pendingSection(_ group: ExpenseGroup, currency: String) -> some View {
+        let pending = Ledger.pendingEntries(entries, currency: currency)
+        if !pending.isEmpty {
+            let all = Ledger.balances(entries, currency: currency)
+            let confirmed = Ledger.balances(entries, currency: currency, includePending: false)
+            let ids = group.members.map(\.id).filter { (all[$0] ?? 0) != 0 || (confirmed[$0] ?? 0) != 0 }
+            Card {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack {
+                        PendingBadge(note: nil)
+                        Text("\(pending.count) pending · \(Money.text(pending.reduce(0) { $0 + $1.settling.signedAmount }, currency))")
+                            .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                    }
+                    Text("Balances include pending entries. The confirmed column leaves them out.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    HStack {
+                        Text("Person").frame(maxWidth: .infinity, alignment: .leading)
+                        Text("With pending").frame(width: 110, alignment: .trailing)
+                        Text("Confirmed").frame(width: 100, alignment: .trailing)
+                    }
+                    .font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                    ForEach(ids, id: \.self) { id in
+                        HStack {
+                            Text(name(id, group)).font(.subheadline.weight(.medium)).frame(maxWidth: .infinity, alignment: .leading)
+                            Text(Money.text(all[id] ?? 0, currency, signed: true)).font(.splitAmount(14))
+                                .foregroundStyle((all[id] ?? 0) < 0 ? Palette.negative : Palette.positive)
+                                .frame(width: 110, alignment: .trailing)
+                            Text(Money.text(confirmed[id] ?? 0, currency, signed: true)).font(.splitAmount(14))
+                                .foregroundStyle(.secondary)
+                                .frame(width: 100, alignment: .trailing)
+                        }
+                        .lineLimit(1).minimumScaleFactor(0.7)
+                        .accessibilityElement(children: .combine)
+                    }
+                    ForEach(pending) { entry in
+                        NavigationLink(value: LedgerRoute.entry(group: group.id, id: entry.id)) {
+                            HStack {
+                                Text(entry.title).font(.caption.weight(.medium)).foregroundStyle(Palette.ink).lineLimit(1)
+                                Spacer()
+                                EntryAmount(entry: entry, size: 13)
+                                Image(systemName: "chevron.right").font(.caption2.weight(.bold)).foregroundStyle(.tertiary)
+                            }
+                            .frame(minHeight: 36).contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            .accessibilityIdentifier("pending-balances-\(currency)")
+        }
+    }
+
     private func convertedSection(_ group: ExpenseGroup) -> some View {
         let perCurrency = Dictionary(uniqueKeysWithValues: currencies.map { ($0, Ledger.balances(entries, currency: $0)) })
         let rows = group.members.compactMap { member -> (Person, [String: Int64])? in
@@ -546,7 +609,12 @@ struct SettleUpView: View {
     @State private var payRateText = ""
     @State private var payManual = false
     @State private var payRateError: String?
+    @State private var confirmingPending = false
+    @State private var acknowledgedPending = false
     @EnvironmentObject private var fx: FXStore
+    /// The currency this payment settles, and the pending entries that may still change it.
+    private var settleCurrency: String { converts ? currentGroup.currency : currency }
+    private var pendingForPayment: [LedgerEntry] { Ledger.pendingEntries(entries, currency: settleCurrency) }
 
     /// Paying in a currency the group has no balances in converts the payment to the group currency.
     private var converts: Bool { !currency.isEmpty && currency != currentGroup.currency && !currencies.contains(currency) }
@@ -582,6 +650,21 @@ struct SettleUpView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 PendingSettlementsView(groupID: group.id)
+                if !pendingForPayment.isEmpty {
+                    Card {
+                        VStack(alignment: .leading, spacing: 6) {
+                            PendingBadge(note: nil)
+                            Text("\(pendingForPayment.count) pending \(pendingForPayment.count == 1 ? "entry" : "entries") in \(settleCurrency) may still change. These suggestions include them.")
+                                .font(.subheadline).foregroundStyle(Palette.ink)
+                                .fixedSize(horizontal: false, vertical: true)
+                            ForEach(pendingForPayment) { entry in
+                                Text("• \(entry.title)\(entry.pendingNote.map { " — " + $0 } ?? "")")
+                                    .font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                            }
+                        }
+                    }
+                    .accessibilityIdentifier("settle-pending-warning")
+                }
                 if suggestions.isEmpty && transfer == nil {
                     Card {
                         HStack(spacing: 12) {
@@ -629,6 +712,12 @@ struct SettleUpView: View {
         }
         .onAppear(perform: initialize)
         .onChange(of: group.id) { _, _ in initialize() }
+        .alert("Settle up while entries are pending?", isPresented: $confirmingPending) {
+            Button("Settle anyway") { acknowledgedPending = true; save() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("\(pendingForPayment.count) pending \(pendingForPayment.count == 1 ? "entry" : "entries") (\(Money.text(pendingForPayment.reduce(0) { $0 + $1.settling.signedAmount }, settleCurrency))) may still change. If one is refunded or adjusted later, balances will move again.")
+        }
     }
 
     private var formCard: some View {
@@ -777,6 +866,7 @@ struct SettleUpView: View {
             error = "Choose both people."; return
         }
         if converts && payExchange == nil { error = "Wait for the rate, or edit it to enter your own."; return }
+        if !acknowledgedPending && !pendingForPayment.isEmpty { confirmingPending = true; return }
         saving = true; error = nil
         let cleanNote = note.trimmingCharacters(in: .whitespacesAndNewlines)
         let entry = LedgerEntry(

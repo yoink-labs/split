@@ -1,0 +1,200 @@
+{
+  "currency": "USD",
+  "members": [
+    {
+      "id": "alex",
+      "name": "Alex"
+    },
+    {
+      "id": "bea",
+      "name": "Bea"
+    },
+    {
+      "id": "cam",
+      "name": "Cam"
+    }
+  ],
+  "entries": [
+    {
+      "id": "excursion",
+      "groupID": "g",
+      "kind": "expense",
+      "title": "Excursion",
+      "amount": 10000,
+      "currency": "USD",
+      "paidBy": "alex",
+      "splits": [
+        {
+          "memberID": "alex",
+          "amount": 3334
+        },
+        {
+          "memberID": "bea",
+          "amount": 3333
+        },
+        {
+          "memberID": "cam",
+          "amount": 3333
+        }
+      ],
+      "splitMode": "equal",
+      "category": "Activities",
+      "createdAt": "2026-11-20T12:00:00Z"
+    },
+    {
+      "id": "refund-cam",
+      "groupID": "g",
+      "kind": "refund",
+      "title": "Refund: Excursion",
+      "amount": 3333,
+      "currency": "USD",
+      "paidBy": "alex",
+      "splits": [
+        {
+          "memberID": "cam",
+          "amount": 3333
+        }
+      ],
+      "refundOf": "excursion",
+      "splitMode": "exact",
+      "category": "Activities",
+      "createdAt": "2026-11-21T12:00:00Z"
+    },
+    {
+      "id": "credit-bea",
+      "groupID": "g",
+      "kind": "refund",
+      "title": "Overcharge",
+      "amount": 500,
+      "currency": "USD",
+      "paidBy": "alex",
+      "splits": [
+        {
+          "memberID": "bea",
+          "amount": 500
+        }
+      ],
+      "splitMode": "exact",
+      "createdAt": "2026-11-22T12:00:00Z"
+    },
+    {
+      "id": "dinner",
+      "groupID": "g",
+      "kind": "expense",
+      "title": "Dinner",
+      "amount": 3001,
+      "currency": "USD",
+      "paidBy": "bea",
+      "splits": [
+        {
+          "memberID": "alex",
+          "amount": 1501
+        },
+        {
+          "memberID": "bea",
+          "amount": 1500
+        }
+      ],
+      "splitMode": "equal",
+      "category": "Dining",
+      "pending": true,
+      "pendingNote": "Waiting on the corrected bill",
+      "createdAt": "2026-12-02T12:00:00Z"
+    },
+    {
+      "id": "payment",
+      "groupID": "g",
+      "kind": "settlement",
+      "title": "Payment",
+      "amount": 100,
+      "currency": "USD",
+      "paidBy": "cam",
+      "splits": [
+        {
+          "memberID": "alex",
+          "amount": 100
+        }
+      ],
+      "splitMode": "exact",
+      "createdAt": "2026-12-03T12:00:00Z"
+    }
+  ],
+  "proportional": {
+    "original": "excursion",
+    "amount": 2000
+  },
+  "adjust": {
+    "entry": "dinner",
+    "amount": 2000
+  },
+  "expected": {
+    "balances": {
+      "alex": 1232,
+      "bea": -1332,
+      "cam": 100
+    },
+    "confirmedBalances": {
+      "alex": 2733,
+      "bea": -2833,
+      "cam": 100
+    },
+    "total": 9168,
+    "categories": {
+      "Activities": 6667,
+      "Uncategorized": -500,
+      "Dining": 3001
+    },
+    "months": {
+      "2026-11": 6167,
+      "2026-12": 3001
+    },
+    "members": [
+      {
+        "id": "alex",
+        "paid": 6167,
+        "share": 4835,
+        "net": 1232
+      },
+      {
+        "id": "bea",
+        "paid": 3001,
+        "share": 4333,
+        "net": -1332
+      },
+      {
+        "id": "cam",
+        "paid": 0,
+        "share": 0,
+        "net": 100
+      }
+    ],
+    "room": {
+      "total": 6667,
+      "members": {
+        "alex": 3334,
+        "bea": 3333,
+        "cam": 0
+      }
+    },
+    "proportionalCredits": [
+      {
+        "memberID": "alex",
+        "amount": 1000
+      },
+      {
+        "memberID": "bea",
+        "amount": 1000
+      }
+    ],
+    "adjustedSplits": [
+      {
+        "memberID": "alex",
+        "amount": 1000
+      },
+      {
+        "memberID": "bea",
+        "amount": 1000
+      }
+    ]
+  }
+}

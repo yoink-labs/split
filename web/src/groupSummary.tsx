@@ -246,8 +246,8 @@ export function GroupSummary() {
   }
 
   const format = homeMoney.format;
-  const expenses = entries.filter((e) => e.kind === "expense");
-  const payments = entries.filter((e) => e.kind !== "expense");
+  const expenses = entries.filter((e) => e.kind === "expense" || e.kind === "refund");
+  const payments = entries.filter((e) => e.kind === "settlement");
   const receipts = expenses.filter((e) => e.bill);
   const projected = new Map(entries.map((e) => [e.id, homeMoney.project(e)] as const));
   const visibleEntries = !included("history") ? [] : mode === "receipts" ? receipts : entries;
@@ -269,7 +269,7 @@ export function GroupSummary() {
   const onlyHome = codes.every((c) => c === home);
 
   const recordedSpend: Record<string, number> = {};
-  for (const e of expenses) recordedSpend[e.currency] = (recordedSpend[e.currency] ?? 0) + e.amount;
+  for (const e of expenses) recordedSpend[e.currency] = (recordedSpend[e.currency] ?? 0) + (e.kind === "refund" ? -e.amount : e.amount);
 
   const spendText = (amount: number) => (spendRated ? format(amount, foreignSpend) : null);
   /** Settlement amounts beneath a converted figure; omitted when everything already settles in `home`. */
@@ -363,7 +363,7 @@ export function GroupSummary() {
             })}
           </tbody>
         </table>
-        <p className="sum-small">Paid and share count expenses only. Balance includes payments and leaves out entries marked as already handled.</p>
+        <p className="sum-small">Paid and share count expenses net of refunds. Balance includes payments and pending entries and leaves out entries marked as already handled.</p>
       </section>}
 
       {included("balances") && <section className="sum-section">
@@ -579,11 +579,13 @@ export function GroupSummary() {
                             {e.category ?? "Uncategorized"}
                             {e.bill && " · Itemized"}
                             {e.handled && " · Already handled"}
+                            {e.kind === "refund" && (e.refundOf ? " · Refund" : " · Credit")}
+                            {e.pending && ` · Pending${e.pendingNote ? ": " + e.pendingNote : ""}`}
                           </span>
                         </td>
-                        <td>{peopleList(entryPayers(e), person)}</td>
+                        <td>{e.kind === "refund" && "Received by "}{peopleList(entryPayers(e), person)}</td>
                         <td className="r">
-                          <Amount converted={m.converted(projected.get(e.id)?.amount ?? 0)} recorded={m.recorded(e.amount)} label="Recorded" />
+                          {e.kind === "refund" && "−"}<Amount converted={m.converted(projected.get(e.id)?.amount ?? 0)} recorded={m.recorded(e.amount)} label="Recorded" />
                         </td>
                       </tr>
                     );
@@ -679,8 +681,9 @@ function PeopleSpending({ expenses, person }: { expenses: Expense[]; person: Per
     }
   }
   for (const entry of expenses) {
-    add(entryPayers(entry), entry.currency, "paid");
-    add(entry.splits, entry.currency, "share");
+    const direction = entry.kind === "refund" ? -1 : 1;
+    add(entryPayers(entry).map((p) => ({ ...p, amount: direction * p.amount })), entry.currency, "paid");
+    add(entry.splits.map((p) => ({ ...p, amount: direction * p.amount })), entry.currency, "share");
   }
   return (
     <section className="sum-section">
@@ -761,7 +764,8 @@ function RateLines({ e, home }: { e: Expense; home: string }) {
 function EntryHead({ person, e, home, projected, format }: EntryProps) {
   const m = entryMoney(e, projected, home, format);
   const payers = entryPayers(e);
-  const payment = e.kind !== "expense";
+  const payment = e.kind === "settlement";
+  const refund = e.kind === "refund";
   return (
     <div className="sum-entry-head">
       <div className="sum-date">{recordedDay(e.createdAt)}</div>
@@ -769,14 +773,16 @@ function EntryHead({ person, e, home, projected, format }: EntryProps) {
         <b>{payment ? <>Payment: {peopleList(payers, person)} → {peopleList(e.splits, person)}</> : e.title}</b>
         <span className="sum-entry-sub">
           {payment ? "Settle-up payment" : e.category ?? "Uncategorized"}
-          {!payment && <> · Paid by {peopleList(payers, person)}</>}
+          {refund ? <> · {e.refundOf ? "Refund" : "Credit"} received by {peopleList(payers, person)}</>
+            : !payment && <> · Paid by {peopleList(payers, person)}</>}
           {e.handled && " · Already handled (not in balances)"}
+          {e.pending && ` · Pending${e.pendingNote ? ": " + e.pendingNote : ""} (in balances)`}
           {e.bill && !e.bill.closed && e.bill.items.some((i) => !i.memberIDs.length) && " · Receipt still open"}
         </span>
         {e.notes && <span className="sum-entry-notes">{e.notes}</span>}
       </div>
       <div className="sum-entry-amount">
-        <Amount converted={m.converted(projected?.amount ?? 0)} recorded={m.recorded(e.amount)} label="Recorded" />
+        {refund && "−"}<Amount converted={m.converted(projected?.amount ?? 0)} recorded={m.recorded(e.amount)} label="Recorded" />
       </div>
     </div>
   );
@@ -793,7 +799,7 @@ function LedgerEntry(props: EntryProps) {
     <div className={"sum-entry" + (e.handled ? " handled" : "") + (e.bill ? " long" : "")}>
       <EntryHead {...props} />
       <RateLines e={e} home={home} />
-      {e.kind === "expense" && (
+      {e.kind !== "settlement" && (
         <table className="sum-parts">
           <colgroup>
             <col />
@@ -803,8 +809,8 @@ function LedgerEntry(props: EntryProps) {
           <thead>
             <tr>
               <th>Person</th>
-              <th className="r">Paid</th>
-              <th className="r">Share</th>
+              <th className="r">{e.kind === "refund" ? "Received" : "Paid"}</th>
+              <th className="r">{e.kind === "refund" ? "Credit" : "Share"}</th>
             </tr>
           </thead>
           <tbody>

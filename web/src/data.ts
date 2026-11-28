@@ -12,6 +12,7 @@ export {
   simplify,
 } from "../../worker/src/ledger";
 export { itemSplit, itemPortions, grossItems, breakdown } from "../../worker/src/items";
+export { sign, isRefund, isSpend, refundsOf, pendingView } from "../../worker/src/refundMath";
 export { settlementEntry } from "../../worker/src/exchange";
 
 export type Expense = Entry & {
@@ -271,7 +272,10 @@ export function rawTransfers(entries: Expense[], currency: string) {
     const payers = entryPayers(e);
     const total = e.amount;
     if (total <= 0) continue;
-    if (payers.length === 1) {
+    if (e.kind === "refund") {
+      // The receiver holds money that belongs to the people credited.
+      for (const s of e.splits) add(e.paidBy, s.memberID, s.amount);
+    } else if (payers.length === 1) {
       const payer = payers[0].memberID;
       for (const s of e.splits) add(s.memberID, payer, s.amount);
     } else {
@@ -312,6 +316,7 @@ export function buildGroupCSV(g: Group, entries: Expense[]): string {
     "Paid By",
     "Split With",
     "Expense Status",
+    "Refund Of",
     ...g.members.map((m) => m.name),
   ];
   const rows = entries
@@ -326,7 +331,7 @@ export function buildGroupCSV(g: Group, entries: Expense[]): string {
       const memberNets = g.members.map((m) => {
         const paid = payers.filter((p) => p.memberID === m.id).reduce((s, p) => s + p.amount, 0);
         const share = se.splits.find((s) => s.memberID === m.id)?.amount ?? 0;
-        const net = e.handled ? 0 : paid - share;
+        const net = e.handled ? 0 : (e.kind === "refund" ? share - paid : paid - share);
         return net / 100;
       });
       return [
@@ -342,7 +347,8 @@ export function buildGroupCSV(g: Group, entries: Expense[]): string {
         (se.amount / 100).toFixed(2),
         payerText,
         se.splits.map((split) => `${memberName(g, split.memberID)} (${(split.amount / 100).toFixed(2)})`).join("; "),
-        e.handled ? "Handled" : "",
+        e.handled ? "Handled" : e.pending ? "Pending" + (e.pendingNote ? ": " + e.pendingNote : "") : "",
+        e.refundOf ? entries.find((x) => x.id === e.refundOf)?.title ?? e.refundOf : "",
         ...memberNets,
       ];
     });

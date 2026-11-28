@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { allocate, balances, entryPayers, moneyCompact, settlementEntry, type Expense } from "./data";
+import { allocate, balances, entryPayers, isSpend, moneyCompact, settlementEntry, sign, type Expense } from "./data";
 import { convert, fx, type FxCache, today, useFxVersion, useHomeCurrency, useRates } from "./fx";
 
 function historicPair(entry: Expense) {
@@ -32,9 +32,9 @@ export function useLedgerRates(entries: Expense[], groupCurrencies: string[]) {
   }, [home, schedule]);
 }
 
-export function memberBalances(entries: Expense[], memberID: string) {
+export function memberBalances(entries: Expense[], memberID: string, includePending = true) {
   const codes = new Set(entries.map((entry) => entry.exchange?.target ?? entry.currency));
-  return Object.fromEntries([...codes].map((code) => [code, balances(entries, code)[memberID] ?? 0]));
+  return Object.fromEntries([...codes].map((code) => [code, balances(entries, code, { includePending })[memberID] ?? 0]));
 }
 
 /**
@@ -108,11 +108,11 @@ export function useHomeMoney() {
     return result.missing.length ? "Rate unavailable" : format(result.amount, !!result.quotes.length, signed);
   };
   const spend = (entries: Expense[]) => {
-    const expenses = entries.filter((entry) => entry.kind === "expense");
+    const expenses = entries.filter(isSpend);
     const projected = expenses.map(project);
     return projected.some((entry) => !entry)
       ? "Rate unavailable"
-      : format(projected.reduce((sum, entry) => sum + (entry?.amount ?? 0), 0), expenses.some((entry) => entry.currency !== home));
+      : format(projected.reduce((sum, entry) => sum + (entry ? sign(entry) * entry.amount : 0), 0), expenses.some((entry) => entry.currency !== home));
   };
   return { home, format, project, entry, portion, total, totalText, spend };
 }

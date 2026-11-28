@@ -156,7 +156,7 @@ export const tools = [
   op('members_invite','Send a group invitation to someone you know. They can accept or decline from the inbox.', {
     group, user: text('Known user ID.',128), member
   }, ['group','user']),
-  op('members_link','Permanently link a placeholder and its history to a friend or shared group member.', {
+  op('members_link','Permanently link a placeholder and its history to a friend or shared group member. Returns the placeholder, account, kept and merged member IDs, and counts of linked expenses, splits, and receipts.', {
     group, member, user: text('Known user ID.',128)
   }, ['group','member','user'], false, true),
   op('members_links','List placeholder links recorded in a group’s activity.', { group }, ['group'], true),

@@ -1,3 +1,4 @@
+import { normalizeName } from './names';
 import { knownAccount } from './relationships';
 // Imports one Splitwise group export as a single atomic D1 batch: the new group (or an existing
 // one the caller belongs to), placeholders for unmatched names, and every expense and payment.
@@ -72,7 +73,7 @@ export async function importSplitwise(db: D1Database, user: string, b: Record<st
     if ((count?.n ?? 0) >= 100) throw new HTTPError(409, 'Group limit reached.');
     statements.push(db.prepare('INSERT INTO groups(id,name,kind,currency,creator,created_at) VALUES (?,?,?,?,?,?)')
       .bind(group, (spec!.name as string).trim(), spec!.kind, spec!.currency, user, new Date().toISOString()));
-    statements.push(db.prepare('INSERT INTO members(id,group_id,user_id,name) VALUES (?,?,?,?)').bind(myID, group, user, (me.displayName ?? profile?.name ?? me.name).trim().slice(0, 60)));
+    statements.push(db.prepare('INSERT INTO members(id,group_id,user_id,name) VALUES (?,?,?,?)').bind(myID, group, user, normalizeName(me.displayName ?? profile?.name ?? me.name).slice(0, 60).trimEnd()));
   }
   for (const p of people) {
     // Keep the original CSV name as the identity key even when a display name changes.
@@ -99,7 +100,7 @@ export async function importSplitwise(db: D1Database, user: string, b: Record<st
     if (!p.me && !explicitSeat && id === sourceID && !sourceSeat) {
       const name = p.displayName ?? profiles.find(profile => profile.userID === p.userID)?.name ?? p.name;
       statements.push(db.prepare('INSERT INTO members(id,group_id,user_id,name) VALUES (?,?,?,?) ON CONFLICT(id) DO NOTHING')
-        .bind(id, group, p.userID ?? null, name.trim()));
+        .bind(id, group, p.userID ?? null, normalizeName(name)));
     } else if (linkUser && sourceSeat && !sourceOwner?.userID) {
       if (accountSeat) {
         statements.push(db.prepare(`INSERT INTO member_aliases(member_id,canonical_id)
@@ -108,11 +109,11 @@ export async function importSplitwise(db: D1Database, user: string, b: Record<st
       } else {
         statements.push(db.prepare(`UPDATE members SET user_id=?, name=COALESCE(?,name)
           WHERE id=? AND group_id=? AND user_id IS NULL AND removed_at IS NULL
-          AND id NOT IN (SELECT member_id FROM member_aliases)`).bind(linkUser, p.displayName?.trim() ?? null, sourceID, group));
+          AND id NOT IN (SELECT member_id FROM member_aliases)`).bind(linkUser, p.displayName === undefined ? null : normalizeName(p.displayName), sourceID, group));
       }
     } else if (p.displayName && !p.me && !p.userID) {
       statements.push(db.prepare(`UPDATE members SET name=? WHERE id=? AND group_id=? AND user_id IS NULL
-        AND removed_at IS NULL AND id NOT IN (SELECT member_id FROM member_aliases)`).bind(p.displayName.trim(), id, group));
+        AND removed_at IS NULL AND id NOT IN (SELECT member_id FROM member_aliases)`).bind(normalizeName(p.displayName), id, group));
     }
   }
   const memberIDs = [...new Set([...roster.map(m => m.id), ...ids.values()])];

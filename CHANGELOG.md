@@ -58,6 +58,8 @@ is noted next to each release. The CLI is versioned separately with
 
 ### Fixed
 
+- Normalize whitespace in member and account names. The CLI and MCP now show who was linked, which member stayed, and how much expense history came with the link.
+
 - Personal PDF reports use a thin outline around transactions you’re involved in and lightly shade only your own rows.
 
 - Confirmed CLI expense edits report the saved category.

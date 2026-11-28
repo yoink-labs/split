@@ -126,4 +126,21 @@ final class FXTests: XCTestCase {
         XCTAssertEqual(frozen.settling.amount, 202, "Display conversion leaves the ledger entry intact")
     }
 
+    @MainActor
+    func testChargedAmountNetMatchesAllocatedShares() throws {
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: UUID().uuidString))
+        let store = FXStore(defaults: defaults, fileURL: nil)
+        store.home = "USD"
+        var entry = LedgerEntry(groupID: "g", title: "Dinner", amount: 3_250_000, currency: "ARS", paidBy: "a",
+                                splits: [Portion(memberID: "a", amount: 1_083_334),
+                                         Portion(memberID: "b", amount: 1_083_333),
+                                         Portion(memberID: "c", amount: 1_083_333)])
+        entry.exchange = Exchange(target: "USD", rateE8: 62_441, date: "2026-11-26",
+                                  source: "BCRA", statementAmount: 2437)
+        XCTAssertEqual(store.homeEntry(entry)?.splits.map(\.amount), [813, 812, 812])
+        XCTAssertEqual(store.entryNet(entry, for: "a").amount, 1624)
+        XCTAssertEqual(store.entryNet(entry, for: "a").text, "USD 16.24")
+        XCTAssertEqual(store.entryNet(entry, for: "b").amount, -812)
+    }
+
 }

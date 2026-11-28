@@ -458,7 +458,7 @@ struct AddExpenseView: View {
                             Text("Charged amount override")
                                 .font(.subheadline.weight(.semibold))
                         }
-                        Text("at 1 \(currency) = \(FXMath.rateText(exchange.rateE8)) \(settlementCurrency) (\(rateSource(exchange)))")
+                        Text("\(exchange.statementAmount == nil ? "at" : "Saved rate") 1 \(currency) = \(FXMath.rateText(exchange.rateE8)) \(settlementCurrency) (\(rateSource(exchange)))")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)

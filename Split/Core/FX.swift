@@ -261,6 +261,16 @@ final class FXStore: ObservableObject {
         return (isEstimated(entry) ? "≈ " : "") + Money.text(converted, home, signed: signed)
     }
 
+    func entryNet(_ entry: LedgerEntry, for memberID: String) -> (amount: Int64, text: String) {
+        if entry.exchange?.statementAmount != nil, let projected = homeEntry(entry) {
+            let amount = Ledger.net(projected, for: memberID)
+            let text = (isEstimated(entry) ? "≈ " : "") + Money.text(abs(amount), home)
+            return (amount, text)
+        }
+        let amount = Ledger.net(entry, for: memberID)
+        return (amount, entryText(entry, amount: abs(amount)))
+    }
+
     func portionText(_ entry: LedgerEntry, memberID: String, paid: Bool = false) -> String {
         guard let projected = homeEntry(entry) else { return "Rate unavailable" }
         // Detail rows show what moved; a refund's direction comes from its labels, not a sign.

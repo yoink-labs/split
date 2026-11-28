@@ -469,7 +469,6 @@ struct EntryRow: View {
     @Environment(\.horizontalSizeClass) private var size
     private var meta: CategoryMeta { CategoryMeta.named(entry.category) }
     private var me: Person? { Analytics.me(in: group, userID: currentUserID) }
-    private var mine: Int64 { guard let me else { return 0 }; return Ledger.net(entry, for: me.id) }
     private func name(_ id: String) -> String {
         if let person = group.members.first(where: { $0.id == id }) {
             return person.userID == currentUserID ? "You" : person.name
@@ -578,18 +577,19 @@ struct EntryRow: View {
     }
 
     @ViewBuilder private var netLine: some View {
+        let (mine, netText) = me.map { fx.entryNet(entry, for: $0.id) } ?? (0, "")
         if entry.isHandled {
             Label("Handled", systemImage: "checkmark.circle")
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(Palette.positive)
         } else if entry.isRefund && mine != 0 {
-            Text(mine > 0 ? "you get back \(fx.entryText(entry, amount: mine))" : "you owe \(fx.entryText(entry, amount: abs(mine))) · \(entry.refundOf == nil ? "credit you’re giving" : "refund you received for others")")
+            Text(mine > 0 ? "you get back \(netText)" : "you owe \(netText) · \(entry.refundOf == nil ? "credit you’re giving" : "refund you received for others")")
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(mine > 0 ? Palette.positive : Palette.negative)
                 .lineLimit(2)
                 .minimumScaleFactor(0.7)
         } else if entry.kind == "expense" && mine != 0 {
-            Text(mine > 0 ? "you lent \(fx.entryText(entry, amount: mine))" : "you owe \(fx.entryText(entry, amount: abs(mine)))")
+            Text(mine > 0 ? "you lent \(netText)" : "you owe \(netText)")
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(mine > 0 ? Palette.positive : Palette.negative)
                 .lineLimit(2)

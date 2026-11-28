@@ -272,7 +272,7 @@ struct EntryDetails: View {
                 }
                 EntryAmount(entry: entry, size: 34)
                 if entry.currency != fx.home {
-                    Text("Charged \(Money.text(entry.amount, entry.currency))")
+                    Text("\(entry.exchange?.statementAmount == nil ? "Charged" : "Original amount") \(Money.text(entry.amount, entry.currency))")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 HStack(alignment: .center, spacing: 8) {
@@ -326,19 +326,19 @@ struct EntryDetails: View {
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(Palette.evergreen)
         } else if entry.isRefund, let me {
-            let net = Ledger.net(entry, for: me.id)
-            Text(net > 0 ? "You get back \(fx.entryText(entry, amount: net))"
-                 : net < 0 ? "You owe \(fx.entryText(entry, amount: abs(net))) · \(entry.refundOf == nil ? "credit you’re giving" : "refund you received for others")" : "Not involved")
+            let (net, netText) = fx.entryNet(entry, for: me.id)
+            Text(net > 0 ? "You get back \(netText)"
+                 : net < 0 ? "You owe \(netText) · \(entry.refundOf == nil ? "credit you’re giving" : "refund you received for others")" : "Not involved")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(net > 0 ? Palette.positive : net < 0 ? Palette.negative : Palette.muted)
                 .multilineTextAlignment(.trailing)
                 .fixedSize(horizontal: false, vertical: true)
         } else if let me {
-            let net = Ledger.net(entry, for: me.id)
+            let (net, netText) = fx.entryNet(entry, for: me.id)
             Text(net > 0
-                 ? "You lent \(fx.entryText(entry, amount: net))"
+                 ? "You lent \(netText)"
                  : net < 0
-                 ? "You owe \(fx.entryText(entry, amount: abs(net)))"
+                 ? "You owe \(netText)"
                  : "Not involved")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(net > 0 ? Palette.positive : net < 0 ? Palette.negative : Palette.muted)

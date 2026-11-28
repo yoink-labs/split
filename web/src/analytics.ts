@@ -114,7 +114,7 @@ export function analyticsRows(entries: Expense[], project: (entry: Expense) => E
     const day = entry.createdAt.slice(0, 10);
     if (filter.from && day < filter.from) continue;
     if (filter.to && day > filter.to) continue;
-    const member = filter.memberByGroup?.get(entry.groupID) ?? filter.memberID;
+    const member = filter.memberByGroup ? filter.memberByGroup.get(entry.groupID) : filter.memberID;
     if (filter.memberByGroup && !member) continue;
     if (member && !entry.splits.some((s) => s.memberID === member && s.amount > 0)
       && !entryPayers(entry).some((p) => p.memberID === member && p.amount > 0)) continue;

@@ -17,13 +17,14 @@ struct DashboardView: View {
 
     var body: some View {
         let dashboard = store.dashboard
+        let reminderPeople = dashboard.people.filter(\.hasBalance)
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: Spacing.section) {
                     DashboardPosition(model: dashboard)
                     quickActions(canSettle: !dashboard.owe.isEmpty)
                     PendingSettlementsView()
-                    if balanceReminders, !dashboard.people.isEmpty { reminderCard(people: dashboard.people) }
+                    if balanceReminders, !reminderPeople.isEmpty { reminderCard(people: reminderPeople) }
                     if store.isDemo {
                         Label("Sample data · changes stay in this preview", systemImage: "sparkles")
                             .font(.caption)

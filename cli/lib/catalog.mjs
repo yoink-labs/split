@@ -209,7 +209,7 @@ export const tools = [
   op('receipts_add','Attach up to four receipt photos to an expense you recorded.', { group, expense, photos: receiptPhotos }, ['group','expense','photos']),
   op('expenses_edit','Preview changes to your expense, or supply a bill to break a whole expense into items. Review the preview before confirming with yes and revision.', { group, expense, ...allocation, bill: receiptBill, ...confirmation }, ['group','expense'], false, true),
   op('expenses_delete','Preview deletion of your expense. Review the preview before confirming with yes and revision.', { group, expense, ...confirmation }, ['group','expense'], false, true),
-  op('balances','Show each member’s net balance and suggested settlements, separately by currency, in minor units. Pending expenses count; confirmedNet and pending show the balance without them.', { group }, ['group'], true),
+  op('balances','Show each member’s net balance and suggested settlements, separately by currency, in minor units. Pending expenses count; confirmedNet and pending show the balance without them. Provide a member ID for signed expense, payment and refund lines that add up to their balance.', { group, member }, ['group'], true),
   op('settlements_pending','List payments waiting for approval in a group, who made them and what you can do.', { group }, ['group'], true),
   op('settlements_respond','Approve or decline a payment someone recorded to you, or cancel one you recorded. The ID comes from settlements pending.', {
     group, settlement: id('Pending payment ID.'), action: enumeration('approve or decline as the recipient; cancel as the payer.', ['approve','decline','cancel'])

@@ -23,8 +23,9 @@ async function session(t, respond) {
     for await (const chunk of req) chunks.push(chunk);
     const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
     calls.push(body);
-    const { __status, ...reply } = respond(body);
-    res.writeHead(__status ?? 200).end(JSON.stringify(reply));
+    const result = respond(body);
+    const { __status, ...reply } = result;
+    res.writeHead(__status ?? 200).end(JSON.stringify(Array.isArray(result) ? result : reply));
   });
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
@@ -42,6 +43,32 @@ async function session(t, respond) {
     return { out: out.join('\n'), err: err.join('\n'), questions, calls: calls.splice(0), code };
   };
 }
+
+test('member balances print signed lines and preserve linked refund IDs in JSON', async t => {
+  const amine = { id: 'amine', name: 'Amine' };
+  const maya = { id: 'maya', name: 'Maya' };
+  const statement = [{
+    currency: 'USD', member: maya, net: 3000,
+    lines: [
+      { kind: 'expense', title: 'Airbnb', amount: -30000, from: [maya], to: [amine] },
+      { kind: 'settlement', title: 'Settlement', amount: 30000, from: [maya], to: [amine] },
+      { kind: 'refund', title: 'Refund: Airbnb', amount: 3000, from: [amine], to: [maya],
+        refundOf: 'airbnb', originalTitle: 'Airbnb' },
+    ],
+  }];
+  const run = await session(t, () => statement);
+  const args = ['balances', '--group', 'group-0001', '--member', maya.id];
+  const text = await run(args);
+  assert.deepEqual(text.calls, [{ name: 'balances', arguments: { group: 'group-0001', member: maya.id } }]);
+  assert.equal(text.out, [
+    'Maya · USD',
+    '−USD 300.00  Airbnb · Expense paid by Amine',
+    '+USD 300.00  Settlement · Payment · Maya → Amine',
+    '+USD 30.00  Refund: Airbnb · Refund from Amine · Refund of Airbnb',
+    'Balance  +USD 30.00',
+  ].join('\n'));
+  assert.deepEqual(JSON.parse((await run([...args, '--json'])).out), statement);
+});
 
 test('import plans read as plain language and never hide unlinked matches', () => {
   const text = describeImport(plan);

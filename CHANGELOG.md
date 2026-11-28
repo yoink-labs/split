@@ -13,6 +13,7 @@ is noted next to each release. The CLI is versioned separately with
 ### Added
 
 - Split stays by nights and spread expenses over a date range. See each person’s daily costs on web and iOS or with the CLI and MCP.
+- See how expenses, payments, and linked refunds add up in a group member’s balance breakdown on web and iOS, or with `split balances --group ID --member ID`.
 
 - Open the Analytics tab on the web for spending over time, by category, by person (paid against share) and by currency in your home currency. Filter by date range and member, and select any bar or row to see its transactions.
 - Record refunds and credits on web, iOS and the CLI/MCP. Refund part or all of an expense to some or all of the people who shared it, or give a standalone credit. Refunds lower the right shares and balances to the cent, and can never exceed the original expense or one person's share. Splitwise rows with a negative cost import as refunds.
@@ -59,6 +60,8 @@ is noted next to each release. The CLI is versioned separately with
 - Redesigned the web group ledger with expandable spending breakdowns and a filterable transaction table, and moved trip exchange rates into group Settings.
 
 ### Fixed
+
+- Personal PDF reports use a thin outline around transactions you’re involved in and lightly shade only your own rows.
 
 - Confirmed CLI expense edits report the saved category.
 - Preview and confirm expense combinations in the CLI and MCP. The CLI supports `--dry-run` and `--yes`, and the saved result includes the full expense.

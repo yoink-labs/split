@@ -95,6 +95,49 @@ describe('device authorization', () => {
   });
 });
 describe('CLI and MCP', () => {
+  it('reconciles an Airbnb share, repayment and linked refund, with group membership enforced', async () => {
+    const token = await authorize('amine'), outsider = await authorize('outsider');
+    const send = (name: string, args: object, device = token) => fetch('/v1/cli', {name, arguments: args}, device);
+    async function run(name: string, args: object) {
+      const response = await send(name, args);
+      const body = await response.json();
+      if (!response.ok) throw new Error(JSON.stringify(body));
+      return body;
+    }
+
+    const {id: group, members: [amine, alex, maya]} = await run('groups_create', {
+      name: 'Airbnb Weekend', self: 'Amine', placeholders: ['Alex', 'Maya'], currency: 'USD',
+    });
+    const {id: expense} = await run('expenses_add', {
+      group, payer: amine.id, title: 'Airbnb', amount: '900.00', date: '2026-11-20',
+      participants: [amine.id, alex.id, maya.id],
+    });
+    for (const guest of [alex, maya]) {
+      expect(await run('settle_up', {group, from: guest.id, to: amine.id, amount: '300.00'}))
+        .toMatchObject({status: 'approved'});
+    }
+    expect((await run('balances', {group}))[0].settlements).toEqual([]);
+    const refundDate = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+    const {id: refund} = await run('refunds_add', {group, expense, amount: '90.00', date: refundDate});
+    const [summary] = await run('balances', {group});
+
+    for (const [member, amounts] of [
+      [alex, [-30000, 30000, 3000]],
+      [maya, [-30000, 30000, 3000]],
+      [amine, [60000, -30000, -30000, -6000]],
+    ] as const) {
+      const [statement] = await run('balances', {group, member: member.id});
+      expect(statement).toMatchObject({currency: 'USD', member: {id: member.id}, net: summary.net[member.id]});
+      expect(statement.lines.map(line => line.amount)).toEqual(amounts);
+      expect(statement.lines.reduce((sum, line) => sum + line.amount, 0)).toBe(statement.net);
+      expect(statement.lines.at(-1)).toMatchObject({
+        id: refund, kind: 'refund', refundOf: expense, originalTitle: 'Airbnb', from: [{name: 'Amine'}],
+      });
+    }
+    expect((await send('balances', {group, member: alex.id}, outsider)).status).toBe(404);
+    expect((await send('balances', {group, member: crypto.randomUUID()})).status).toBe(422);
+  });
+
   it('invites individuals, corrects placeholder emails and links verified accounts to their history', async () => {
     const token = await authorize('alex'), outsider = await authorize('maya');
     const send = (name:string, args:object, device=token) => fetch('/v1/cli',{name,arguments:args},device);

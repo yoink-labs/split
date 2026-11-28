@@ -1,3 +1,4 @@
+import { balanceLine } from "../../worker/src/ledger";
 import { DiscoverySetting } from "./people";
 import { PaymentEditor, PaymentOptions, personPaymentMethods } from "./paymentMethods";
 import { PendingPayments } from "./settlements";
@@ -9,6 +10,7 @@ import { Form, useLedger, value } from "./context";
 import {
   balances,
   currencies,
+  entryPath,
   entryPayers,
   memberEntries,
   memberName,
@@ -337,7 +339,7 @@ export function MemberScreen() {
 
   const shared = membersGroups(data.groups, g, p);
   const scope = query.get("scope") === "all" ? "all" : g.id;
-  const kind = query.get("show") === "payments" ? "settlement" : "expense";
+  const kind = query.get("show") ?? "balance";
   const me = !!p.userID && p.userID === user;
 
   const statements = shared
@@ -458,17 +460,58 @@ export function MemberScreen() {
           </div>
         )}
         <div className="seg">
-          <button aria-pressed={kind === "expense"} onClick={() => setParam("show", null)}>
+          <button aria-pressed={kind === "balance"} onClick={() => setParam("show", null)}>
+            Balance breakdown
+          </button>
+          <button aria-pressed={kind === "charges"} onClick={() => setParam("show", "charges")}>
             Charges
           </button>
-          <button aria-pressed={kind === "settlement"} onClick={() => setParam("show", "payments")}>
+          <button aria-pressed={kind === "payments"} onClick={() => setParam("show", "payments")}>
             Payments
           </button>
         </div>
       </div>
 
       {statements.map((s) => {
-        const rows = s.all.filter((e) => kind === "settlement" ? e.kind === "settlement" : e.kind !== "settlement");
+        if (kind === "balance") {
+          const names = (ids: string[]) => [...new Set(ids)].map(id => memberName(s.group, id)).join(", ");
+          const titles = new Map(data.entries.filter(entry => entry.groupID === s.group.id).map(entry => [entry.id, entry.title]));
+          const rows = [...s.all].reverse().map(entry => ({ entry, ...balanceLine(entry, s.person.id) })).filter(row => row.amount !== 0);
+          if (!rows.length) return null;
+          return (
+            <section key={s.group.id}>
+              <h3>{s.group.name}</h3>
+              <div className="ledger-list">
+                {rows.map(({ entry, amount, currency }) => {
+                  const payer = names(entryPayers(entry).map(p => p.memberID));
+                  const payee = names(entry.splits.map(p => p.memberID));
+                  const original = entry.refundOf && titles.get(entry.refundOf);
+                  const detail = entry.kind === "settlement" ? `Payment · ${payer} → ${payee}`
+                    : entry.kind === "refund"
+                      ? `${entry.refundOf ? "Refund" : "Credit"} from ${payer}${original ? ` · Refund of ${original}` : ""}`
+                      : `Expense paid by ${payer}`;
+                  return (
+                    <Link key={entry.id} to={entryPath(entry)} className="ledger-item" style={{ gridTemplateColumns: "34px minmax(0,1fr) auto" }}>
+                      <CategoryIcon category={entry.category} settlement={entry.kind === "settlement"} />
+                      <div>
+                        <div className="ledger-title">{entry.title}</div>
+                        <div className="ledger-meta">{shortDate(entry.createdAt)} · {detail}{entry.pending && " · Pending"}</div>
+                      </div>
+                      <strong className={amount > 0 ? "pos" : "neg"}>{amount > 0 ? "+" : "−"}{money(Math.abs(amount), currency)}</strong>
+                    </Link>
+                  );
+                })}
+              </div>
+              <p className="ledger-meta">
+                Balance · {[...new Set(rows.map(row => row.currency))].map(currency => {
+                  const amount = rows.filter(row => row.currency === currency).reduce((sum, row) => sum + row.amount, 0);
+                  return (amount < 0 ? "−" : amount > 0 ? "+" : "") + money(Math.abs(amount), currency);
+                }).join(" · ")}
+              </p>
+            </section>
+          );
+        }
+        const rows = s.all.filter((e) => kind === "payments" ? e.kind === "settlement" : e.kind !== "settlement");
         if (!rows.length) return null;
         return (
           <section key={s.group.id}>

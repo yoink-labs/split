@@ -1,12 +1,13 @@
 import type { Content, ContentTable, ContentText, TableCell, TDocumentDefinitions } from "pdfmake/interfaces";
 
 const ink = "#24201b";
-const highlight = "#e9f1df";
+const highlight = "#eef2e9";
+const outline = "#737a6e";
 const muted = "#665e54";
 
 function textRuns(element: HTMLElement): ContentText[] {
   if (element.matches("mark.sum-self")) {
-    return [{ text: element.innerText, bold: true, color: "#233b28", background: "#e1edd7" }];
+    return [{ text: element.innerText, bold: true }];
   }
   if (!element.querySelector("mark.sum-self")) return [{ text: element.innerText.trim() }];
 
@@ -53,7 +54,9 @@ function tableBlock(table: HTMLTableElement): ContentTable | undefined {
       body: rows.map((row) => Array.from(row.cells, (cell): TableCell => {
         // Item and person rows that head a group of portion lines are bold on a light wash.
         const subhead = row.classList.contains("sum-subhead");
-        const fill = row.closest(".sum-involved") ? { fillColor: highlight } : subhead && !itemized ? { fillColor: "#f4f1ec" } : {};
+        const fillColor = row.classList.contains("sum-personal-row")
+          ? highlight
+          : subhead && !itemized && !table.closest(".sum-involved") ? "#f4f1ec" : undefined;
         const indent = cell.querySelector(":scope > .sum-indent") ? 12 : 0;
         const claims = Array.from(cell.querySelectorAll(".sum-claims > li"), (claim, index) => {
           const [person, amount] = Array.from(claim.children) as HTMLElement[];
@@ -68,7 +71,7 @@ function tableBlock(table: HTMLTableElement): ContentTable | undefined {
             stack: amountLines(cell, 9).map((line, index) => (index === 0 && subhead ? { ...line, bold: true } : line)),
             alignment: "right",
             margin: [0, subhead ? 4 : 3],
-            ...fill,
+            fillColor,
           };
         }
         return {
@@ -79,7 +82,7 @@ function tableBlock(table: HTMLTableElement): ContentTable | undefined {
           color: cell.tagName === "TH" ? muted : ink,
           wordBreak: "break-all",
           margin: [indent, subhead ? 4 : 3, 0, subhead ? 4 : 3],
-          ...fill,
+          fillColor,
         };
       })),
     },
@@ -95,7 +98,25 @@ function blocks(element: Element): Content[] {
 
   const children = () => Array.from(element.children).flatMap(blocks);
   if (element.matches("article, section, header, footer, .sum-receipt")) return children();
-  if (element.matches(".sum-entry")) return [{ stack: children(), margin: [0, 6, 0, 5] }];
+  if (element.matches(".sum-entry")) {
+    const stack = children();
+    if (!element.classList.contains("sum-involved")) return [{ stack, margin: [0, 6, 0, 5] }];
+    return [{
+      layout: {
+        hLineWidth: () => 0.6,
+        vLineWidth: () => 0.6,
+        hLineColor: () => outline,
+        vLineColor: () => outline,
+        paddingLeft: () => 6,
+        paddingRight: () => 6,
+        paddingTop: () => 5,
+        paddingBottom: () => 0,
+      },
+      // Let pdfmake draw the outline around each page fragment of a long receipt.
+      table: { widths: ["*"], body: [[{ stack }]] },
+      margin: [0, 6, 0, 5],
+    }];
+  }
 
   if (element.matches(".sum-meta")) {
     const details = Array.from(element.children, (pair) => {
@@ -116,22 +137,15 @@ function blocks(element: Element): Content[] {
         text: textRuns(child as HTMLElement),
         width: figures || index === 1 ? "*" : 76,
         fontSize: figures || index !== 0 ? 10 : 9,
-
       };
     });
-    if (element.closest(".sum-involved")) {
-      return [{
-        layout: "noBorders",
-        headlineLevel: 2,
-        table: {
-          widths: [76, "*", 124],
-          dontBreakRows: true,
-          body: [columns.map((column) => ({ ...column, width: undefined, fillColor: highlight, margin: [3, 4, 3, 4] }))],
-        },
-        margin: [0, 0, 0, 3],
-      }];
-    }
-    return [{ columns, unbreakable: !figures, columnGap: 10, margin: [0, 0, 0, 7] }];
+    return [{
+      columns,
+      unbreakable: !figures,
+      headlineLevel: element.closest(".sum-involved") ? 2 : undefined,
+      columnGap: 10,
+      margin: [0, 0, 0, 7],
+    }];
   }
 
   if (!element.innerText.trim()) return [];

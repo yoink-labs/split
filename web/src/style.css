@@ -1603,7 +1603,7 @@ input.converter-number {
 .sum-option-groups input { accent-color: var(--primary); }
 .sum-option-groups small { display: block; margin-top: 4px; }
 .sum-for { margin: 0 0 7px; color: var(--p-ink-2); }
-.sum-self { background: #e1edd7; color: #233b28; font-weight: 700; border-radius: 3px; }
+.sum-self { background: transparent; color: inherit; font-weight: 700; }
 
 .sum-paper {
   --p-paper: #fffdf8;
@@ -1950,12 +1950,15 @@ tr.sum-subhead .sum-main { font-weight: 700; }
 .check-row small { font-size: 12.5px; line-height: 1.45; }
 
 .sum-entry.sum-involved {
-  background: #e9f1df;
-  print-color-adjust: exact;
-  -webkit-print-color-adjust: exact;
+  border: 1px solid #737a6e;
+  padding-inline: 8px;
+  margin-block: 6px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
 }
 
-.sum-involved .sum-entry-head {
-  border-inline-start: 3px solid #698354;
-  padding-inline-start: 8px;
+.sum-parts tr.sum-personal-row > td {
+  background: #eef2e9;
+  print-color-adjust: exact;
+  -webkit-print-color-adjust: exact;
 }

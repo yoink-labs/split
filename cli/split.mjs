@@ -129,6 +129,28 @@ function describeExpenseEdit(raw) {
   return ['Expense edit preview', 'Before', ...describeExpense(before), 'After', ...describeExpense(updated),
     'To apply, rerun this command with --yes --revision ' + revision].join('\n');
 }
+function describeBalance(raw) {
+  return clean(raw).map(({ currency, member, net, lines }) => {
+    const signed = amount => {
+      const digits = String(Math.abs(amount)).padStart(3, '0');
+      const sign = amount < 0 ? '−' : amount > 0 ? '+' : '';
+      return sign + currency + ' ' + digits.slice(0, -2) + '.' + digits.slice(-2);
+    };
+    const names = people => people.map(person => person.name).join(', ');
+    return [
+      member.name + ' · ' + currency,
+      ...lines.map(line => {
+        const { kind, from, to, title, refundOf, originalTitle, pending } = line;
+        const detail = kind === 'settlement' ? 'Payment · ' + names(from) + ' → ' + names(to)
+          : kind === 'refund' ? (refundOf ? 'Refund' : 'Credit') + ' from ' + names(from)
+          : 'Expense paid by ' + names(to);
+        const original = refundOf ? ' · Refund of ' + (originalTitle ?? refundOf) : '';
+        return signed(line.amount) + '  ' + title + ' · ' + detail + original + (pending ? ' · Pending' : '');
+      }),
+      'Balance  ' + signed(net),
+    ].join('\n');
+  }).join('\n\n');
+}
 const print = (value, compact) => console.log(JSON.stringify(value, null, compact ? undefined : 2));
 
 async function csvFile(path) {
@@ -354,6 +376,7 @@ export async function main(argv = process.argv.slice(2), io = terminal()) {
       await writeFile(out, Buffer.from(result.data, 'base64'));
       return compact ? print({ saved: out }, true) : console.log('Wrote ' + out);
     }
+    if (tool.name === 'balances' && values.member && !compact) return console.log(describeBalance(result));
     print(result,compact);
   } catch (error) {
     console.error(compact ? JSON.stringify({ error:error.message }) : 'split: ' + clean(String(error.message)));

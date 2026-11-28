@@ -50,7 +50,7 @@ extension Snapshot {
 
     func charges(group: String, seat: String) -> [LedgerEntry] {
         entries.filter { entry in
-            entry.groupID == group && (entry.paidBy == seat || entry.splits.contains { $0.memberID == seat })
+            entry.groupID == group && (entry.allPayers.contains { $0.memberID == seat } || entry.splits.contains { $0.memberID == seat })
         }.sorted { ($0.createdAt, $0.id) > ($1.createdAt, $1.id) }
     }
 }
@@ -64,14 +64,22 @@ struct MemberCharges: View {
     let seatID: String
     @State private var scope: String?
     @State private var scoped = false
-    @State private var kind: Kind = .charges
+    @State private var kind: Kind = .balance
     /// How many rows each group section shows; long statements grow a page at a time.
     @State private var limits: [String: Int] = [:]
     @EnvironmentObject var store: ExpenseStore
     @EnvironmentObject var session: SessionStore
 
     enum Kind: String, CaseIterable, Identifiable {
-        case charges = "Charges", payments = "Payments"
+        case balance = "Breakdown", charges = "Charges", payments = "Payments"
+        var singular: String {
+            switch self {
+            case .balance: "entry"
+            case .charges: "charge"
+            case .payments: "payment"
+            }
+        }
+        var plural: String { self == .balance ? "entries" : singular + "s" }
         var id: String { rawValue }
     }
 
@@ -80,6 +88,14 @@ struct MemberCharges: View {
         var person: Person
         var charges: [LedgerEntry]
         var payments: [LedgerEntry]
+        var balance: [LedgerEntry] = []
+        func entries(_ kind: Kind) -> [LedgerEntry] {
+            switch kind {
+            case .balance: balance
+            case .charges: charges
+            case .payments: payments
+            }
+        }
         var id: String { group.id }
     }
 
@@ -93,14 +109,13 @@ struct MemberCharges: View {
                 let all = snapshot.charges(group: group.id, seat: person.id)
                 return Statement(group: group, person: person,
                                  charges: all.filter { $0.kind != "settlement" },
-                                 payments: all.filter { $0.kind == "settlement" })
+                                 payments: all.filter { $0.kind == "settlement" },
+                                 balance: all.reversed().filter { Ledger.net($0.settling, for: person.id) != 0 })
             }
         if let first = statements.first ?? memberships.first.map({ Statement(group: $0.0, person: $0.1, charges: [], payments: []) }) {
             let isMe = first.person.userID != nil && first.person.userID == session.userID
             let name = isMe ? "You" : first.person.name
-            let hasPayments = statements.contains { !$0.payments.isEmpty }
-            let shown = hasPayments ? kind : .charges
-            let sections = statements.filter { !(shown == .charges ? $0.charges : $0.payments).isEmpty }
+            let sections = statements.filter { !$0.entries(kind).isEmpty }
             ScrollView {
                 VStack(alignment: .leading, spacing: Spacing.section) {
                     header(name: name, isMe: isMe, person: first.person, statements: statements, memberships: memberships)
@@ -114,29 +129,29 @@ struct MemberCharges: View {
                             }
                         }
                     }
-                    if hasPayments {
+                    if !statements.isEmpty {
                         Picker("Show", selection: $kind) {
                             ForEach(Kind.allCases) { Text($0.rawValue).tag($0) }
                         }
                         .pickerStyle(.segmented)
                     }
                     if sections.isEmpty {
-                        EmptyStateView(title: shown == .charges ? "No charges yet" : "No payments yet",
-                                       message: shown == .charges ? "Expenses \(isMe ? "you’re" : "\(name) is") part of appear here." : "Recorded payments appear here.",
-                                       symbol: shown == .charges ? "receipt" : "arrow.left.arrow.right")
+                        EmptyStateView(title: "No \(kind.plural) to show",
+                                       message: kind == .balance ? "Entries that affect the balance appear here." : "Recorded \(kind.plural) appear here.",
+                                       symbol: "receipt")
                     }
                     ForEach(sections) { statement in
-                        section(statement, entries: shown == .charges ? statement.charges : statement.payments, kind: shown, isMe: isMe)
+                        section(statement, entries: statement.entries(kind), kind: kind, isMe: isMe)
                     }
                 }
                 .padding(.horizontal, Spacing.page)
                 .padding(.vertical, Spacing.m)
                 .frame(maxWidth: 760)
                 .frame(maxWidth: .infinity)
-                .animation(.snappy, value: shown)
+                .animation(.snappy, value: kind)
             }
             .background(AppBackground())
-            .navigationTitle(isMe ? "Your charges" : first.person.name)
+            .navigationTitle(isMe ? "Your statement" : first.person.name)
             .navigationBarTitleDisplayMode(.inline)
             .refreshable { await store.sync() }
         } else {
@@ -206,7 +221,7 @@ struct MemberCharges: View {
     private func section(_ statement: Statement, entries: [LedgerEntry], kind: Kind, isMe: Bool) -> some View {
         VStack(alignment: .leading, spacing: Spacing.xs) {
             SectionHeader(title: statement.group.name,
-                          subtitle: "\(entries.count) \(entries.count == 1 ? (kind == .charges ? "charge" : "payment") : (kind == .charges ? "charges" : "payments"))")
+                          subtitle: "\(entries.count) \(entries.count == 1 ? kind.singular : kind.plural)")
             let key = statement.group.id + "|" + kind.rawValue
             let limit = limits[key] ?? BoundedList.page
             let visible = Array(entries.prefix(limit))
@@ -214,7 +229,11 @@ struct MemberCharges: View {
                 LazyVStack(spacing: 0) {
                     ForEach(Array(visible.enumerated()), id: \.element.id) { index, entry in
                         NavigationLink(value: LedgerRoute.entry(group: statement.group.id, id: entry.id)) {
-                            row(entry, statement: statement, isMe: isMe)
+                            if kind == .balance {
+                                balanceRow(entry, statement: statement)
+                            } else {
+                                row(entry, statement: statement, isMe: isMe)
+                            }
                         }
                         .buttonStyle(.plain)
                         .accessibilityHint("Opens the receipt")
@@ -223,12 +242,41 @@ struct MemberCharges: View {
                 }
             }
             ShowMoreButton(shown: visible.count, total: entries.count) { limits[key] = limit + BoundedList.page }
+            if kind == .balance {
+                let totals = Dictionary(grouping: entries.map(\.settling), by: \.currency).mapValues { lines in
+                    lines.reduce(Int64(0)) { $0 + Ledger.net($1, for: statement.person.id) }
+                }
+                Text("Balance · " + totals.keys.sorted().map { Money.text(totals[$0] ?? 0, $0, signed: true) }.joined(separator: " · "))
+                    .font(.subheadline.weight(.semibold))
+            }
         }
     }
 
     private func memberName(_ id: String, in group: ExpenseGroup) -> String {
         guard let person = group.members.first(where: { $0.id == id }) else { return "Someone" }
         return person.userID != nil && person.userID == session.userID ? "You" : person.name
+    }
+
+    private func balanceRow(_ entry: LedgerEntry, statement: Statement) -> some View {
+        let settled = entry.settling
+        let amount = Ledger.net(settled, for: statement.person.id)
+        let payer = entry.allPayers.map { memberName($0.memberID, in: statement.group) }.joined(separator: ", ")
+        let detail: String
+        if entry.isSettlement {
+            let payee = entry.splits.map { memberName($0.memberID, in: statement.group) }.joined(separator: ", ")
+            detail = "Payment · \(payer) → \(payee)"
+        } else if entry.isRefund {
+            let original = entry.refundOf.flatMap { id in store.entries(in: statement.group).first { $0.id == id } }
+            detail = "\(entry.refundOf == nil ? "Credit" : "Refund") from \(payer)" + (original.map { " · Refund of \($0.title)" } ?? "")
+        } else {
+            detail = "Expense paid by \(payer)"
+        }
+        return LedgerRow(title: entry.title,
+                         detail: detail + (entry.isPending ? " · Pending" : ""),
+                         value: Money.text(amount, settled.currency, signed: true),
+                         valueTint: amount > 0 ? Palette.positive : Palette.negative, detailLineLimit: 3) {
+            EntryBadge(title: entry.title, category: entry.category, size: 40)
+        }
     }
 
     @ViewBuilder private func row(_ entry: LedgerEntry, statement: Statement, isMe: Bool) -> some View {

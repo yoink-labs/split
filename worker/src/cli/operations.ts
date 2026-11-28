@@ -9,7 +9,7 @@ import { tools } from '../../../cli/lib/catalog.mjs';
 import { CfWorkerJsonSchemaValidator } from '@modelcontextprotocol/sdk/validation/cfworker';
 import type { JsonSchemaType } from '@modelcontextprotocol/sdk/validation/types';
 import { fingerprint, HTTPError, optionalDay } from '../http';
-import { allocate, balances, dailyCosts, Entry, entryPayers, InputError, nightRate, simplify, validateEntry } from '../ledger';
+import { allocate, balanceLine, balances, dailyCosts, Entry, entryPayers, InputError, nightRate, simplify, validateEntry } from '../ledger';
 
 
 interface Args {
@@ -603,6 +603,26 @@ export async function operate(name: string, input: unknown, env: Env, user: stri
       const prefix = e.id.slice(0,8);
       return { ...e, ...expenseDetails(e), shortID: prefixes.get(prefix) === 1 ? prefix : e.id };
     });
+  }
+  if (name === 'balances' && a.member) {
+    if (!members.some(m => m.id === a.member)) throw new InputError('Choose a group member.');
+    const titles = new Map(entries.map(e => [e.id, e.title]));
+    const people = (ids: string[]) => [...new Set(ids)].map(id => ({ id, name: nameOf(id) }));
+    const lines = [...entries].sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id)).flatMap(e => {
+      const line = balanceLine(e, a.member);
+      if (!line.amount) return [];
+      return [{
+        id: e.id, title: e.title, kind: e.kind, ...line, date: e.createdAt,
+        from: people((e.kind === 'refund' || e.kind === 'settlement' ? entryPayers(e) : e.splits).map(p => p.memberID)),
+        to: people((e.kind === 'refund' || e.kind === 'settlement' ? e.splits : entryPayers(e)).map(p => p.memberID)),
+        ...(e.refundOf ? { refundOf: e.refundOf, originalTitle: titles.get(e.refundOf) } : {}),
+        ...(e.pending ? { pending: true } : {}),
+      }];
+    });
+    return [...new Set([group.currency, ...entries.map(e => settlementEntry(e).currency)])].map(currency => ({
+      currency, member: { id: a.member, name: nameOf(a.member) },
+      net: balances(entries, currency)[a.member] ?? 0, lines: lines.filter(line => line.currency === currency),
+    }));
   }
   if (name === 'balances') return [...new Set([group.currency, ...entries.map(e=>e.exchange?.target??e.currency)])].map(currency => {
     const net = balances(entries,currency);

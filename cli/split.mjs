@@ -268,7 +268,9 @@ export async function main(argv = process.argv.slice(2), io = terminal()) {
     if (tool.name === 'import_splitwise' && result?.preview && guided) return console.log(describeImport(result));
     if (tool.name === 'groups_delete' && result?.preview && guided) return console.log(describeGroupDelete(result));
     if (tool.name === 'expenses_edit' && !compact) {
-      return console.log(result.preview ? describeExpenseEdit(result) : 'Updated expense ' + clean(result.id ?? values.expense) + '.');
+      if (result.preview) return console.log(describeExpenseEdit(result));
+      const category = result.category ? ' Saved category is ' + clean(result.category) + '.' : '';
+      return console.log('Updated expense ' + clean(result.id ?? values.expense) + '.' + category);
     }
     if (tool.name === 'groups_export' && out) {
       await writeFile(out, result.content);

@@ -219,7 +219,7 @@ describe('CLI and MCP', () => {
     await run('members_add',{group,name:'Guest',email:'guest@example.test'});
     const invite = await run('invite',{group,member:other});
     expect((await run('join',{invite:invite.url},outsider)).groupID).toBe(group);
-    const args = {group,payer,participants:[payer,other],title:'Dinner',amount:'10.01'};
+    const args = {group,payer,participants:[payer,other],title:'Dinner',amount:'10.01',category:'Gifts'};
     const first = await run('expenses_add',args);
     expect(first.splits.map(s=>s.amount)).toEqual([501,500]);
     await expect(run('expenses_add',{...args,mode:'percent',values:['50','49']})).rejects.toThrow('sum to 100');
@@ -233,9 +233,14 @@ describe('CLI and MCP', () => {
     const preview = await run('expenses_delete',target);
     await expect(run('expenses_delete',{...target,yes:true})).rejects.toThrow('fresh preview');
     await expect(run('expenses_edit',{...target,title:'Other'},outsider)).rejects.toThrow('not found');
-    const edit = {...target,title:'Supper'};
+    const edit = {...target,category:'Shopping'};
     const review = await run('expenses_edit',edit);
-    await run('expenses_edit',{...edit,revision:review.revision,yes:true});
+    expect(review.before.category).toBe('Gifts');
+    expect(review.after.category).toBe('Shopping');
+    expect(await run('expenses_edit',{...edit,revision:review.revision,yes:true})).toEqual({
+      applied:true, id:first.id, category:'Shopping'
+    });
+    expect((await run('expenses_show',target)).category).toBe('Shopping');
     await expect(run('expenses_delete',{...target,revision:preview.revision,yes:true})).rejects.toThrow('fresh preview');
     const fresh = await run('expenses_delete',target);
     await run('expenses_delete',{...target,revision:fresh.revision,yes:true});

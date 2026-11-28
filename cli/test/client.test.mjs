@@ -99,9 +99,16 @@ test('CLI downloads write files and confirmed edits print one result', async t =
     for await (const chunk of req) chunks.push(chunk);
     const payload = JSON.parse(Buffer.concat(chunks).toString('utf8'));
     requests.push(payload);
-    const result = payload.name === 'expenses_edit' ? { applied: true } : payload.name === 'receipts_get'
-      ? { data: jpeg.toString('base64') }
-      : { content: payload.arguments.format === 'json' ? content : csv };
+    let result;
+    if (payload.name === 'expenses_edit') {
+      result = payload.arguments.yes
+        ? { applied: true, id: expense, category: 'Shopping' }
+        : { preview: true, before: { category: 'Gifts' }, after: { category: 'Shopping' }, revision: 'revision' };
+    } else if (payload.name === 'receipts_get') {
+      result = { data: jpeg.toString('base64') };
+    } else {
+      result = { content: payload.arguments.format === 'json' ? content : csv };
+    }
     res.end(JSON.stringify(result));
   });
   server.listen(0, '127.0.0.1');
@@ -115,9 +122,12 @@ test('CLI downloads write files and confirmed edits print one result', async t =
   const receipt = await run(['receipts', 'get', '--group', group, '--expense', expense, '--photo', photo, '--out', receiptPath, '--json']);
   const exported = await run(['groups', 'export', '--group', group, '--format', 'json', '--out', exportPath, '--json']);
   const ledger = await run(['groups', 'export', '--group', group, '--out', ledgerPath, '--json']);
-  const edit = await run(['expenses', 'edit', '--group', group, '--expense', expense, '--yes', '--revision', 'revision', '--json']);
+  const edit = await run(['expenses', 'edit', '--group', group, '--expense', expense, '--category', 'Shopping', '--yes', '--json']);
+  const plainEdit = await run(['expenses', 'edit', '--group', group, '--expense', expense, '--category', 'Shopping', '--yes', '--revision', 'revision']);
   assert.equal(edit.stderr, '');
-  assert.deepEqual(JSON.parse(edit.stdout), { applied: true });
+  assert.deepEqual(JSON.parse(edit.stdout), { applied: true, id: expense, category: 'Shopping' });
+  assert.equal(plainEdit.stderr, '');
+  assert.equal(plainEdit.stdout.trim(), `Updated expense ${expense}. Saved category is Shopping.`);
   assert.deepEqual(JSON.parse(receipt.stdout), { saved: receiptPath });
   assert.deepEqual(JSON.parse(exported.stdout), { saved: exportPath });
   assert.deepEqual(JSON.parse(ledger.stdout), { saved: ledgerPath });
@@ -128,7 +138,9 @@ test('CLI downloads write files and confirmed edits print one result', async t =
     { name: 'receipts_get', arguments: { group, expense, photo } },
     { name: 'groups_export', arguments: { group, format: 'json' } },
     { name: 'groups_export', arguments: { group } },
-    { name: 'expenses_edit', arguments: { group, expense, yes: true, revision: 'revision' } }
+    { name: 'expenses_edit', arguments: { group, expense, category: 'Shopping', yes: false } },
+    { name: 'expenses_edit', arguments: { group, expense, category: 'Shopping', yes: true, revision: 'revision' } },
+    { name: 'expenses_edit', arguments: { group, expense, category: 'Shopping', yes: true, revision: 'revision' } }
   ]);
 });
 

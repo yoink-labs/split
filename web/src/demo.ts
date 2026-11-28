@@ -570,9 +570,6 @@ export function createDemoState() {
     { id: "photo-inbox-kiosco", groupID: gBA.id, uploadedBy: "m-maya", createdAt: "2026-11-18T13:40:00Z", note: "Snacks for the ferry", bytes: 30120 },
   ];
 
-  return {
-    inbox,
-    snapshot: { userID: DEMO_USER, avatarURL: "preset:cobalt", paymentMethods: [{ platform: "venmo", handle: "harris-k", preferred: true }],
   const now = Date.now();
   const directory: DirectoryPerson[] = [
     { userID: "user-maya", name: "Maya Lin", avatarURL: "preset:emerald" },
@@ -590,6 +587,7 @@ export function createDemoState() {
   ];
 
   return {
+    inbox,
     directory,
     invitations,
     snapshot: { userID: DEMO_USER, avatarURL: "preset:cobalt", invitationCount: invitations.length, discoverable: true, paymentMethods: [{ platform: "venmo", handle: "harris-k", preferred: true }],

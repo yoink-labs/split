@@ -94,7 +94,7 @@ function DemoLedger({ onExit }: { onExit: () => void }) {
   const commentsRef = useRef<Record<string, ExpenseComment[]>>(initial.comments);
   const claimEmails = useRef<Record<string, Record<string, string>>>({});
   const invitesRef = useRef<Record<string, ActiveInvite[]>>(initial.invites);
-  const inboxRef = useRef<Invitation[]>(initial.invitations);
+  const invitationsRef = useRef<Invitation[]>(initial.invitations);
   const photosRef = useRef<Record<string, Blob>>(initial.photos);
   const inboxRef = useRef<InboxReceipt[]>(initial.inbox);
   const connections = useRef<Connection[]>([{
@@ -455,15 +455,15 @@ function DemoLedger({ onExit }: { onExit: () => void }) {
         ];
         return { id } as T;
       }
-      if (path === "/v1/invitations" && body === undefined) return { invitations: inboxRef.current } as T;
+      if (path === "/v1/invitations" && body === undefined) return { invitations: invitationsRef.current } as T;
       const answer = path.match(/^\/v1\/invitations\/([a-f0-9]{64})\/(accept|decline)$/);
       if (answer) {
-        const invite = inboxRef.current.find((item) => item.id === answer[1]);
+        const invite = invitationsRef.current.find((item) => item.id === answer[1]);
         if (!invite) throw new Error("Invitation not found.");
-        inboxRef.current = inboxRef.current.filter((item) => item.id !== invite.id);
+        invitationsRef.current = invitationsRef.current.filter((item) => item.id !== invite.id);
         setData((prev) => ({
           ...prev,
-          invitationCount: inboxRef.current.length,
+          invitationCount: invitationsRef.current.length,
           groups: answer[2] === "decline" ? prev.groups : [{
             id: invite.groupID, name: invite.groupName, kind: invite.groupKind, currency: "EUR", simplify: true,
             members: [

@@ -110,7 +110,7 @@ struct SpendingTimeChart: View {
                 RuleMark(y: .value("Average", Double(mean) / 100))
                     .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
                     .foregroundStyle(Palette.ink.opacity(0.45))
-                    .annotation(position: .top, alignment: .leading, spacing: 2) {
+                    .annotation(position: .top, alignment: .trailing, spacing: 2) {
                         Text("avg \(format.money(mean))")
                             .font(.caption2.weight(.medium))
                             .foregroundStyle(.secondary)
@@ -146,10 +146,19 @@ struct SpendingTimeChart: View {
         .chartXVisibleDomain(length: scrolls ? Self.scrollThreshold : Swift.max(1, keys.count))
         .chartScrollPosition(initialX: keys.last.map { _ in keys[Swift.max(0, keys.count - Self.scrollThreshold)] } ?? "")
         .chartXSelection(value: $scrubbing)
-        .onChange(of: scrubbing) { old, new in
-            // A tap or drag shows a readout; lifting the finger opens that period.
-            guard new == nil, let old, let bucket = report.buckets.first(where: { $0.key == old }), bucket.count > 0 else { return }
-            onSelect(old)
+        .chartOverlay { proxy in
+            GeometryReader { geometry in
+                Rectangle()
+                    .fill(.clear)
+                    .contentShape(Rectangle())
+                    .onTapGesture { location in
+                        guard let frame = proxy.plotFrame else { return }
+                        let x = location.x - geometry[frame].origin.x
+                        guard let key: String = proxy.value(atX: x),
+                              let bucket = report.buckets.first(where: { $0.key == key }), bucket.count > 0 else { return }
+                        onSelect(key)
+                    }
+            }
         }
         .animation(reduceMotion ? nil : .snappy(duration: 0.3), value: report.buckets)
         .accessibilityRepresentation {

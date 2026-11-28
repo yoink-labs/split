@@ -88,7 +88,7 @@ struct AnalyticsSummary: View {
                 Text(value)
                     .font(.splitAmount(16))
                     .foregroundStyle(Palette.onHero)
-                    .lineLimit(1)
+                    .lineLimit(detail == nil ? 1 : 2)
                     .minimumScaleFactor(0.6)
                 if let detail {
                     Text(detail)

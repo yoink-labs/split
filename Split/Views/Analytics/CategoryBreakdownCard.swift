@@ -47,7 +47,7 @@ struct CategoryBreakdownCard: View {
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                         Text(format.money(active.flatMap { id in report.categories.first { $0.id == id }?.amount } ?? report.total))
-                            .font(.splitAmount(14))
+                            .font(.splitAmount(12))
                             .foregroundStyle(Palette.ink)
                             .lineLimit(1)
                             .minimumScaleFactor(0.6)
@@ -74,12 +74,17 @@ struct CategoryBreakdownCard: View {
                     .foregroundStyle(meta.tint)
                     .background(meta.tint.opacity(0.14), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
                 VStack(alignment: .leading, spacing: 5) {
-                    HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        Text(meta.label).font(.subheadline.weight(.semibold)).foregroundStyle(Palette.ink).lineLimit(1)
-                        Text(AnalyticsFormat.count(category.count, "expense")).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    HStack(alignment: .top, spacing: 6) {
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(meta.label).font(.subheadline.weight(.semibold)).foregroundStyle(Palette.ink).lineLimit(2)
+                            Text(AnalyticsFormat.count(category.count, "expense")).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        }
+                        .layoutPriority(1)
                         Spacer(minLength: 4)
-                        Text(format.money(category.amount)).font(.splitAmount(13)).foregroundStyle(Palette.ink).lineLimit(1).minimumScaleFactor(0.7)
-                        Text("\(category.percent)%").font(.caption.weight(.medium)).foregroundStyle(.secondary).frame(minWidth: 32, alignment: .trailing)
+                        VStack(alignment: .trailing, spacing: 1) {
+                            Text(format.money(category.amount)).font(.splitAmount(13)).foregroundStyle(Palette.ink).lineLimit(1).minimumScaleFactor(0.7)
+                            Text("\(category.percent)%").font(.caption.weight(.medium)).foregroundStyle(.secondary)
+                        }
                     }
                     ProportionBar(fraction: fraction, tint: meta.tint)
                 }

@@ -346,7 +346,7 @@ export async function operate(name: string, input: unknown, env: Env, user: stri
     if (a.revision !== revision) throw new HTTPError(409,'Review a fresh preview before confirming.');
     const action = after ? 'edit' : 'delete';
     await ledger(`/v1/entries/${before.id}/${action}`, { original: before, entry: after });
-    return { applied: true, id: a.expense };
+    return { applied: true, id: a.expense, category: after?.category };
   }
   const entries = snapshot.entries.filter(e => e.groupID === group.id);
   if (name === 'groups_export') {

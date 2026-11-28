@@ -60,7 +60,7 @@ width. The web client shares the same Worker, groups and cent allocations.
 - **Social ledger.** Comments and likes on every expense, with author-only
   deletion, month-grouped activity, group and type filters.
 - **Free Pro features.** Global search across groups, people and expenses, and
-  Insights charts for month, category and person.
+  Analytics charts for time, category, person and currency.
 - **iPhone Duo.** The tab bar moves to the 84 pt vertical bar on the inner
   display, group and friend lists become two-pane, and the dashboard uses an
   adaptive grid across folds, Split View and every orientation.

@@ -414,8 +414,8 @@ struct AccountView: View {
                     }
                     .buttonStyle(.plain)
                     rowDivider
-                    NavigationLink { InsightsView() } label: {
-                        navigationLabel(icon: "chart.bar.xaxis", title: "Insights", subtitle: "Spending by month, category and person")
+                    NavigationLink { AnalyticsView(groupID: nil) } label: {
+                        navigationLabel(icon: "chart.bar.xaxis", title: "Analytics", subtitle: "Spending over time, by category, person and currency")
                     }
                     .buttonStyle(.plain)
                     rowDivider

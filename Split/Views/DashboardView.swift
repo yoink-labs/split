@@ -221,7 +221,16 @@ struct DashboardView: View {
 
     @ViewBuilder private var activitySection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            SectionHeader(title: "Recent activity", subtitle: "Everything you and your people changed")
+            HStack(alignment: .firstTextBaseline) {
+                SectionHeader(title: "Recent activity", subtitle: "Everything you and your people changed")
+                // On compact widths the Activity tab gives its place to Analytics.
+                if size == .compact {
+                    NavigationLink("See all") { ActivityFeedView(embedded: true) }
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Palette.evergreen)
+                        .accessibilityIdentifier("home-see-all-activity")
+                }
+            }
             Card(padding: 0) {
                 if dashboard.recent.isEmpty {
                     EmptyPanel(title: "Nothing to catch up on", message: "Expenses and payments appear here as you add them.", symbol: "clock")
@@ -248,7 +257,7 @@ struct DashboardView: View {
 
     private var insightsCard: some View {
         NavigationLink {
-            InsightsView()
+            AnalyticsView(groupID: nil)
         } label: {
             Card {
                 HStack(spacing: 14) {
@@ -259,8 +268,8 @@ struct DashboardView: View {
                         .foregroundStyle(Palette.ink)
                         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                     VStack(alignment: .leading, spacing: 3) {
-                        Text("Insights").font(.headline).foregroundStyle(Palette.ink)
-                        Text("Spending by month, category and person — free, like everything else.").font(.caption).foregroundStyle(.secondary)
+                        Text("Analytics").font(.headline).foregroundStyle(Palette.ink)
+                        Text("Spending over time, by category, person and currency — free, like everything else.").font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()
                     Image(systemName: "chevron.right").font(.caption2.weight(.bold)).foregroundStyle(.tertiary)

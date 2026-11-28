@@ -65,6 +65,8 @@ struct MemberCharges: View {
     @State private var scope: String?
     @State private var scoped = false
     @State private var kind: Kind = .charges
+    /// How many rows each group section shows; long statements grow a page at a time.
+    @State private var limits: [String: Int] = [:]
     @EnvironmentObject var store: ExpenseStore
     @EnvironmentObject var session: SessionStore
 
@@ -204,18 +206,22 @@ struct MemberCharges: View {
         VStack(alignment: .leading, spacing: Spacing.xs) {
             SectionHeader(title: statement.group.name,
                           subtitle: "\(entries.count) \(entries.count == 1 ? (kind == .charges ? "charge" : "payment") : (kind == .charges ? "charges" : "payments"))")
+            let key = statement.group.id + "|" + kind.rawValue
+            let limit = limits[key] ?? BoundedList.page
+            let visible = Array(entries.prefix(limit))
             Card(padding: 0) {
-                VStack(spacing: 0) {
-                    ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
+                LazyVStack(spacing: 0) {
+                    ForEach(Array(visible.enumerated()), id: \.element.id) { index, entry in
                         NavigationLink(value: LedgerRoute.entry(group: statement.group.id, id: entry.id)) {
                             row(entry, statement: statement, isMe: isMe)
                         }
                         .buttonStyle(.plain)
                         .accessibilityHint("Opens the receipt")
-                        if index < entries.count - 1 { RowDivider() }
+                        if index < visible.count - 1 { RowDivider() }
                     }
                 }
             }
+            ShowMoreButton(shown: visible.count, total: entries.count) { limits[key] = limit + BoundedList.page }
         }
     }
 

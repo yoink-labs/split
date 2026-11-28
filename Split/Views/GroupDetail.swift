@@ -51,6 +51,7 @@ struct GroupDetail: View {
     @State private var category = ""
     @State private var payer = ""
     @State private var participant = ""
+    @State private var mine: Involvement = .everyone
 
     private enum Section: String, CaseIterable {
         case overview = "Overview", transactions = "Transactions", ledger = "Ledger", receipts = "Receipts", members = "Members"
@@ -72,12 +73,24 @@ struct GroupDetail: View {
         }
     }
 
+    /// The web ledger's "I’m involved" and "I owe" toggles.
+    private enum Involvement: String, CaseIterable {
+        case everyone = "Everyone", involved = "I’m involved", owe = "I owe"
+    }
+
     private var group: ExpenseGroup? { store.group(groupID) }
     private var entries: [LedgerEntry] { group.map { store.entries(in: $0) } ?? [] }
     private var summary: GroupSummary? { group.map { store.summary(for: $0) } }
     private var openCount: Int { entries.reduce(0) { $0 + $1.openPurchaseCount } }
 
+    private func matches(_ involvement: Involvement, _ entry: LedgerEntry, me: String?) -> Bool {
+        guard involvement != .everyone else { return true }
+        let position = LedgerPosition(entry, memberID: me)
+        return involvement == .involved ? position.involved : position.net < 0
+    }
+
     private func ledgerSections(_ group: ExpenseGroup) -> [(String, [LedgerEntry])] {
+        let me = Analytics.me(in: group, userID: store.currentUserID)
         let search = query.trimmingCharacters(in: .whitespacesAndNewlines)
         let filtered = entries.filter { entry in
             filter.includes(entry)
@@ -87,6 +100,7 @@ struct GroupDetail: View {
                     || entry.allPayers.contains { $0.memberID == participant })
                 && (search.isEmpty || [entry.title, entry.notes, entry.category]
                     .compactMap { $0 }.contains { $0.localizedStandardContains(search) })
+                && matches(mine, entry, me: me?.id)
         }
         let grouped = Dictionary(grouping: filtered) { String($0.createdAt.prefix(group.kind == "trip" ? 10 : 7)) }
         return grouped.keys.sorted(by: >).map { ($0, grouped[$0] ?? []) }
@@ -136,7 +150,7 @@ struct GroupDetail: View {
                         Button { present(.balances(group)) } label: { Label("Balances", systemImage: "chart.pie") }
                         Menu {
                             Button { present(.credit(group)) } label: { Label("Record a credit", systemImage: "arrow.uturn.backward") }
-                            Button { insights = true } label: { Label("Insights", systemImage: "chart.bar.xaxis") }
+                            Button { insights = true } label: { Label("Analytics", systemImage: "chart.bar.xaxis") }
                             Button { settings = true } label: { Label("Group settings", systemImage: "slider.horizontal.3") }
                         } label: {
                             Label("More", systemImage: "ellipsis.circle")
@@ -152,7 +166,7 @@ struct GroupDetail: View {
                 }
                 .sheet(isPresented: $insights) {
                     NavigationStack {
-                        InsightsView(group: group)
+                        AnalyticsView(groupID: group.id)
                             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { insights = false } } }
                     }
                 }
@@ -322,6 +336,9 @@ struct GroupDetail: View {
                     .overlay(RoundedRectangle(cornerRadius: Radius.badge).strokeBorder(Palette.line))
                     .accessibilityLabel("Search ledger")
                 Menu {
+                    Picker("Show", selection: $mine) {
+                        ForEach(Involvement.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                    }
                     Picker("Status", selection: $filter) {
                         ForEach(LedgerFilter.allCases, id: \.self) { option in Text(option.rawValue).tag(option) }
                     }
@@ -346,6 +363,18 @@ struct GroupDetail: View {
                 .accessibilityValue(filter.rawValue)
             }
 
+            if hasLedgerFilters || !query.isEmpty {
+                let shown = sections.reduce(0) { $0 + $1.1.count }
+                Text("\(shown) of \(entries.count) entries")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .accessibilityAddTraits(.updatesFrequently)
+            }
+            if mine == .owe {
+                Text("Shows expenses where your share is more than you paid, leaving out expenses marked handled. Settle up shows what you owe after payments.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             if sections.isEmpty {
                 ContentUnavailableView("No matching entries", systemImage: "magnifyingglass")
             } else {
@@ -366,7 +395,7 @@ struct GroupDetail: View {
     }
 
     private var hasLedgerFilters: Bool {
-        filter != .all || !category.isEmpty || !payer.isEmpty || !participant.isEmpty
+        filter != .all || !category.isEmpty || !payer.isEmpty || !participant.isEmpty || mine != .everyone
     }
 
     private func clearLedgerFilters() {
@@ -374,6 +403,7 @@ struct GroupDetail: View {
         category = ""
         payer = ""
         participant = ""
+        mine = .everyone
         query = ""
     }
 

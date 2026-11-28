@@ -21,7 +21,7 @@ copying, the pieces Split already has, and the contract for the 0.7 port.
 | Activity feed | Flat list | Month-grouped feed, filters, likes, comments |
 | Expense detail: breakdown, notes, comments, receipt, edit/delete/repeat | Partial | Full detail with social actions |
 | Search (a Splitwise Pro feature) | None | Free global search across groups, people and expenses |
-| Charts (a Splitwise Pro feature) | Text breakdowns | Free Insights with monthly and category charts |
+| Charts (a Splitwise Pro feature) | Text breakdowns | Free Analytics: spending over time, by category, person and currency, with drill-down |
 | Notifications/reminders | None | In-app balance reminders and activity badges (no push in 0.7) |
 | CSV import/export, exchange rates, recurring expenses, default shares | Present | Preserved |
 | Account, connected computers, sign out | Present | Redesigned account screen, data export, free-everything promise |
@@ -43,7 +43,7 @@ The target is iOS 27.1+ on the inner display and iOS 18 on everything else.
   override it.
 - Groups and Friends use `NavigationSplitView`; it collapses to a stack on the
   outer display and shows list + detail on the inner display.
-- Home, group detail and Insights use an adaptive `LazyVGrid` (320 pt minimum)
+- Home, group detail and Analytics use an adaptive `LazyVGrid` (320 pt minimum)
   so one column becomes two on regular width without stretching content.
 - Support every orientation on iPhone and iPad. Do not branch on device or
   orientation; branch on size class and available width.
@@ -99,7 +99,7 @@ lists, cards and sheets. Actions are compact intrinsic glass capsules in a
 cluster, never a single full-width button alone on a row; only sign-in, save and
 other primary form actions span a column. Groups and friends use a two-pane
 list/detail on regular width and collapse to a stack; Account becomes two columns;
-Insights uses a daily chart for one-month data and a six-month chart otherwise.
+Analytics picks day, week or month bars from the date range, like the web, and you can override it.
 Every screen works in light and dark, at accessibility sizes, and with VoiceOver
 labels that read as sentences.
 

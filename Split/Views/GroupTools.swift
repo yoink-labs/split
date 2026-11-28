@@ -120,6 +120,14 @@ struct GroupTools: View {
                     }
                 }
 
+                if current.kind == "trip" {
+                    TripRatesSection(
+                        group: current,
+                        canEdit: current.members.contains { $0.userID == session.userID && $0.removed != true },
+                        run: { work in run { try await work(); message = "Exchange rate saved." } }
+                    )
+                }
+
                 Section {
                     Button("Import CSV") { choose = true }
                     Button("Export CSV") {

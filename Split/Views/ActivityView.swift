@@ -87,8 +87,18 @@ struct ActivityFeedView: View {
 
     private var hasFilters: Bool { filter != .all || groupID != nil }
 
+    /// Pushed from Home on compact widths, where the Activity tab makes room for Analytics.
+    var embedded = false
+
     var body: some View {
-        NavigationStack {
+        if embedded {
+            feed
+        } else {
+            NavigationStack { feed }
+        }
+    }
+
+    private var feed: some View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: Spacing.section) {
                     statusLine
@@ -125,7 +135,6 @@ struct ActivityFeedView: View {
             .sheet(item: $inspecting) { selection in
                 EntryDetails(entry: selection.entry, group: selection.group)
             }
-        }
     }
 
     /// A compact count rail. Counts are currency-free so mixed groups stay honest.

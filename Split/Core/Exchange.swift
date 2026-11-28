@@ -27,6 +27,14 @@ struct Exchange:Codable,Equatable {
               let d=Decimal(string:clean), d>0, d<=10_000_000 else { return nil }
         return NSDecimalNumber(decimal:d*100_000_000).int64Value
     }
+    static func impliedRate(original: Int64, charged: Int64) -> Int64? {
+        guard original > 0, charged > 0 else { return nil }
+        var rate = Decimal(charged) * 100_000_000 / Decimal(original)
+        var rounded = Decimal()
+        NSDecimalRound(&rounded, &rate, 0, .plain)
+        guard rounded >= 1, rounded <= 1_000_000_000_000_000 else { return nil }
+        return NSDecimalNumber(decimal: rounded).int64Value
+    }
     func convertedAmount(_ original: Int64, maximumTotal: Int64 = Money.maxAmount) throws -> Int64 {
         let minimum = maximumTotal == Money.maxAmount && !isPublishedEstimate ? 1 : 0
         guard let amount = statementAmount ?? FXMath.convert(original, rateE8: rateE8),

@@ -472,6 +472,12 @@ private struct ActiveInviteResponse: Decodable {
         }
     }
 
+    func chargedAmountHistory(for entryID: String) async throws -> [ChargedAmountChange] {
+        guard !isDemo else { return [] }
+        let data = try await request(path: "/v1/entries/\(entryID)/charged-amount-history")
+        return try JSONDecoder().decode(ChargedAmountHistory.self, from: data).history
+    }
+
     func comments(for entryID: String) -> [EntryComment]? {
         if demo { return demoComments[entryID] ?? [] }
         return comments[entryID]
@@ -1012,6 +1018,19 @@ private struct ActiveInviteResponse: Decodable {
 private struct APIError: Decodable { var error: String }
 private struct ResolveRefund: Encodable { var action = "refund"; var refund: LedgerEntry }
 private struct InviteResponse: Decodable { var url: URL }
+struct ChargedAmountChange: Decodable, Identifiable {
+    var id: Int
+    var previousCurrency: String?
+    var previousAmount: Int64?
+    var chargedCurrency: String?
+    var chargedAmount: Int64?
+    var changedAt: String
+}
+
+private struct ChargedAmountHistory: Decodable {
+    var history: [ChargedAmountChange]
+}
+
 private struct CommentList: Decodable { var comments: [EntryComment] }
 
 enum Fixtures {

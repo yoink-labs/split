@@ -277,7 +277,7 @@ enum SpendAnalytics {
             rows.append(Row(
                 entry: entry, home: projected, day: day, category: categoryID(entry.category),
                 amount: amount, original: direction * (person.map { share(entry, of: $0, key: key) } ?? entry.amount),
-                estimated: entry.currency != home
+                estimated: (entry.exchange?.statementAmount == nil ? entry.currency : entry.exchange?.target) != home
             ))
         }
         return rows

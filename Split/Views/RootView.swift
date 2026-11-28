@@ -12,8 +12,10 @@ struct RootView: View {
 
     private var historyKey: [String] {
         let pairs = (store.entries + store.pendingSettlements).compactMap { entry -> String? in
-            guard entry.currency != fx.home, entry.exchange?.target != fx.home else { return nil }
-            return "\(entry.currency)|\(entry.exchange?.date ?? entry.day)"
+            guard entry.exchange?.target != fx.home else { return nil }
+            let basis = entry.exchange?.statementAmount == nil ? entry : entry.settling
+            guard basis.currency != fx.home else { return nil }
+            return "\(basis.currency)|\(basis.exchange?.date ?? basis.day)"
         }
         return [fx.home] + Set(pairs).sorted()
     }

@@ -23,6 +23,7 @@ struct EntryDetails: View {
     @State private var assignment: Assignment?
     @State private var gallery: ReceiptPresentation?
     @State private var editing = false
+    @State private var chargeHistory: [ChargedAmountChange] = []
     @State private var deleting = false
     @State private var working = false
     @State private var repeatWorking = false
@@ -122,6 +123,12 @@ struct EntryDetails: View {
                 }
             }
         }
+        .task(id: [entry.id, entry.exchange?.target ?? "", String(entry.exchange?.statementAmount ?? 0)]) {
+            guard entry.kind == "expense" else { return }
+            if let history = try? await store.chargedAmountHistory(for: entry.id), !Task.isCancelled {
+                chargeHistory = history
+            }
+        }
     }
 
     private var content: some View {
@@ -161,6 +168,7 @@ struct EntryDetails: View {
                     }
                     if !showsBreakdownFirst { breakdown }
                     if let notes = entry.notes, !notes.isEmpty { notesCard(notes) }
+                    if !chargeHistory.isEmpty { chargeHistoryCard }
                     reactionsCard
                     Card {
                         CommentsView(entryID: entry.id) {
@@ -454,17 +462,40 @@ struct EntryDetails: View {
 
     // MARK: - Money and receipt
 
+    private var chargeHistoryCard: some View {
+        Card {
+            VStack(alignment: .leading, spacing: 8) {
+                SectionHeader(title: "Charged amount history")
+                ForEach(chargeHistory) { change in
+                    let before = change.previousAmount.flatMap { amount in
+                        change.previousCurrency.map { Money.text(amount, $0) }
+                    } ?? "Exchange rate"
+                    let after = change.chargedAmount.flatMap { amount in
+                        change.chargedCurrency.map { Money.text(amount, $0) }
+                    } ?? "Exchange rate"
+                    Text("\(FXQuote.shortDay(String(change.changedAt.prefix(10)))) · \(before) → \(after)")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
     private var settlementCard: some View {
         let settled = entry.settling
         return Card {
             VStack(alignment: .leading, spacing: 10) {
                 SectionHeader(title: "Settlement value", subtitle: entry.exchange?.target)
                 HStack {
-                    Text(settled.currency)
+                    Text(entry.exchange?.statementAmount == nil ? settled.currency : "Actually charged (override)")
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(.secondary)
                     Spacer()
                     AmountText(minor: settled.amount, currency: settled.currency, size: 22)
+                }
+                if entry.exchange?.statementAmount != nil {
+                    LabeledContent("Original amount", value: Money.text(entry.amount, entry.currency))
+                        .font(.subheadline)
                 }
                 if let exchange = entry.exchange {
                     Text(exchange.description(base: entry.currency))

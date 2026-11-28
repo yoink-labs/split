@@ -50,6 +50,7 @@ const payerSplit = {
   minItems: 1, maxItems: 50
 };
 const allocation = {
+  chargedAmount: { ...text('Actual card charge in settlement currency, e.g. "24.37". Use "none" on edit to clear the override.'), pattern:'^(none|[0-9]{1,10}([.][0-9]{1,2})?)$' },
   rate: { ...text('Group currency per 1 unit of expense currency. For a BRL expense in a USD group, --rate 0.18 means 1 BRL = 0.18 USD. On add, a saved trip rate is used when available.'), pattern:'^[0-9]{1,8}([.][0-9]{1,8})?$' },
   category, title: text('Expense description.'), amount: money, payer: member, currency,
   notes: text('Optional notes on this expense.', 2000),

@@ -226,6 +226,11 @@ enum GroupSummaryPDF {
         }
     }
 
+    private static func chargedAmountLabel(_ entry: LedgerEntry) -> String? {
+        guard let exchange = entry.exchange, let amount = exchange.statementAmount else { return nil }
+        return "Charged amount override \(Money.text(amount, exchange.target))"
+    }
+
     private static func renderHistory(_ rows: [(recorded: LedgerEntry, preferred: LedgerEntry?)], layout: Layout,
                                       home: String, writer: PDFWriter, name: (String) -> String, memberID: String?) {
         if layout == .summary, memberID == nil, !rows.isEmpty {
@@ -234,9 +239,13 @@ enum GroupSummaryPDF {
                 let status = (entry.isSettlement ? " (payment)" : entry.isRefund ? " (refund)" : entry.isHandled ? " (handled)" : "")
                     + (entry.isPending ? " (pending)" : "")
                 let original = Money.text(entry.signedAmount, entry.currency)
-                let converted = projected.map { money($0.signedAmount, home, approximate: entry.currency != home) }
+                let override = chargedAmountLabel(entry)
+                let base = entry.exchange?.statementAmount == nil ? entry.currency : entry.settling.currency
+                let converted = projected.map { money($0.signedAmount, home, approximate: base != home) }
+                let detail = [override, (entry.currency != home || override != nil) && converted != nil ? "Recorded \(original)" : nil]
+                    .compactMap { $0 }.joined(separator: "  /  ")
                 writer.row("\(displayDay(entry.day))  /  \(entry.title)\(status)", amount: converted ?? original,
-                           detail: entry.currency != home && converted != nil ? "Recorded \(original)" : nil)
+                           detail: detail.isEmpty ? nil : detail)
                 if entry.bill != nil, let items = try? Consumption.items(entry) {
                     for item in items { writer.row(item.title, amount: Money.text(item.gross, entry.currency)) }
                 }
@@ -253,13 +262,14 @@ enum GroupSummaryPDF {
             let kind = entry.isSettlement ? "Payment" : entry.isRefund ? "Refund" : (entry.category ?? "Expense")
             let status = (entry.isHandled ? "  /  Already handled" : "")
                 + (entry.isPending ? "  /  Pending" + (entry.pendingNote.map { ": " + $0 } ?? "") : "")
-            let approximate = entry.currency != home
+            let override = chargedAmountLabel(entry)
+            let approximate = (override == nil ? entry.currency : entry.settling.currency) != home
             func amount(_ original: Int64?, _ preferred: Int64?) -> String {
                 guard let original else { return "—" }
                 return preferred.map { money($0, home, approximate: approximate) } ?? Money.text(original, entry.currency)
             }
             func recorded(_ original: Int64?, _ preferred: Int64?) -> String? {
-                guard approximate, let original, preferred != nil else { return nil }
+                guard entry.currency != home || override != nil, let original, preferred != nil else { return nil }
                 return "Recorded \(Money.text(original, entry.currency))"
             }
             func line(_ label: String, _ original: Int64, _ preferred: Int64?) -> PDFWriter.Row {
@@ -270,7 +280,9 @@ enum GroupSummaryPDF {
                 header += writer.lines("\(home) rate unavailable. Showing recorded \(entry.currency) amounts.", .detail)
             }
             let settling = entry.settling
-            if settling.currency != entry.currency && settling.currency != home {
+            if let override {
+                header += writer.lines(override, .detail)
+            } else if settling.currency != entry.currency && settling.currency != home {
                 header += writer.lines("Settles in \(Money.text(settling.amount, settling.currency))", .detail)
             }
             let total = line(entry.isSettlement ? "Payment amount" : entry.isRefund ? "Refund amount" : "Expense total", entry.amount, projected?.amount)

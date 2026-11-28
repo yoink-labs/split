@@ -223,6 +223,10 @@ final class FXStore: ObservableObject {
     }
 
     func homeEntry(_ entry: LedgerEntry) -> LedgerEntry? {
+        if let exchange = entry.exchange, exchange.statementAmount != nil {
+            guard let settled = try? exchange.converting(entry) else { return nil }
+            return homeEntry(settled)
+        }
         if entry.currency == home {
             var copy = entry
             copy.exchange = nil
@@ -233,40 +237,50 @@ final class FXStore: ObservableObject {
         return try? quote.exchange.converting(entry, maximumTotal: Int64.max)
     }
 
+    func isEstimated(_ entry: LedgerEntry) -> Bool {
+        (entry.exchange?.statementAmount == nil ? entry.currency : entry.exchange?.target) != home
+    }
+
     func entryText(_ entry: LedgerEntry, amount: Int64? = nil, signed: Bool = false) -> String {
         let value = amount ?? entry.amount
-        if entry.currency == home || value == 0 { return Money.text(value, home, signed: signed) }
+        if (entry.currency == home && entry.exchange?.statementAmount == nil) || value == 0 { return Money.text(value, home, signed: signed) }
         let converted: Int64?
         if amount == nil || value == entry.amount {
             converted = homeEntry(entry)?.amount
+        } else if entry.exchange?.statementAmount != nil, abs(value) <= entry.amount {
+            converted = homeEntry(entry).flatMap {
+                try? Exchange.distribute($0.amount, weights: [abs(value), entry.amount - abs(value)], maximumTotal: Int64.max)
+                    .first.map { value < 0 ? -$0 : $0 } ?? 0
+            }
         } else if let exchange = entry.exchange, exchange.target == home {
             converted = FXMath.convert(value, rateE8: exchange.rateE8)
         } else {
             converted = displayQuote(entry).flatMap { FXMath.convert(value, rateE8: $0.rateE8) }
         }
         guard let converted else { return "Rate unavailable" }
-        return "≈ " + Money.text(converted, home, signed: signed)
+        return (isEstimated(entry) ? "≈ " : "") + Money.text(converted, home, signed: signed)
     }
 
     func portionText(_ entry: LedgerEntry, memberID: String, paid: Bool = false) -> String {
         guard let projected = homeEntry(entry) else { return "Rate unavailable" }
         // Detail rows show what moved; a refund's direction comes from its labels, not a sign.
         let amount = projected.sign * (paid ? Ledger.paid(projected, by: memberID) : Ledger.share(projected, of: memberID))
-        return (entry.currency == home ? "" : "≈ ") + Money.text(amount, home)
+        return (isEstimated(entry) ? "≈ " : "") + Money.text(amount, home)
     }
 
     func spendingText(_ entries: [LedgerEntry]) -> String {
         let expenses = entries.filter(\.isSpending)
         let converted = expenses.compactMap(homeEntry)
         guard converted.count == expenses.count else { return "Rate unavailable" }
-        return (expenses.contains { $0.currency != home } ? "≈ " : "") + Money.text(converted.reduce(0) { $0 + $1.signedAmount }, home)
+        return (expenses.contains(where: isEstimated) ? "≈ " : "") + Money.text(converted.reduce(0) { $0 + $1.signedAmount }, home)
     }
 
     func displayHistory(_ entries: [LedgerEntry], into target: String) async {
         let today = Exchange.localDay(clock())
         var seen = Set<String>()
         defer { persist() }
-        for entry in entries where entry.currency != target && entry.exchange?.target != target && !Task.isCancelled {
+        for original in entries where original.exchange?.target != target && !Task.isCancelled {
+            let entry = original.exchange?.statementAmount == nil ? original : original.settling
             let base = entry.currency
             let day = entry.exchange?.date ?? entry.day
             let key = FXQuote.key(base, target) + "@" + day

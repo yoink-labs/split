@@ -1,3 +1,4 @@
+import { settlementEntry } from './exchange';
 import { isSpend } from './refundMath';
 import { allocate, Entry, InputError, validID, balances, entryPayers, entrySign, simplify } from './ledger';
 
@@ -139,12 +140,28 @@ export function entryConsumption(e:Entry,all:Entry[]=[]) {
   }
   return entryItems(e).flatMap(i=>i.portions.filter(p=>e.bill || p.amount).map(p=>({...p,entryID:e.id,itemID:e.bill ? i.id : null,title:i.title})));
 }
+function chargedConsumption(entry:Entry, all:Entry[]) {
+  const lines=entryConsumption(entry,all);
+  if(entry.exchange?.statementAmount===undefined) return lines;
+  const settled=settlementEntry(entry);
+  return settled.splits.flatMap(split=>{
+    const portions=lines.filter(line=>line.memberID===split.memberID && line.amount!==0);
+    if(!portions.length) return [];
+    const amounts=spread(split.amount,portions.map(line=>Math.abs(line.amount)));
+    return portions.map((line,index)=>{
+      const amount=amounts[index];
+      const [items,tax,tip]=spread(amount,[line.items,line.tax,line.tip].map(Math.abs));
+      const sign=entrySign(entry);
+      return {...line,amount:sign*amount,items:sign*items,tax:sign*tax,tip:sign*tip};
+    });
+  });
+}
 /** Consumption by person across expenses and refunds in one currency: their lines and item, tax and tip totals. */
 export function consumptionReport(entries:Entry[],currency:string) {
-  const expenses=entries.filter(e=>(e.kind==='expense' || e.kind==='refund') && e.currency===currency)
+  const expenses=entries.filter(e=>(e.kind==='expense' || e.kind==='refund') && (e.exchange?.statementAmount===undefined ? e.currency : e.exchange.target)===currency)
     .sort((a,b)=>a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
   const people=new Map<string,{memberID:string;amount:number;items:number;tax:number;tip:number;lines:ReturnType<typeof entryConsumption>}>();
-  for(const line of expenses.flatMap(e=>entryConsumption(e,entries))) {
+  for(const line of expenses.flatMap(e=>chargedConsumption(e,entries))) {
     const p=people.get(line.memberID)??{memberID:line.memberID,amount:0,items:0,tax:0,tip:0,lines:[]};
     p.amount+=line.amount; p.items+=line.items; p.tax+=line.tax; p.tip+=line.tip; p.lines.push(line);
     people.set(line.memberID,p);

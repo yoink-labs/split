@@ -99,7 +99,7 @@ enum LedgerCSV {
             if !cell(rate).isEmpty {
                 guard let units=Int64(cell(rate)),units>0 else {throw invalid}
                 let source=cell(rateSource)
-                let postedAmount=source=="Statement" ? Money.parse(cell(statement)) : nil
+                let postedAmount=Money.parse(cell(statement))
                 if source=="Statement", (postedAmount ?? 0)<=0 { throw invalid }
                 exchange=Exchange(target:cell(target),rateE8:units,date:cell(rateDate),source:source,statementAmount:postedAmount)
             }

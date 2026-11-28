@@ -97,18 +97,21 @@ export function RateField({
   const { quote, loading, refresh } = useReferenceRate(from, to, date);
   let exchange: Exchange | null = null;
   const manual = rateE8(text);
-  const statementAmount = mode === "saved" ? saved?.statementAmount : parseAmount(charged, 2);
+  const statementAmount = parseAmount(charged, 2);
   const chargedRate = amount && statementAmount ? impliedRate(amount, statementAmount) : null;
   if (mode === "saved" && saved) {
     exchange = saved.source === "Statement"
-      ? (chargedRate ? { ...saved, rateE8: chargedRate } : null)
+      ? (chargedRate ? { ...saved, rateE8: chargedRate } : { ...saved, source: "Manual" })
       : saved;
   }
   if (mode === "trip" && tripRate) exchange = { target: to, rateE8: tripRate, date, source: "Trip" };
   if (mode === "published" && quote) exchange = { target: to, rateE8: quote.rateE8, date: quote.date, source: quote.source };
   if (mode === "manual" && manual) exchange = { target: to, rateE8: manual, date, source: "Manual" };
-  if (mode === "statement" && chargedRate && statementAmount)
+  if ((mode === "statement" || (mode === "published" && !quote)) && chargedRate && statementAmount)
     exchange = { target: to, rateE8: chargedRate, date, source: "Statement", statementAmount };
+  if (exchange && mode !== "statement")
+    exchange = { ...exchange, statementAmount: statementAmount ?? undefined };
+  if (charged.trim() && !statementAmount) exchange = null;
   let converted: number | null = null;
   try {
     if (exchange && amount) {
@@ -153,17 +156,22 @@ export function RateField({
           <input type="text" inputMode="decimal" value={text} onChange={(e) => setText(e.target.value)} aria-invalid={!!text && !manual} />
         </label>
       )}
-      {mode === "statement" && (
-        <label className="field">
-          Amount charged on your statement in {to}
-          <input type="text" inputMode="decimal" value={charged} onChange={(e) => setCharged(e.target.value)} />
-          <small>Enter the posted total, including any fees charged in that total.</small>
-        </label>
-      )}
+      <label className="field">
+        Actually charged in {to} (optional)
+        <input type="text" inputMode="decimal" value={charged} onChange={(e) => {
+          setCharged(e.target.value);
+          if (!e.target.value.trim() && (mode === "statement" || (mode === "saved" && saved?.source === "Statement"))) {
+            if (tripRate) setMode("trip");
+            else if (quote || !saved) setMode("published");
+            else setMode("saved");
+          }
+        }} aria-invalid={!!charged && !statementAmount} />
+        <small>The posted card total overrides the saved rate. Clear it to use the exchange rate.</small>
+      </label>
       <div aria-live="polite">
         {exchange ? (
           <p className="rate-line">
-            {converted !== null && <b>{exchange.statementAmount ? "" : "≈ "}{money(converted, to)}</b>}
+            {converted !== null && <b>{exchange.statementAmount ? "" : "≈ "}{money(converted, to)}{exchange.statementAmount !== undefined && " · Charged amount override"}</b>}
             <span>1 {from} ≈ {rateText(exchange.rateE8)} {to}{" "}
               <small>({mode === "published" && quote ? quoteLabel(quote) : sourceLabel(exchange)})</small>
             </span>
@@ -178,7 +186,7 @@ export function RateField({
         ) : (
           <small>Enter a valid exchange rate and amount.</small>
         )}
-        {exchange?.source === "Statement" && quote && converted !== null && amount && (
+        {exchange?.statementAmount !== undefined && quote && converted !== null && amount && (
           <p className="muted"><StatementComparison original={amount} charged={converted} to={to} quote={quote} fromDigits={2} toDigits={2} /></p>
         )}
       </div>

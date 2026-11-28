@@ -35,6 +35,7 @@ struct AddExpenseView: View {
     @State private var reading = false
     @State private var draftScanNote: String?
     @State private var rateText = ""
+    @State private var chargedText = ""
     @State private var manualRate = false
     @State private var quote: Exchange?
     @State private var rateError: String?
@@ -142,17 +143,11 @@ struct AddExpenseView: View {
         return options
     }
     private var liveExchange: Exchange? {
-        guard currency != settlementCurrency else { return nil }
-        if manualRate, let units = Exchange.units(rateText) {
-            return Exchange(target: settlementCurrency, rateE8: units, date: quoteDate, source: "Manual")
-        }
-        if let quote, quote.target == settlementCurrency, quote.rateE8 > 0 { return quote }
-        return nil
+        try? resolvedExchange()
     }
     private var convertedTotal: Int64? {
-        guard let exchange = liveExchange, let total = totalAmount, total > 0,
-              let converted = exchange.statementAmount ?? FXMath.convert(total, rateE8: exchange.rateE8), converted >= (exchange.isPublishedEstimate ? 0 : 1), converted <= Money.maxAmount else { return nil }
-        return converted
+        guard let exchange = liveExchange, let total = totalAmount, total > 0 else { return nil }
+        return try? exchange.convertedAmount(total)
     }
     private var splitIssue: String? {
         guard mode != .equal, !itemized, let total = totalAmount, total > 0, !people.isEmpty else { return nil }
@@ -301,6 +296,7 @@ struct AddExpenseView: View {
         Menu {
             ForEach(Money.currencies, id: \.self) { code in
                 Button {
+                    if currency != code { chargedText = "" }
                     currency = code
                     quote = nil
                     rateText = ""
@@ -437,15 +433,31 @@ struct AddExpenseView: View {
                     .buttonStyle(IconButton())
                     .accessibilityLabel("Open the currency converter")
                 }
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("Actually charged in \(settlementCurrency) (optional)")
+                        .font(.subheadline.weight(.semibold))
+                    TextField("0.00", text: $chargedText)
+                        .keyboardType(.decimalPad)
+                        .textFieldStyle(.roundedBorder)
+                        .accessibilityLabel("Actually charged in \(settlementCurrency)")
+                        .accessibilityIdentifier("composer-charged-amount")
+                    Text("The posted card total overrides the rate. Clear it to use the exchange rate.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 if let exchange = liveExchange {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("≈ " + (convertedTotal.map { Money.text($0, settlementCurrency) } ?? "\(settlementCurrency) —"))
+                        Text((exchange.statementAmount == nil ? "≈ " : "") + (convertedTotal.map { Money.text($0, settlementCurrency) } ?? "\(settlementCurrency) —"))
                             .font(.splitAmount(24, weight: .bold))
                             .foregroundStyle(Palette.ink)
                             .lineLimit(1)
                             .minimumScaleFactor(0.6)
                             .contentTransition(.numericText())
                             .accessibilityIdentifier("composer-converted")
+                        if exchange.statementAmount != nil {
+                            Text("Charged amount override")
+                                .font(.subheadline.weight(.semibold))
+                        }
                         Text("at 1 \(currency) = \(FXMath.rateText(exchange.rateE8)) \(settlementCurrency) (\(rateSource(exchange)))")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
@@ -1251,16 +1263,30 @@ struct AddExpenseView: View {
 
     private func resolvedExchange() throws -> Exchange? {
         guard currency != settlementCurrency else { return nil }
+        let charged = Money.parse(chargedText)
+        if !chargedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && (charged ?? 0) <= 0 {
+            throw LedgerError.invalid("Enter a positive amount actually charged.")
+        }
         if manualRate {
             guard let units = Exchange.units(rateText) else {
                 throw LedgerError.invalid("Enter a positive manual rate with up to eight decimal places.")
             }
-            return Exchange(target: settlementCurrency, rateE8: units, date: quoteDate, source: "Manual")
+            return Exchange(target: settlementCurrency, rateE8: units, date: quoteDate, source: "Manual", statementAmount: charged)
         }
-        guard let quote, quote.target == settlementCurrency, quote.rateE8 > 0 else {
-            throw LedgerError.invalid("Wait for the published rate, or choose Manual to enter your own rate.")
+        if var exchange = quote, exchange.target == settlementCurrency, exchange.rateE8 > 0 {
+            exchange.statementAmount = charged
+            if exchange.source == "Statement", charged == nil {
+                if settlementCurrency == group.currency, let tripRate = group.tripRates?[currency] {
+                    return Exchange(target: settlementCurrency, rateE8: tripRate, date: quoteDate, source: "Trip")
+                }
+                exchange.source = "Manual"
+            }
+            return exchange
         }
-        return quote
+        if let charged, let total = totalAmount, let rate = Exchange.impliedRate(original: total, charged: charged) {
+            return Exchange(target: settlementCurrency, rateE8: rate, date: quoteDate, source: "Statement", statementAmount: charged)
+        }
+        throw LedgerError.invalid("Wait for the published rate, or enter a custom rate or the amount actually charged.")
     }
 
     // MARK: - Initialization
@@ -1302,6 +1328,7 @@ struct AddExpenseView: View {
         }
         #endif
         category = original?.category ?? ""
+        chargedText = original?.exchange?.statementAmount.map(Money.input) ?? ""
         notes = original?.notes ?? ""
         handled = original?.isHandled ?? false
         pending = original?.isPending ?? false
@@ -1374,6 +1401,7 @@ struct AddExpenseView: View {
         bill = ReceiptBill()
         photos = []
         itemized = false
+        chargedText = ""
         rateText = ""
         quote = nil
         rateError = nil

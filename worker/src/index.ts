@@ -316,7 +316,8 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
       throw new InputError('This expense has refunds. Delete its refunds first.');
     if (!deleting) {
       if (old.kind==='settlement') throw new InputError('Payments cannot be edited.');
-      const updated=validateEntry(preserveStatementAmount(b.entry,canonical),ids,canonical.bill,{reconcileBill:true});
+      const legacyOriginal=preserveStatementAmount(b.original,canonical);
+      const updated=validateEntry(legacyOriginal!==b.original ? preserveStatementAmount(b.entry,canonical) : b.entry,ids,canonical.bill,{reconcileBill:true});
       if (updated.bill || old.bill) await requireActiveMember(env,saved.group_id,userID);
       replacement=updated;
       if(updated.id!==revise[1] || updated.groupID!==saved.group_id || updated.createdAt!==old.createdAt || updated.kind!==old.kind || updated.refundOf!==old.refundOf)

@@ -42,7 +42,7 @@ export function exportGroup(group: Group, entries: Entry[], format: 'ledger'|'su
   const rows = sorted.map(e => {
     const se = settlementEntry(e), payers = entryPayers(se);
     return [e.createdAt.slice(0, 10), e.kind, e.title, e.category ?? '', e.notes ?? '', e.currency, e.amount,
-      e.exchange ? (e.exchange.rateE8 / 1e8).toFixed(8) : '', e.exchange?.source ?? '', se.currency, se.amount,
+      e.exchange ? (e.exchange.rateE8 / 1e8).toFixed(8) : '', e.exchange?.statementAmount !== undefined ? 'Charged amount override' : e.exchange?.source ?? '', se.currency, se.amount,
       payers.map(p => nameOf(p.memberID) + ' ' + decimal(p.amount)).join('; '),
       se.splits.map(p => nameOf(p.memberID) + ' ' + decimal(p.amount)).join('; '),
       entryItems(e).map(i => i.title + ' ' + decimal(i.gross) + ' [' + (i.open ? 'open' : i.portions.map(p => nameOf(p.memberID)).join('+')) + ']').join('; '),

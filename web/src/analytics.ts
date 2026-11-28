@@ -122,7 +122,7 @@ export function analyticsRows(entries: Expense[], project: (entry: Expense) => E
     rows.push({
       entry, home: projected, day, category: categoryMeta(entry.category).id,
       amount, original: direction * (member ? portion(entry.splits, member) : entry.amount),
-      estimated: entry.currency !== home,
+      estimated: (entry.exchange?.statementAmount !== undefined ? entry.exchange.target : entry.currency) !== home,
     });
   }
   return rows;

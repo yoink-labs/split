@@ -1,5 +1,5 @@
 import { Exchange, readExchange, settlementEntry } from './exchange';
-import { Bill, itemSplit, readBill } from './items';
+import { Bill, itemSplit, readBill, reconcileBill } from './items';
 // Active fiat currencies from the Frankfurter v2 catalog. Keep in sync with Money.currencies.
 export const currencies = `
   AED AFN ALL AMD ANG AOA ARS AUD AWG AZN BAM BBD BDT BHD BIF
@@ -47,7 +47,7 @@ function readPayers(value: unknown, memberIDs: string[], total: number, paidBy: 
   if (kind === 'settlement' && (payers.length !== 1 || payers[0].memberID !== paidBy)) throw new InputError('Choose two different people.');
   return payers;
 }
-export function validateEntry(value: unknown, memberIDs: string[], previous?:Bill): Entry {
+export function validateEntry(value: unknown, memberIDs: string[], previous?:Bill, options?:{reconcileBill:boolean}): Entry {
   if (!value || typeof value !== 'object') throw new InputError('Invalid entry.');
   const e = value as Entry;
   if (!validID(e.id) || !validID(e.groupID) || typeof e.title !== 'string' || !e.title.trim() || e.title.length > 120 || !Number.isSafeInteger(e.amount) || e.amount <= 0 || e.amount > 100_000_000_000 || !currencies.includes(e.currency as typeof currencies[number]) || !memberIDs.includes(e.paidBy) || !['expense','settlement','refund'].includes(e.kind) || !['equal','exact','percent','shares','adjustment'].includes(e.splitMode) || typeof e.createdAt !== 'string' || !Number.isFinite(Date.parse(e.createdAt))) throw new InputError('Check the entry amount, currency, and payer.');
@@ -95,12 +95,15 @@ export function validateEntry(value: unknown, memberIDs: string[], previous?:Bil
   }
   if(e.bill!=null) {
     if(e.kind!=='expense' || e.splitMode!=='exact') throw new InputError('Receipt items require an exact expense split.');
-    extras.bill=readBill(e.bill,memberIDs,e.amount,previous);
+    // On writes that reconcile status, accept a stale client flag so edits can reopen the bill.
+    extras.bill=readBill(e.bill,memberIDs,e.amount,previous,options?.reconcileBill);
     const portions=itemSplit(extras.bill,e.paidBy);
     if(portions.length!==e.splits.length || portions.some(p=>!e.splits.some(s=>p.memberID===s.memberID && p.amount===s.amount))) throw new InputError('Refresh the item split.');
   }
   // Whitelist the wire representation so callers cannot persist extra fields.
-  return {id:e.id,groupID:e.groupID,title:e.title.trim(),amount:e.amount,currency:e.currency,paidBy:e.paidBy,splits:e.splits.map(s=>({memberID:s.memberID,amount:s.amount})),kind:e.kind,splitMode:e.splitMode,createdAt:e.createdAt,...extras};
+  const entry:Entry={id:e.id,groupID:e.groupID,title:e.title.trim(),amount:e.amount,currency:e.currency,paidBy:e.paidBy,splits:e.splits.map(s=>({memberID:s.memberID,amount:s.amount})),kind:e.kind,splitMode:e.splitMode,createdAt:e.createdAt,...extras};
+  if (options?.reconcileBill) reconcileBill(entry);
+  return entry;
 }
 export function validID(id: unknown): id is string { return typeof id === 'string' && /^[a-zA-Z0-9_-]{8,80}$/.test(id); }
 /** Payers in canonical form. Older entries with a single payer keep their stored shape. */

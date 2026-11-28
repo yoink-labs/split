@@ -28,6 +28,24 @@ jobs:
         run: |
           node --test ../scripts/test/*.test.mjs
           node ../scripts/check-migrations.mjs --all
+  linux-receipt-uploads:
+    runs-on: ubuntu-latest
+    container: node:22-bookworm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install HEIC-capable ImageMagick
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends imagemagick
+          convert -list format | grep -E 'HEIC.*rw'
+      - run: npm ci --prefix worker
+      - run: npm ci --prefix web
+      - run: npm run build --prefix web
+      - name: Upload large receipts through the CLI to local D1
+        env:
+          SPLIT_TEST_RECEIPTS: '1'
+          SPLIT_TEST_RECEIPT_PHOTOS: '1'
+        run: node --test cli/test/receipt-integration.test.mjs
   ios:
     runs-on: xcode-27
     env:

@@ -290,8 +290,11 @@ describe('CLI and MCP', () => {
     expect(list.items[0].shares).toEqual({[a]:2,[b]:1});
     expect(list.items.filter((i:any)=>i.open)).toHaveLength(2);
     await run('items_claim',{group,expense:entry.id,item:list.items[1].id,member:c,share:'0.5'});
-    await run('items_assign',{group,expense:entry.id,item:list.items[2].id,participants:[a,b,c],shares:[1,1,1.5]});
+    expect((await run('items_list',{group,expense:entry.id})).closed).toBe(false);
+    const finalClaim = await run('items_assign',{group,expense:entry.id,item:list.items[2].id,participants:[a,b,c],shares:[1,1,1.5]});
+    expect(finalClaim).toEqual({ok:true,closed:true});
     list = await run('items_list',{group,expense:entry.id});
+    expect(list.closed).toBe(true);
     expect(list.items.every((i:any)=>!i.open)).toBe(true);
     expect(list.items[2].shares).toEqual({[a]:1,[b]:1,[c]:1.5});
     const saved = (await run('expenses_list',{group})).find((e:any)=>e.id===entry.id);
@@ -300,6 +303,8 @@ describe('CLI and MCP', () => {
     list = await run('items_list',{group,expense:entry.id});
     expect(list.items[2].memberIDs).toEqual([b]); expect(list.items[2].shares).toBeUndefined();
     await expect(run('items_assign',{group,expense:entry.id,item:list.items[2].id,participants:[a,b],shares:[1]})).rejects.toMatchObject({status:422});
+    expect(await run('items_assign',{group,expense:entry.id,item:list.items[2].id,participants:[]})).toEqual({ok:true,closed:false});
+    expect(await run('items_close',{group,expense:entry.id,participants:[b]})).toEqual({ok:true,closed:true});
     await expect(run('items_list',{group,expense:entry.id},outsider)).rejects.toMatchObject({status:404});
   });
   it('covers every web action: settings, people, invites, comments, likes, photos, multi-payer, export and import', async () => {

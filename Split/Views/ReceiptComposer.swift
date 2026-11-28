@@ -207,12 +207,10 @@ struct ReceiptComposer: View {
     }
 
     private func applyScan(_ suggestion: ReceiptBill) {
-        if !bill.closed {
-            if !suggestion.items.isEmpty { itemized = true }
-            bill.items.append(contentsOf: suggestion.items.prefix(50 - bill.items.count))
-            bill.tax += suggestion.tax
-            bill.tip += suggestion.tip
-            message = suggestion.items.isEmpty ? "No prices recognized. Turn on line-item splitting to enter items by hand." : "Review the suggested items and prices."
-        }
+        if !suggestion.items.isEmpty { itemized = true }
+        bill.items.append(contentsOf: suggestion.items.prefix(50 - bill.items.count))
+        bill.tax += suggestion.tax
+        bill.tip += suggestion.tip
+        message = suggestion.items.isEmpty ? "No prices recognized. Turn on line-item splitting to enter items by hand." : "Review the suggested items and prices."
     }
 }

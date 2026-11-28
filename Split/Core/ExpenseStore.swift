@@ -132,6 +132,8 @@ private struct ActiveInviteResponse: Decodable {
     }
     func add(_ entry: LedgerEntry) throws {
         guard scope != nil else { throw LedgerError.invalid("Sign in again before adding an expense.") }
+        var entry = entry
+        if demo, let bill = entry.bill { entry.bill?.closed = bill.openCount == 0 }
         var next = state; next.snapshot.entries.append(entry)
         if !demo { next.outbox.append(OutboxItem(id: entry.id, path: "/v1/entries", body: try JSONEncoder().encode(entry))) }
         try persist(next); Task { await sync() }
@@ -709,7 +711,10 @@ private struct ActiveInviteResponse: Decodable {
         if demo {
             var next = state
             next.snapshot.entries.removeAll { $0.id == original.id }
-            if let replacement { next.snapshot.entries.append(replacement) }
+            if var replacement {
+                if let bill = replacement.bill { replacement.bill?.closed = bill.openCount == 0 }
+                next.snapshot.entries.append(replacement)
+            }
             try persist(next)
         } else {
             let action = replacement == nil ? "delete" : "edit"
@@ -864,7 +869,7 @@ private struct ActiveInviteResponse: Decodable {
     }
 
     func claim(_ entry: LedgerEntry, item: Purchase?, people: [String], shares: [String: Int64] = [:]) async throws {
-        guard var bill=entry.bill, !bill.closed else { throw LedgerError.invalid("This receipt is closed.") }
+        guard var bill=entry.bill else { throw LedgerError.invalid("This receipt has no items.") }
         if demo {
             var updated=entry
             if let item {
@@ -886,7 +891,6 @@ private struct ActiveInviteResponse: Decodable {
                 for index in bill.items.indices where bill.items[index].memberIDs.isEmpty {
                     bill.items[index].memberIDs = people
                 }
-                bill.closed = true
             }
             updated.bill=bill; updated.splits=try bill.split(payer:entry.paidBy)
             try await change(entry,to:updated)

@@ -4,6 +4,7 @@ class Split < Formula
   url "https://github.com/yoink-labs/homebrew-tap/releases/download/split-v@VERSION@/split-@VERSION@.tar.gz"
   sha256 "@SHA256@"
 
+  depends_on "imagemagick"
   depends_on "node"
 
   def install

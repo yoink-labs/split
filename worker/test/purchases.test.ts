@@ -31,10 +31,21 @@ it('shares, reopens and closes remaining purchases, rejecting stale and outsider
   await call('alex','/v1/entries',e);
   const claim={itemID:'line-toast',memberIDs:[other,guest],original:[]};
   await expect(call('outsider',base+'/claim',claim)).rejects.toThrow('not found');
-  await call('maya',base+'/claim',claim);
+  await expect(call('maya',base+'/claim',{...claim,memberIDs:['foreign-seat']})).rejects.toThrow('group members');
+  expect((await snapshot()).bill?.closed).toBe(false);
+  const closed = await call('maya',base+'/claim',claim);
+  expect(await closed.json()).toEqual({ok:true,closed:true});
+  expect((await snapshot()).bill?.closed).toBe(true);
+  const activity = () => env.DB.prepare("SELECT data FROM email_activity WHERE kind='receiptStatus' AND user_id='alex' ORDER BY rowid").all<{data:string}>();
+  expect((await activity()).results.map(r=>JSON.parse(r.data).variant)).toEqual(['closed']);
   await expect(call('alex',base+'/claim',{...claim,memberIDs:[payer]})).rejects.toThrow('claims changed');
   expect((await snapshot()).splits).toEqual([{memberID:payer,amount:301},{memberID:other,amount:901},{memberID:guest,amount:599}]);
+  await env.DB.prepare('UPDATE members SET removed_at=? WHERE id=?').bind('2026-11-28T00:00:00Z',other).run();
+  await expect(call('maya',base+'/claim',{...claim,original:[other,guest],memberIDs:[]})).rejects.toThrow('not found');
+  await env.DB.prepare('UPDATE members SET removed_at=NULL WHERE id=?').bind(other).run();
   await call('maya',base+'/claim',{...claim,original:[other,guest],memberIDs:[]});
+  expect((await snapshot()).bill?.closed).toBe(false);
+  expect((await activity()).results.map(r=>JSON.parse(r.data).variant)).toEqual(['closed','reopened']);
   const cmd=(name:string,args:object,user='alex')=>operate(name,{group,...args},env,user,handle);
   expect(await cmd('items_open',{})).toMatchObject([{gross:1199}]);
   await cmd('items_claim',{expense:e.id,item:'line-toast'},'maya');
@@ -43,8 +54,24 @@ it('shares, reopens and closes remaining purchases, rejecting stale and outsider
   await expect(call('maya',base+'/close',{memberIDs:[other]})).rejects.toThrow('Only the payer');
   await cmd('items_close',{expense:e.id,participants:[guest]});
   expect((await snapshot('maya')).bill).toMatchObject({closed:true,items:[{memberIDs:[payer,other]},{memberIDs:[guest]}]});
-  await expect(call('alex',base+'/claim',claim)).rejects.toThrow('closed');
+  expect(await cmd('items_close',{expense:e.id,participants:[guest]})).toEqual({ok:true,closed:true});
+  await expect(call('alex',base+'/claim',claim)).rejects.toThrow('claims changed');
 });
+it('closes fully assigned bills at creation and reopens them when an author edits in an open item',async()=>{
+  const full={...bill,items:[bill.items[0],{...bill.items[1],memberIDs:[other]}]};
+  const assigned={...e,bill:full,splits:itemSplit(full,payer)};
+  await expect(call('alex','/v1/entries',{...assigned,amount:e.amount+1,
+    splits:[{memberID:other,amount:e.amount+1}]})).rejects.toThrow('match the expense total');
+  await call('alex','/v1/entries',assigned);
+  const original=await snapshot();
+  expect(original.bill?.closed).toBe(true);
+  // A client may retain its original closed flag when adding an unassigned item.
+  const edit={...original,bill:{...bill,closed:true},splits:e.splits};
+  await expect(call('maya',base+'/edit',{original,entry:edit})).rejects.toThrow('recorded');
+  await call('alex',base+'/edit',{original,entry:edit});
+  expect((await snapshot()).bill?.closed).toBe(false);
+});
+
 it('stores photos atomically and privately, handles retries, caps attachments and frees bytes on delete',async()=>{
   await expect(call('alex','/v1/entries',{...e,photos:[{...photo,data:'invalid'}]})).rejects.toThrow();
   expect(await snapshot()).toBeUndefined();

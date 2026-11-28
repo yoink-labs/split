@@ -396,7 +396,7 @@ export function ReceiptsHub({
   entries: Expense[];
   initialEntryID?: string | null;
 }) {
-  const { save, user, request } = useLedger();
+  const { save, user, request, demo } = useLedger();
   const homeMoney = useHomeMoney();
   const [inbox, setInbox] = useState<InboxReceipt[]>([]);
   const [inboxLoading, setInboxLoading] = useState(true);
@@ -462,10 +462,10 @@ export function ReceiptsHub({
   const unclaimedItems = gross.filter((i) => !i.memberIDs.length);
   const unclaimedTotal = unclaimedItems.reduce((s, i) => s + i.gross, 0);
   const payer = selected ? g.members.find((m) => m.id === selected.paidBy) : undefined;
-  const canClose =
-    Boolean(bill && !bill.closed) &&
-    Boolean(payer?.userID === user || (!payer?.userID && selected?.editable));
   const activeMembers = g.members.filter((m) => !m.removed);
+  const canClaim = demo || activeMembers.some((m) => m.userID === user);
+  const canClose = canClaim && Boolean(bill && !bill.closed) &&
+    Boolean(payer?.userID === user || (!payer?.userID && selected?.editable));
 
   async function updateClaim(
     entry: Expense,
@@ -742,7 +742,7 @@ export function ReceiptsHub({
                               >
                                 <button
                                   type="button"
-                                  disabled={bill.closed || Boolean(busyKey)}
+                                  disabled={!canClaim || Boolean(busyKey)}
                                   onClick={() => toggleMember(selected, item, m.id)}
                                   style={{
                                     display: "inline-flex",
@@ -751,7 +751,7 @@ export function ReceiptsHub({
                                     border: 0,
                                     background: "transparent",
                                     padding: 0,
-                                    cursor: bill.closed ? "default" : "pointer",
+                                    cursor: canClaim ? "pointer" : "default",
                                     color: "inherit",
                                     fontWeight: "inherit",
                                   }}
@@ -764,7 +764,7 @@ export function ReceiptsHub({
                                     </span>
                                   )}
                                 </button>
-                                {claimed && !bill.closed && !item.roundingSeats && (
+                                {claimed && canClaim && !item.roundingSeats && (
                                   <span className="qty-stepper" title="Adjust fractional share">
                                     <button
                                       type="button"

@@ -70,7 +70,7 @@ struct EntryDetails: View {
             liveGroup.members.contains { $0.id == payer.memberID && $0.userID == session.userID && $0.removed != true }
         }
     }
-    private var canEdit: Bool { editable && entry.kind == "expense" && entry.bill?.closed != true }
+    private var canEdit: Bool { editable && entry.kind == "expense" }
     private var repeatAllowed: Bool {
         guard editable, !store.isDemo else { return false }
         return entry.kind == "expense" && entry.bill == nil && entry.exchange == nil

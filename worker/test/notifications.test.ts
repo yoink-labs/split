@@ -41,7 +41,7 @@ afterEach(() => fetchSpy.mockRestore());
 it('stores per-user preferences and only ever returns the caller’s own', async () => {
   const fresh = await (await call(maya, '/v1/email-preferences')).json<any>();
   expect(Object.values(fresh.preferences).every(Boolean)).toBe(true);
-  expect(Object.keys(fresh.preferences)).toEqual(['all', 'invites', 'expenses', 'payments', 'settleRequests', 'credits', 'pendingResolved']);
+  expect(Object.keys(fresh.preferences)).toEqual(['all', 'invites', 'expenses', 'payments', 'settleRequests', 'credits', 'pendingResolved', 'receiptStatus']);
   const saved = await (await call(maya, '/v1/email-preferences', { preferences: { expenses: false, payments: false } })).json<any>();
   expect(saved.preferences).toMatchObject({ expenses: false, payments: false, invites: true, all: true });
   expect((await (await call(alex, '/v1/email-preferences')).json<any>()).preferences.expenses).toBe(true);

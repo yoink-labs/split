@@ -19,9 +19,12 @@ struct PurchasesSection:View {
         guard let payer = group.members.first(where: { $0.id == entry.paidBy }) else { return "the payer" }
         return payer.userID != nil && payer.userID == session.userID ? "you" : payer.name
     }
+    private var canClaim: Bool {
+        store.isDemo || group.members.contains { $0.userID == session.userID && $0.userID != nil && $0.removed != true }
+    }
     private var canClose: Bool {
         let payer = group.members.first { $0.id == entry.paidBy }
-        return !bill.closed && (payer?.userID == session.userID || (payer?.userID == nil && (store.isDemo || entry.editable == true)))
+        return canClaim && !bill.closed && (payer?.userID == session.userID || (payer?.userID == nil && (store.isDemo || entry.editable == true)))
     }
 
     var body: some View {
@@ -29,7 +32,7 @@ struct PurchasesSection:View {
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(bill.closed ? "Purchases · closed" : "Purchases").font(.headline).foregroundStyle(Palette.ink)
-                    Text(bill.closed ? "Claims are locked" : "Tap an item to change who had it")
+                    Text(canClaim ? "Tap an item to change who had it" : "Claims can be changed by active group members")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 8)
@@ -54,8 +57,8 @@ struct PurchasesSection:View {
                 ForEach(Array(bill.items.enumerated()), id: \.element.id) { index, item in
                     Button { assign(item) } label: { row(item) }
                         .buttonStyle(.plain)
-                        .disabled(bill.closed)
-                        .accessibilityHint(bill.closed ? "" : "Opens the claim sheet")
+                        .disabled(!canClaim)
+                        .accessibilityHint(canClaim ? "Opens the claim sheet" : "")
                     if index < bill.items.count - 1 { Divider().overlay(Palette.line).padding(.leading, 34) }
                 }
             }
@@ -116,7 +119,7 @@ struct PurchasesSection:View {
                     }
                 }
             }
-            if !bill.closed {
+            if canClaim {
                 Image(systemName: "chevron.right")
                     .font(.caption2.weight(.bold))
                     .foregroundStyle(.tertiary)

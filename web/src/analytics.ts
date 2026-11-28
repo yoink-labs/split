@@ -166,7 +166,7 @@ export function analyze(
     .sort((a, b) => b.amount - a.amount || a.id.localeCompare(b.id));
   const categoryPercents = percents(categoryList.map((item) => Math.max(0, item.amount)));
 
-  const people = memberIDs.map((memberID) => {
+  const people = (filter.memberID ? [filter.memberID] : memberIDs).map((memberID) => {
     let paid = 0, share = 0, count = 0;
     for (const row of priced) {
       const direction = sign(row.entry);

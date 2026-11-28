@@ -1,6 +1,5 @@
 /* Group Analytics tab, the shared bounded transaction table and the Overview panels. */
 :root {
-  --chart-other: color-mix(in srgb, var(--muted) 55%, transparent);
   --chart-share: color-mix(in srgb, var(--ink) 26%, transparent);
   --txn-frame-full: min(70vh, 680px);
   --txn-frame-compact: min(56vh, 460px);
@@ -281,6 +280,7 @@
 /* Spending over time */
 .tchart {
   --plot-h: 210px;
+  position: relative;
   --label-h: 22px;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
@@ -310,12 +310,12 @@
   justify-content: space-between;
   pointer-events: none;
 }
-.tchart-grid i { display: block; border-top: 1px dashed var(--border); }
-.tchart-grid i:last-child { border-top: 1px solid var(--border-strong); }
+.tchart-grid i { position: absolute; inset-inline: 0; border-top: 1px dashed var(--border); }
+.tchart-grid i.zero { border-top: 1px solid var(--border-strong); }
 .tchart-mean {
   position: absolute;
   inset-inline: 0;
-  top: calc(var(--plot-h) * (1 - var(--mean)));
+  top: calc(var(--plot-h) * var(--mean));
   border-top: 1.5px dashed color-mix(in srgb, var(--ink) 45%, transparent);
   pointer-events: none;
   z-index: 1;
@@ -343,19 +343,46 @@
   font: inherit;
 }
 .tchart-col:disabled { cursor: default; }
-.tchart-track { display: flex; align-items: flex-end; height: 100%; border-radius: 4px; }
+.tchart-track { position: relative; height: 100%; border-radius: 4px; }
 .tchart-col:not(:disabled):hover .tchart-track, .tchart-col:focus-visible .tchart-track { background: var(--surface-hover); }
-.tchart-stack {
-  display: flex;
-  flex-direction: column-reverse;
-  width: 100%;
-  min-height: 0;
-  border-radius: 3px 3px 0 0;
-  overflow: hidden;
+.tchart-segment {
+  position: absolute;
+  inset-inline: 0;
+  box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--surface) 70%, transparent);
 }
-.tchart-stack > span { display: block; min-height: 1px; }
-.tchart-stack > span + span { box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--surface) 70%, transparent); }
-.tchart-plot:has(.tchart-col[aria-pressed="true"]) .tchart-col[aria-pressed="false"] .tchart-stack { opacity: .35; }
+.tchart-segment[data-dimmed="true"] { opacity: .2; }
+.tchart-tooltip {
+  --tooltip-width: min(17rem, 100%);
+  position: absolute;
+  z-index: 2;
+  inset-block-start: 6px;
+  inset-inline-start: clamp(0px, var(--tooltip-x) - var(--tooltip-width) - 6px, 100% - var(--tooltip-width));
+  width: var(--tooltip-width);
+  pointer-events: none;
+  padding: 10px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px #0002;
+  font-size: 12px;
+}
+.tchart-tooltip[data-bar-left="true"] { inset-inline-start: clamp(0px, var(--tooltip-x) + 6px, 100% - var(--tooltip-width)); }
+.tchart-tooltip ul { list-style: none; margin: 6px 0 0; padding: 0; }
+.tchart-tooltip li { display: grid; grid-template-columns: 8px 1fr auto; align-items: center; gap: 6px; }
+.tchart-tooltip i { width: 8px; height: 8px; border-radius: 2px; }
+.tchart-legend button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.tchart-legend button:hover, .tchart-legend button[aria-pressed="true"] { background: var(--surface-hover); }
 .tchart-col[aria-pressed="true"] .tchart-track { background: var(--primary-soft); }
 .tchart-label {
   font-size: 10.5px;
@@ -442,7 +469,6 @@
 @media (max-width: 720px) {
   .analytics-filters { position: static; }
   .analytics-filter-end { margin-inline-start: 0; flex: 1 1 100%; justify-content: space-between; }
-  .analytics-scope { display: none; }
   .analytics-filter-end .picker { flex: 1; }
   .analytics-dates { flex: 1 1 100%; }
   .analytics-dates .field { flex: 1; }

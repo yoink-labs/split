@@ -92,6 +92,22 @@ final class SpendAnalyticsTests: XCTestCase {
         XCTAssertEqual(b.total, 3000 + 150000)
     }
 
+    func testWeeklyPerspectiveKeepsPaidOnlyEntriesAndSignedCategoryShares() throws {
+        var payerOnly = expense("tickets", "2026-03-08", 2001, [("b", 2001)], category: "Activities")
+        payerOnly.paidBy = "a"
+        let refund = expense("refund", "2026-03-03", 501, [("a", 501)], category: "Transport", kind: "refund")
+        let result = SpendAnalytics.analyze(entries + [payerOnly, refund], project: project, home: "USD",
+                                            filter: .init(person: "a"), people: ["a", "b", "c"], granularity: .week)
+        XCTAssertEqual(result.total, 13500)
+        XCTAssertEqual(result.people.map(\.key), ["a"])
+        XCTAssertEqual(result.people.first?.paid, 32501)
+        let week = try XCTUnwrap(result.buckets.first)
+        XCTAssertEqual(week.key, "2026-03-02")
+        XCTAssertEqual(week.amount, 2500)
+        XCTAssertEqual(week.parts, ["Dining": 3001, "Activities": 0, "Transport": -501])
+        XCTAssertEqual(SpendAnalytics.drillRows(result, .bucket(week.key)).map(\.entry.id), ["dinner", "tickets", "refund"])
+    }
+
     func testDrillsFromAChartSegmentToExactlyTheMatchingExpenses() {
         let result = SpendAnalytics.analyze(entries, project: project, home: "USD", filter: .init(), people: ["a", "b", "c"], granularity: .month)
         XCTAssertEqual(SpendAnalytics.drillRows(result, .bucket("2026-03")).map(\.entry.id).sorted(), ["dinner", "rent"])

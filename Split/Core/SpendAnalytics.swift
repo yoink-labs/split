@@ -314,7 +314,7 @@ enum SpendAnalytics {
             .sorted { $0.amount != $1.amount ? $0.amount > $1.amount : $0.id.localizedCompare($1.id) == .orderedAscending }
         let categoryPercents = percents(categoryList.map { Swift.max(0, $0.amount) })
 
-        let personTotals = people.map { person -> PersonTotal in
+        let personTotals = (filter.person.map { [$0] } ?? people).map { person -> PersonTotal in
             var paid: Int64 = 0, share: Int64 = 0, count = 0
             for row in priced {
                 guard let home = row.home else { continue }

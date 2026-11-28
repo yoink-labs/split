@@ -73,6 +73,18 @@ describe("web analytics", () => {
     expect(b.total).toBe(3000 + 150000);
   });
 
+  it("keeps paid-only entries and signed category shares in a weekly perspective", () => {
+    const payerOnly = expense("tickets", "2026-03-08", 2001, [["b", 2001]], { category: "Activities", paidBy: "a" });
+    const refund = expense("refund", "2026-03-03", 501, [["a", 501]], { category: "Transport", kind: "refund" });
+    const result = analyze([...entries, payerOnly, refund], project, "USD", { memberID: "a" }, ["a", "b", "c"], "week");
+    expect(result.total).toBe(13500);
+    expect(result.people).toMatchObject([{ memberID: "a", paid: 32501, share: 13500 }]);
+    const week = result.buckets[0];
+    expect(week).toMatchObject({ key: "2026-03-02", amount: 2500 });
+    expect(Object.fromEntries(week.parts)).toEqual({ Dining: 3001, Activities: 0, Transport: -501 });
+    expect(drillRows(result, { kind: "bucket", key: week.key }).map((row) => row.entry.id)).toEqual(["dinner", "tickets", "refund"]);
+  });
+
   it("drills from a chart segment to exactly the matching expenses", () => {
     const result = analyze(entries, project, "USD", {}, ["a", "b", "c"], "month");
     expect(drillRows(result, { kind: "bucket", key: "2026-03" }).map((r) => r.entry.id).sort()).toEqual(["dinner", "rent"]);

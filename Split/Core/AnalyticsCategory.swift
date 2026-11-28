@@ -39,6 +39,4 @@ struct AnalyticsCategory: Identifiable, Equatable {
         let app = CategoryMeta.named(id)
         return AnalyticsCategory(id: id, label: id, symbol: app.symbol, tint: app.tint)
     }
-
-    static let otherStack = AnalyticsCategory(id: "__other", label: "Everything else", symbol: "ellipsis", light: 0xA8B0A6, dark: 0x4B5650)
 }

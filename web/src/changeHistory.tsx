@@ -21,7 +21,7 @@ const actions: Record<string, string> = {
   link: "linked", unlink: "unlinked", rename: "renamed", record: "recorded", approve: "approved",
   decline: "declined", cancel: "canceled", combine: "combined", "undo-combine": "undid the combination of",
   close: "closed", reopen: "reopened", claim: "changed the claims on", unclaim: "unclaimed items on",
-  pair: "paired", move: "moved", detach: "detached", schedule: "updated the schedule for",
+  "receipt-people": "updated the people on", pair: "paired", move: "moved", detach: "detached", schedule: "updated the schedule for",
   recurring: "recorded", resolve: "resolved", "payment-methods": "updated group payment methods for",
 };
 const labels: Record<string, string> = {

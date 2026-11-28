@@ -94,7 +94,7 @@ export async function readHistory(db: D1Database, group: string, user: string, q
       continue;
     }
     where.push(key === 'type' && value === 'receipt'
-      ? "(type=? OR (type='expense' AND json_extract(previous,'$.bill') IS NOT json_extract(current,'$.bill')))"
+      ? "(type=? OR (type='expense' AND (action='receipt-people' OR json_extract(previous,'$.bill') IS NOT json_extract(current,'$.bill'))))"
       : key + '=?');
     args.push(value);
   }
@@ -133,9 +133,10 @@ export async function readHistory(db: D1Database, group: string, user: string, q
       const removed = oldItem?.memberIDs.filter(id => !item.memberIDs.includes(id)) ?? [];
       return added.length || removed.length ? [{ item: item.title, added, removed }] : [];
     }) ?? [];
-    const action = oldBill?.closed && bill && !bill.closed ? 'reopen'
-      : (event.action === 'claim' && receiptChanges.some(item => item.removed.length)
-          && !receiptChanges.some(item => item.added.length) ? 'unclaim' : event.action);
+    const unclaimed = event.action === 'claim' && receiptChanges.some(item => item.removed.length)
+      && !receiptChanges.some(item => item.added.length);
+    const reopenedByEdit = event.action === 'edit' && oldBill?.closed && bill && !bill.closed;
+    const action = unclaimed ? 'unclaim' : reopenedByEdit ? 'reopen' : event.action;
     return { ...event, action, receiptChanges, currency: after.currency ?? before.currency ?? null,
       chargedCurrency: after.chargedCurrency ?? before.chargedCurrency ?? null, changes: Object.fromEntries(fields
       .filter(key => JSON.stringify(before[key] ?? null) !== JSON.stringify(after[key] ?? null))

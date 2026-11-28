@@ -88,7 +88,7 @@ WHEN EXISTS (SELECT 1 FROM history_context)
   AND OLD.payload IS NOT NEW.payload
 BEGIN
   INSERT INTO history_event(group_id,type,entity,expense,action,title,previous,current)
-  SELECT NEW.group_id, CASE WHEN json_extract(NEW.payload,'$.kind')='refund' AND json_extract(NEW.payload,'$.refundOf') IS NULL THEN 'credit' ELSE json_extract(NEW.payload,'$.kind') END, NEW.id, COALESCE(json_extract(NEW.payload,'$.refundOf'),NEW.id), CASE (SELECT action FROM history_context) WHEN 'claim' THEN 'claim' WHEN 'close' THEN 'close' WHEN 'resolve' THEN 'resolve' ELSE 'edit' END, json_extract(NEW.payload,'$.title'),
+  SELECT NEW.group_id, CASE WHEN json_extract(NEW.payload,'$.kind')='refund' AND json_extract(NEW.payload,'$.refundOf') IS NULL THEN 'credit' ELSE json_extract(NEW.payload,'$.kind') END, NEW.id, COALESCE(json_extract(NEW.payload,'$.refundOf'),NEW.id), CASE (SELECT action FROM history_context) WHEN 'claim' THEN 'claim' WHEN 'close' THEN 'close' WHEN 'reopen' THEN 'reopen' WHEN 'receipt-people' THEN 'receipt-people' WHEN 'resolve' THEN 'resolve' ELSE 'edit' END, json_extract(NEW.payload,'$.title'),
     OLD.payload,
     NEW.payload;
 END;

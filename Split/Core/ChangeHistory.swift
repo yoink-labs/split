@@ -43,6 +43,7 @@ struct ChangeHistoryEvent: Decodable, Identifiable {
         case "unclaim": "unclaimed items on"
         case "close": "closed"
         case "reopen": "reopened"
+        case "receipt-people": "updated the people on"
         case "pair": "paired"
         case "move": "moved"
         case "detach": "detached"

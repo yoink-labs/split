@@ -29,6 +29,7 @@ struct DashboardView: View {
                         subtitle: "Your balance across \(dashboard.groups.count) \(dashboard.groups.count == 1 ? "group" : "groups")"
                     )
                     quickActions
+                    DisputesToResolve()
                     PendingSettlementsView()
                     if balanceReminders, !dashboard.people.isEmpty { reminderCard }
                     if store.isDemo {

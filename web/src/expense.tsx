@@ -33,7 +33,7 @@ export function ExpenseForm() {
 
 function Composer({ g, existing }: { g: Group; existing?: Expense }) {
   const [query] = useSearchParams();
-  const { save, user } = useLedger(),
+  const { save, user, data } = useLedger(),
     nav = useNavigate(),
     [id] = useState(() => existing?.id ?? crypto.randomUUID()),
     [date, setDate] = useState(() => existing?.createdAt.slice(0, 10) ?? today());
@@ -41,6 +41,7 @@ function Composer({ g, existing }: { g: Group; existing?: Expense }) {
   const [spreadEnabled, setSpreadEnabled] = useState(Boolean(existing?.spread));
   const [spreadStart, setSpreadStart] = useState(existing?.spread?.start ?? "");
   const [spreadEnd, setSpreadEnd] = useState(existing?.spread?.end ?? "");
+  const resolving = Boolean(existing && data.disputes?.some(d => d.entryID === existing.id && d.canResolve));
   const existingPayers = existing ? entryPayers(existing) : [];
   const activeMembers = g.members.filter((m) =>
     !m.removed || existing?.splits.some((s) => s.memberID === m.id) || existingPayers.some((p) => p.memberID === m.id),
@@ -357,6 +358,7 @@ function Composer({ g, existing }: { g: Group; existing?: Expense }) {
               await save(`/v1/entries/${existing.id}/edit`, {
                 original: orig,
                 entry,
+                ...(resolving ? { disputeReply: value(f, "disputeReply") } : {}),
                 ...(photos.length ? { photos } : {}),
               });
             } else {
@@ -365,6 +367,7 @@ function Composer({ g, existing }: { g: Group; existing?: Expense }) {
                 ...(photos.length ? { photos } : {}),
               });
             }
+            if (resolving && existing) return nav(`/g/${g.id}/e/${existing.id}`, { replace: true });
             nav(`/g/${g.id}?tab=${bill ? "receipts" : "ledger"}`, { replace: true });
           }}
         >
@@ -616,6 +619,10 @@ function Composer({ g, existing }: { g: Group; existing?: Expense }) {
 
             </section>
           </div>
+          {resolving && <label className="field card card-pad">
+            Reply to resolve the dispute
+            <textarea name="disputeReply" required maxLength={2000} rows={3} />
+          </label>}
           <details className="card expense-extras" open={extrasOpen} onToggle={(e) => setExtrasOpen(e.currentTarget.open)}>
             <summary>Receipt photos, notes, pending & more{pending && <span className="tag tag-pending" style={{ marginLeft: 8 }}>Pending</span>}</summary>
             <div className="expense-extras-body">
@@ -628,7 +635,7 @@ function Composer({ g, existing }: { g: Group; existing?: Expense }) {
               </label>
 
               <label className="expense-handled">
-                <input type="checkbox" checked={pending} disabled={handled} onChange={(e) => setPending(e.target.checked)} />
+                <input type="checkbox" checked={pending} disabled={handled || resolving} onChange={(e) => setPending(e.target.checked)} />
                 <span>
                   <strong>Pending</strong>
                   <small>The cost may still change, for example while a refund is requested. It counts toward balances, and Settle up warns before anyone pays.</small>

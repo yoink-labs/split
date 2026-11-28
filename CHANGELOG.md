@@ -10,6 +10,8 @@ is noted next to each release. The CLI is versioned separately with
 
 ## [Unreleased]
 
+- Participants can dispute an expense on web, iOS, CLI, or MCP. Payers and recorders can review and resolve it, and the expense stays pending until then.
+
 ### Added
 
 - Split stays by nights and spread expenses over a date range. See each person’s daily costs on web and iOS or with the CLI and MCP.

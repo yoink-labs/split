@@ -1,4 +1,5 @@
 import { nightRate } from "../../worker/src/ledger";
+import { DisputeControls } from "./disputes";
 import { PaymentOptions } from "./paymentMethods";
 import { memberBalances, useHomeMoney } from "./homeMoney";
 import { PendingPayments } from "./settlements";
@@ -64,7 +65,11 @@ function ExpenseDrawer({
   onOpenReceipt: (id: string) => void;
   onInspect: (id: string) => void;
 }) {
-  const { request, save, user } = useLedger();
+  const { request, save, user, data, demo } = useLedger();
+  const dispute = data.disputes?.find(d => d.entryID === entry.id);
+  const canDispute = !demo && entry.kind === "expense" && !entry.combinedCount && g.members.some(
+    m => m.userID === user && !m.removed && entry.splits.some(s => s.memberID === m.id),
+  );
   const homeMoney = useHomeMoney();
   const nav = useNavigate();
   const [chargeHistory, setChargeHistory] = useState<{
@@ -216,7 +221,7 @@ function ExpenseDrawer({
                 <button className="btn btn-xs" onClick={toggleLike}>
                   {entry.likedByMe ? "♥" : "♡"} {entry.likeCount ?? 0}
                 </button>
-                {entry.editable && entry.kind === "expense" && (
+                {entry.editable && !dispute && entry.kind === "expense" && (
                   <button
                     className="btn btn-xs"
                     onClick={() => nav(`/g/${g.id}/e/${entry.id}/edit`)}
@@ -224,7 +229,7 @@ function ExpenseDrawer({
                     Edit
                   </button>
                 )}
-                {entry.editable && (
+                {entry.editable && !dispute && (
                   <button className="btn btn-xs btn-danger" onClick={deleteEntry}>
                     Delete
                   </button>
@@ -265,7 +270,7 @@ function ExpenseDrawer({
             )}
           </div>
 
-          {!refunding && !entry.combinedCount && <PendingPanel g={g} entry={entry} entries={entries} />}
+          {!refunding && !dispute && !entry.combinedCount && <PendingPanel g={g} entry={entry} entries={entries} />}
 
           {refunding && (
             <div className="card card-pad">
@@ -421,6 +426,9 @@ function ExpenseDrawer({
             </div>
           )}
 
+          <DisputeControls id={entry.id} eligible={canDispute} dispute={dispute} onChange={async () => {
+            setComments((await request<{ comments: ExpenseComment[] }>(`/v1/entries/${entry.id}/comments`)).comments);
+          }} />
           {/* Comments */}
           <div>
             <h4 style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 8 }}>

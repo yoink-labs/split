@@ -3,6 +3,8 @@ import SwiftUI
 /// The shared ledger feed: every group, grouped by month, newest first.
 struct ActivityFeedView: View {
     @EnvironmentObject private var store: ExpenseStore
+    @State private var disputeEvents: [DisputeActivity] = []
+    @State private var disputeError: String?
     @State private var filter: ActivityFilter = .all
     @State private var groupID: String?
     @State private var inspecting: ActivitySelection?
@@ -98,12 +100,47 @@ struct ActivityFeedView: View {
         }
     }
 
+    private func loadDisputeActivity() async {
+        do {
+            disputeEvents = try await store.disputeActivity()
+            disputeError = nil
+        } catch {
+            if !Task.isCancelled { disputeError = error.localizedDescription }
+        }
+    }
+
+    @ViewBuilder private var disputeActivityCard: some View {
+        let events = disputeEvents.filter { event in groupID == nil || event.groupID == groupID }
+        if let disputeError { InlineError(text: disputeError) }
+        if !events.isEmpty {
+            Card {
+                VStack(alignment: .leading, spacing: 12) {
+                    SectionHeader(title: "Dispute activity")
+                    ForEach(events) { event in
+                        VStack(alignment: .leading, spacing: 4) {
+                            if let entry = store.entries.first(where: { $0.id == event.entryID }),
+                               let group = store.group(event.groupID) {
+                                Button(event.label) { inspecting = ActivitySelection(entry: entry, group: group) }
+                            } else {
+                                Text(event.label)
+                            }
+                            if !event.comment.isEmpty {
+                                Text(event.comment).font(.subheadline).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     private var feed: some View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: Spacing.section) {
                     statusLine
                     if !filteredEntries.isEmpty { statRail }
                     filterChips
+                    if filter != .payments { disputeActivityCard }
                     if let error = store.error { InlineError(text: error) }
                     if sections.isEmpty {
                         emptyState
@@ -119,7 +156,11 @@ struct ActivityFeedView: View {
                 .frame(maxWidth: .infinity)
             }
             .background(AppBackground())
-            .refreshable { await store.sync() }
+            .task(id: store.state.snapshot.disputes) { await loadDisputeActivity() }
+            .refreshable {
+                await store.sync()
+                await loadDisputeActivity()
+            }
             .navigationTitle("Activity")
             .navigationBarTitleDisplayMode(.large)
             .toolbar {

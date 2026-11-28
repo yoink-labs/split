@@ -68,6 +68,7 @@ export interface Group {
 }
 
 export interface Snapshot {
+  disputes?: import("./disputes").OpenDispute[];
   userID: string;
   avatarURL?: string | null;
   groups: Group[];

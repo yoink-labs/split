@@ -481,6 +481,20 @@ private struct ActiveInviteResponse: Decodable {
         return try JSONDecoder().decode(ChargedAmountHistory.self, from: data).history
     }
 
+    func respondToDispute(_ entryID: String, action: String, comment: String) async throws {
+        let data = try JSONEncoder().encode(["action": action, "comment": comment])
+        _ = try await post("/v1/entries/\(entryID)/dispute", data)
+        _ = try? await loadComments(entryID)
+        await sync()
+    }
+
+    func disputeActivity() async throws -> [DisputeActivity] {
+        struct Response: Decodable { let events: [DisputeActivity] }
+        if demo { return [] }
+        let data = try await request(path: "/v1/disputes/activity")
+        return try JSONDecoder().decode(Response.self, from: data).events
+    }
+
     func comments(for entryID: String) -> [EntryComment]? {
         if demo { return demoComments[entryID] ?? [] }
         return comments[entryID]
@@ -772,8 +786,8 @@ private struct ActiveInviteResponse: Decodable {
         try persist(next)
     }
 
-    func saveReceipted(_ entry: LedgerEntry, original: LedgerEntry?, photos: [ReceiptPhoto]) async throws {
-        guard !photos.isEmpty else {
+    func saveReceipted(_ entry: LedgerEntry, original: LedgerEntry?, photos: [ReceiptPhoto], disputeReply: String? = nil) async throws {
+        guard !photos.isEmpty || disputeReply != nil else {
             if let original { try await change(original,to:entry) } else { try add(entry) }
             return
         }
@@ -794,8 +808,10 @@ private struct ActiveInviteResponse: Decodable {
             payload=try JSONSerialization.jsonObject(with:encoder.encode(entry)) as? [String:Any] ?? [:]
             path="/v1/entries"
         }
-        payload["photos"]=try JSONSerialization.jsonObject(with:encoder.encode(photos))
+        if !photos.isEmpty { payload["photos"] = try JSONSerialization.jsonObject(with: encoder.encode(photos)) }
+        if let disputeReply { payload["disputeReply"] = disputeReply }
         _ = try await post(path,JSONSerialization.data(withJSONObject:payload))
+        if disputeReply != nil { _ = try? await loadComments(entry.id) }
         try await waitForSync()
         await sync()
     }

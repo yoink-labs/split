@@ -74,6 +74,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const homeMoney = useHomeMoney();
   const loc = useLocation();
   const [navOpen, setNavOpen] = useState(false);
+  const disputeCount = data.disputes?.filter(d => d.canResolve).length ?? 0;
   const invitationCount = data.invitationCount ?? 0;
 
   const activeGroups = data.groups.filter((g) => !g.archived);
@@ -160,6 +161,11 @@ export function AppShell({ children }: { children: ReactNode }) {
         >
           <span className="nav-item-main">Invitations</span>
           {invitationCount > 0 && <span className="nav-badge">{invitationCount}</span>}
+        </Link>
+        <Link to="/disputes" className={"nav-item" + (loc.pathname === "/disputes" ? " active" : "")}
+          onClick={() => setNavOpen(false)}>
+          <span className="nav-item-main">Disputes</span>
+          {disputeCount > 0 && <span className="nav-badge" aria-label={`${disputeCount} to resolve`}>{disputeCount}</span>}
         </Link>
         <Link
           to="/friends"

@@ -499,3 +499,29 @@ describe('CLI and MCP', () => {
     expect(await run('friends_list', {})).toEqual([found]);
   });
 });
+
+it('opens a dispute via the CLI and dismisses it through MCP', async () => {
+  const alex = await authorize('dispute-alex');
+  const maya = await authorize('dispute-maya');
+  const cmd = async (token: string, name: string, args: Record<string, unknown>) => {
+    const response = await fetch('/v1/cli', {name, arguments:args}, token);
+    expect(response.ok).toBe(true);
+    return response.json<any>();
+  };
+  const group = await cmd(alex,'groups_create',{name:'CLI Disputes',self:'Alex',placeholders:['Maya']});
+  const [payer, member] = group.members;
+  await env.DB.prepare('UPDATE members SET user_id=? WHERE id=?').bind('dispute-maya',member.id).run();
+  const entry = await cmd(alex,'expenses_add',{group:group.id,payer:payer.id,title:'Dinner',amount:'50',participants:[payer.id,member.id]});
+  const options = {group:group.id,expense:entry.id};
+  const opened = await cmd(maya,'expenses_dispute',{...options,comment:'It was $40'});
+  expect(opened.ok).toBe(true);
+  expect((await cmd(alex,'disputes_list',{group:group.id})).disputes[0]).toMatchObject({id:opened.id,canResolve:true});
+  expect((await cmd(alex,'balances',{group:group.id}))[0].disputesToResolve[0].id).toBe(opened.id);
+  const response = await fetch('/mcp', {jsonrpc:'2.0',id:1,method:'tools/call',params:{
+    name:'disputes_dismiss',arguments:{...options,comment:'Checked the receipt'},
+  }}, alex, {Accept:'application/json, text/event-stream'});
+  expect(response.ok).toBe(true);
+  const result = await response.json<any>();
+  expect(JSON.parse(result.result.content[0].text)).toEqual({ok:true});
+  expect((await cmd(alex,'disputes_list',{group:group.id})).disputes).toEqual([]);
+});

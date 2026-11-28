@@ -1,3 +1,4 @@
+import { activeDisputeResolver, disputeAccess, disputeComment, disputeEvent, disputeRoute, openDisputes } from './disputes';
 import { normalizeName } from './names';
 import { knownPerson, knownAccount } from './relationships';
 import { legacyPayment, paymentMethods, saveAccountPayments } from './paymentProfiles';
@@ -69,6 +70,8 @@ async function notifyResolved(env:Env,id:string,userID:string) {
 }
 export async function handle(request:Request,env:Env,userID:string):Promise<Response> {
   const url=new URL(request.url), path=url.pathname;
+  const dispute=await disputeRoute(request,env,userID);
+  if(dispute) return dispute;
   const combination=await combinationRoute(request,env,userID);
   if(combination) return combination;
   const extra=await groupTools(request,env,userID);
@@ -176,8 +179,8 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
     const settlementRequests=(await pendingSettlements(env.DB,userID))
       .map(row => resolveEntry(JSON.parse(row.payload),aliases));
     const profilePayment=await env.DB.prepare('SELECT details FROM account_payment_profiles WHERE user_id=?').bind(userID).first<string>('details');
-    const [pendingInvitations,discoverable]=await Promise.all([invitations(env.DB,userID),isDiscoverable(env.DB,userID)]);
-    return json({userID,paymentMethods:paymentMethods(profilePayment)??[],settlementRequests,invitationCount:pendingInvitations.length,discoverable,...(avatarURL ? {avatarURL} : {}),groups:all,entries:entries.map(e=>{
+    const [pendingInvitations,discoverable,disputes]=await Promise.all([invitations(env.DB,userID),isDiscoverable(env.DB,userID),openDisputes(env.DB,userID)]);
+    return json({userID,...(disputes.length ? {disputes} : {}),paymentMethods:paymentMethods(profilePayment)??[],settlementRequests,invitationCount:pendingInvitations.length,discoverable,...(avatarURL ? {avatarURL} : {}),groups:all,entries:entries.map(e=>{
       const entry=resolveEntry(JSON.parse(e.payload),aliases);
       return {...entry,recurrence:e.recurrence,receiptIDs:JSON.parse(e.photos),editable:e.author===userID && !entry.combinedCount,
         commentCount:Number(e.commentCount),likeCount:Number(e.likeCount),likedByMe:Boolean(e.likedByMe)};
@@ -294,12 +297,19 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
   if (revise && request.method==='POST') {
     const b=await body(request,1_350_000);
     const saved=await env.DB.prepare('SELECT group_id,author,payload FROM entries WHERE id=?').bind(revise[1]).first<{group_id:string;author:string;payload:string}>();
-    if (!saved || saved.author!==userID) throw new HTTPError(403,'Only the person who recorded this entry can change it.');
+    const dispute = saved ? await disputeAccess(env.DB,revise[1],userID) : null;
+    if (!saved || (saved.author!==userID && !(revise[2]==='edit' && dispute?.disputeID && dispute.canResolve)))
+      throw new HTTPError(403,'Only the person who recorded this entry can change it.');
     await member(env,saved.group_id,userID);
     const old=JSON.parse(saved.payload);
     if(old.combinedCount) throw new HTTPError(409,'Split this expense back into its originals first.');
     const deleted=await env.DB.prepare('SELECT entry_id FROM deleted_entries WHERE entry_id=?').bind(revise[1]).first();
     const deleting=revise[2]==='delete';
+    const disputeID=dispute?.disputeID;
+    if(disputeID && deleting) throw new HTTPError(409,'Resolve this dispute before deleting the expense.');
+    if(disputeID && saved.author!==userID && b.photos!==undefined)
+      throw new HTTPError(403,'Only the recorder can attach photos while editing this expense.');
+    const reply=disputeID ? disputeComment(b.disputeReply) : '';
     if (deleted) {
       if(await env.DB.prepare('SELECT 1 FROM active_expense_combination_sources WHERE source_id=?').bind(revise[1]).first())
         throw new HTTPError(409,'Restore the original expenses before changing this expense.');
@@ -320,6 +330,14 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
       const legacyOriginal=preserveStatementAmount(b.original,canonical);
       const updated=validateEntry(legacyOriginal!==b.original ? preserveStatementAmount(b.entry,canonical) : b.entry,ids,canonical.bill,{reconcileBill:true});
       if (updated.bill || old.bill) await requireActiveMember(env,saved.group_id,userID);
+      if(disputeID) {
+        const ordered = (splits: Entry['splits']) => [...splits].sort((a,b) => a.memberID.localeCompare(b.memberID));
+        if(updated.amount===canonical.amount && updated.splitMode===canonical.splitMode &&
+          JSON.stringify(ordered(updated.splits))===JSON.stringify(ordered(canonical.splits)))
+          throw new InputError('Change the amount, split or participants to resolve by editing.');
+        delete updated.pending;
+        delete updated.pendingNote;
+      }
       replacement=updated;
       if(updated.id!==revise[1] || updated.groupID!==saved.group_id || updated.createdAt!==old.createdAt || updated.kind!==old.kind || updated.refundOf!==old.refundOf)
         throw new InputError('Invalid edit.');
@@ -342,14 +360,19 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
       const original=validateEntry(preserveStatementAmount(b.original,canonical),ids,canonical.bill);
       if (JSON.stringify(original)!==JSON.stringify(canonical)) throw new HTTPError(409,'This entry changed. Refresh and try again.');
     }
+    const disputeGuard=disputeID
+      ? ' AND EXISTS (SELECT 1 FROM expense_disputes WHERE id=? AND entry_id=entries.id AND closed_at IS NULL)' +
+        ' AND ' + activeDisputeResolver
+      : ' AND NOT EXISTS (SELECT 1 FROM expense_disputes WHERE entry_id=entries.id AND closed_at IS NULL)';
+    const disputeBinds=disputeID ? [disputeID,userID] : [];
     const statement=deleting
       ? await env.DB.prepare(`INSERT OR IGNORE INTO deleted_entries SELECT id FROM entries WHERE id=? AND (?=0 OR payload=?)
         AND NOT EXISTS (SELECT 1 FROM entries r WHERE r.group_id=entries.group_id AND json_extract(r.payload,'$.refundOf')=entries.id
-          AND r.id NOT IN (SELECT entry_id FROM deleted_entries))`)
-        .bind(revise[1],Number(conditional),saved.payload)
-      : await env.DB.prepare(`UPDATE entries SET payload=? WHERE id=? AND payload=? AND id NOT IN (SELECT entry_id FROM deleted_entries)${guard?' AND '+guard.sql:''}`)
-        .bind(payload!,revise[1],saved.payload,...(guard?.binds??[]));
-    const [result]=await env.DB.batch([statement,...(deleting?[]:attachments(env.DB,JSON.parse(payload!),userID,payload!,b.photos))]);
+          AND r.id NOT IN (SELECT entry_id FROM deleted_entries))${disputeGuard}`)
+        .bind(revise[1],Number(conditional),saved.payload,...disputeBinds)
+      : await env.DB.prepare(`UPDATE entries SET payload=? WHERE id=? AND payload=? AND id NOT IN (SELECT entry_id FROM deleted_entries)${guard?' AND '+guard.sql:''}${disputeGuard}`)
+        .bind(payload!,revise[1],saved.payload,...(guard?.binds??[]),...disputeBinds);
+    const [result]=await env.DB.batch([statement,...(disputeID ? [disputeEvent(env.DB,disputeID,'edited',userID,dispute!.name,reply)] : []),...(deleting?[]:attachments(env.DB,JSON.parse(payload!),userID,payload!,b.photos))]);
     if (!result.meta.changes && !(deleting && await env.DB.prepare('SELECT entry_id FROM deleted_entries WHERE entry_id=? AND entry_id NOT IN (SELECT source_id FROM active_expense_combination_sources)').bind(revise[1]).first()))
       throw new HTTPError(409,'This entry changed. Refresh and try again.');
     if (replacement) await receiptActivity(env,replacement,userID,Boolean(canonical.bill?.closed),canonical);

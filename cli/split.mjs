@@ -13,11 +13,13 @@ export { photoData };
 import version from './release/version.json' with { type: 'json' };
 export { version };
 const spelling = tool => tool.name.replaceAll('_',' ');
-const flags = { chargedAmount: 'charged-amount', spreadStart: 'spread-start', spreadEnd: 'spread-end' };
+const flags = { chargedAmount: 'charged-amount', spreadStart: 'spread-start', spreadEnd: 'spread-end', disputeReply: 'dispute-reply' };
 const flagName = key => flags[key] ?? key;
+const positionalExpense = tool => tool.name === 'expenses_dispute';
 function usage(tool) {
   const { properties, required } = tool.inputSchema;
   const args = Object.entries(properties).filter(([key]) => key !== 'file' || !properties.csv).map(([key, spec]) => {
+    if (key === 'expense' && positionalExpense(tool)) return '<id>';
     if (key === 'csv') return '(--file PATH [--file PATH ...] | --csv VALUE [--file NAME])';
     const flag = (tool.name === 'expenses_combine' && key === 'yes' ? '--yes|-y' : '--' + flagName(key)) + (spec.type === 'boolean' ? '' : (spec.type === 'array' || spec.type === 'object') ? ' JSON' : ' VALUE');
     return required.includes(key) ? flag : '[' + flag + ']';
@@ -234,7 +236,11 @@ export async function main(argv = process.argv.slice(2), io = terminal()) {
       options.yes.short = 'y';
       options['dry-run'] = {type:'boolean'};
     }
-    const parsed = parseArgs({ args: words.slice(spelling(tool).split(' ').length), options });
+    const parsed = parseArgs({ args: words.slice(spelling(tool).split(' ').length), options, allowPositionals: positionalExpense(tool) });
+    if (positionalExpense(tool) && parsed.positionals.length) {
+      if (parsed.positionals.length !== 1 || parsed.values.expense) throw new Error('Supply one expense ID.');
+      parsed.values.expense = parsed.positionals[0];
+    }
     const paths = tool.inputSchema.properties.photos ? parsed.values.photo : undefined;
     if (paths) delete parsed.values.photo;
     const { file: files, out, "dry-run": dryRun, ...values } = parsed.values;
@@ -385,6 +391,10 @@ export async function main(argv = process.argv.slice(2), io = terminal()) {
     if (tool.name === 'receipts_get' && out) {
       await writeFile(out, Buffer.from(result.data, 'base64'));
       return compact ? print({ saved: out }, true) : console.log('Wrote ' + out);
+    }
+    if (tool.name === 'balances' && !compact && result.some(row => row.disputesToResolve?.length)) {
+      const count = result.reduce((sum, row) => sum + (row.disputesToResolve?.length ?? 0), 0);
+      console.error(count + (count === 1 ? ' dispute' : ' disputes') + ' to resolve. Run split disputes list --group ' + clean(values.group) + '.');
     }
     if (tool.name === 'balances' && values.member && !compact) return console.log(describeBalance(result));
     print(result,compact);

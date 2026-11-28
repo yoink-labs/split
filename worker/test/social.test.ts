@@ -219,3 +219,80 @@ describe('payers, notes and adjustment mode',()=>{
     }
   });
 });
+
+describe('expense disputes', () => {
+  async function prepare() {
+    const entry = await addEntry();
+    await env.DB.prepare('INSERT INTO members(id,group_id,user_id,name) VALUES (?,?,?,?)')
+      .bind('seat-nonparticipant',group,'user-nonparticipant','Nonparticipant').run();
+    return entry;
+  }
+
+  it('requires membership, a share and a reason, and creates a pending expense, reply thread and notification', async () => {
+    await prepare();
+    for (const suffix of ['/dispute']) {
+      await expect(call(outsider,path(suffix))).rejects.toMatchObject({status:404});
+      await expect(call(outsider,path(suffix),{comment:'wrong group'})).rejects.toMatchObject({status:404});
+    }
+    await expect(call('user-nonparticipant',path('/dispute'),{comment:'No share'})).rejects.toMatchObject({status:403});
+    await expect(call(userB,path('/dispute'),{comment:'   '})).rejects.toThrow('2,000');
+    expect((await call(userB,path('/dispute'),{comment:'I was not there'})).status).toBe(201);
+    await expect(call(userB,path('/dispute'),{comment:'again'})).rejects.toMatchObject({status:409});
+    expect((await snapshot(userB)).entries[0]).toMatchObject({pending:true});
+    expect((await call(userA,'/v1/disputes')).data.disputes).toEqual([
+      expect.objectContaining({entryID:baseEntry.id,canResolve:true,canWithdraw:false,comment:'I was not there'}),
+    ]);
+    expect((await call(outsider,'/v1/disputes')).data.disputes).toEqual([]);
+    expect((await call(outsider,'/v1/disputes/activity')).data.events).toEqual([]);
+    const { comments } = (await call(userA,path('/comments'))).data;
+    expect(comments[0].body).toContain('I was not there');
+    await expect(call(userB,path('/comments/'+comments[0].id),undefined,'DELETE')).rejects.toMatchObject({status:409});
+    expect(await env.DB.prepare("SELECT user_id FROM email_activity WHERE kind='disputes'").first('user_id')).toBe(userA);
+  });
+
+  it('requires the payer or recorder to dismiss with a reply, and protects pending from other routes', async () => {
+    const entry = await prepare();
+    await call(userB,path('/dispute'),{comment:'Wrong amount'});
+    await expect(call(userB,path('/dispute'),{action:'dismiss',comment:'Looks fine'})).rejects.toMatchObject({status:403});
+    await expect(call(outsider,path('/dispute'),{action:'dismiss',comment:'Looks fine'})).rejects.toMatchObject({status:404});
+    await expect(call(userA,path('/dispute'),{action:'dismiss'})).rejects.toThrow('2,000');
+    await expect(call(userA,path('/resolve'),{action:'confirm'})).rejects.toMatchObject({status:409});
+    await expect(call(userA,path('/pending'),{pending:false})).rejects.toMatchObject({status:409});
+    await expect(call(userA,path('/delete'),{})).rejects.toMatchObject({status:409});
+    await call(userA,path('/dispute'),{action:'dismiss',comment:'The posted amount matches the receipt.'});
+    expect((await snapshot(userB)).entries[0].pending).toBeUndefined();
+    expect((await snapshot(userB)).entries[0].amount).toBe(entry.amount);
+    expect((await call(userB,path('/dispute'))).data.history.map((e:any) => e.action)).toEqual(['opened','dismissed']);
+    expect((await call(userB,'/v1/disputes/activity')).data.events.map((e:any) => e.action)).toEqual(['dismissed','opened']);
+  });
+
+  it('lets only the disputer withdraw', async () => {
+    await prepare();
+    await call(userB,path('/dispute'),{comment:'Wrong person'});
+    await expect(call(userA,path('/dispute'),{action:'withdraw'})).rejects.toMatchObject({status:403});
+    await expect(call(outsider,path('/dispute'),{action:'withdraw'})).rejects.toMatchObject({status:404});
+    await call(userB,path('/dispute'),{action:'withdraw'});
+    expect((await call(userA,'/v1/disputes')).data.disputes).toEqual([]);
+    expect((await snapshot(userA)).entries[0].pending).toBeUndefined();
+    expect((await call(userA,path('/comments'))).data.comments.at(-1).body).toBe('Withdrew dispute');
+  });
+
+  it('lets a payer who did not record the expense edit with a reply and clears pending atomically', async () => {
+    await prepare();
+    const payerEntry = await addEntry({id:'payer-edit',paidBy:seatB});
+    const editPath = '/v1/entries/payer-edit/edit';
+    await call(userA,'/v1/entries/payer-edit/dispute',{comment:'Only $8'});
+    const original = {...payerEntry,pending:true};
+    const entry = {...original,amount:800,splits:[{memberID:seatA,amount:400},{memberID:seatB,amount:400}]};
+    await expect(call('user-nonparticipant',editPath,{original,entry,disputeReply:'Updated'})).rejects.toMatchObject({status:403});
+    await expect(call(outsider,editPath,{original,entry,disputeReply:'Updated'})).rejects.toMatchObject({status:403});
+    await expect(call(userB,editPath,{original,entry})).rejects.toThrow('2,000');
+    await expect(call(userB,editPath,{original,entry:{...original,title:'Rename'},disputeReply:'Updated'})).rejects.toThrow('amount, split or participants');
+    await call(userB,editPath,{original,entry,disputeReply:'Updated'});
+    expect((await snapshot(userB)).entries.find(e => e.id==='payer-edit')).toMatchObject({amount:800});
+    expect((await snapshot(userB)).entries.find(e => e.id==='payer-edit').pending).toBeUndefined();
+    expect((await call(userA,'/v1/disputes')).data.disputes).toEqual([]);
+    expect((await call(userA,'/v1/entries/payer-edit/comments')).data.comments.at(-1).body).toBe('Resolved by editing: Updated');
+    await expect(call(userB,editPath,{original,entry,disputeReply:'Updated'})).rejects.toMatchObject({status:403});
+  });
+});

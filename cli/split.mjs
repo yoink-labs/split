@@ -13,11 +13,12 @@ export { photoData };
 import version from './release/version.json' with { type: 'json' };
 export { version };
 const spelling = tool => tool.name.replaceAll('_',' ');
+const flagName = key => key === 'chargedAmount' ? 'charged-amount' : key;
 function usage(tool) {
   const { properties, required } = tool.inputSchema;
   const args = Object.entries(properties).filter(([key]) => key !== 'file' || !properties.csv).map(([key, spec]) => {
     if (key === 'csv') return '(--file PATH [--file PATH ...] | --csv VALUE [--file NAME])';
-    const flag = '--' + (key === 'chargedAmount' ? 'charged-amount' : key) + (spec.type === 'boolean' ? '' : (spec.type === 'array' || spec.type === 'object') ? ' JSON' : ' VALUE');
+    const flag = '--' + flagName(key) + (spec.type === 'boolean' ? '' : (spec.type === 'array' || spec.type === 'object') ? ' JSON' : ' VALUE');
     return required.includes(key) ? flag : '[' + flag + ']';
   });
   if (properties.photos) args.push('[--photo PATH ...]');
@@ -156,7 +157,7 @@ export async function main(argv = process.argv.slice(2), io = terminal()) {
         const description = key === 'file' && tool.inputSchema.properties.csv
           ? 'Path to a CSV export. Repeat for multiple files. With --csv, supply a file name.'
           : spec.description;
-        return '  --' + key + '  ' + description;
+        return '  --' + flagName(key) + '  ' + description;
       })].join('\n') : help;
       return compact ? print({ help: message }, true) : console.log(message);
     }
@@ -180,11 +181,7 @@ export async function main(argv = process.argv.slice(2), io = terminal()) {
       return print({ signedIn:false, revoked:true },compact);
     }
     if (!tool) throw new Error('Unknown command. Run split --help.');
-    const options = Object.fromEntries(Object.entries(tool.inputSchema.properties).map(([key,spec]) => [key, {type:spec.type === 'boolean' ? 'boolean' : 'string'}]));
-    if (options.chargedAmount) {
-      options['charged-amount'] = options.chargedAmount;
-      delete options.chargedAmount;
-    }
+    const options = Object.fromEntries(Object.entries(tool.inputSchema.properties).map(([key,spec]) => [flagName(key), {type:spec.type === 'boolean' ? 'boolean' : 'string'}]));
     if (tool.inputSchema.properties.photos) options.photo = { type:'string', multiple:true };
     if (tool.inputSchema.properties.csv) options.file = { type:'string', multiple:true };
     if (outputs.has(tool.name)) options.out = { type:'string' };

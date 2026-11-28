@@ -33,20 +33,39 @@ async function requestFriend(db: D1Database, actor: string, b: Record<string, un
   const now = Date.now();
   const match = email ? `p.email=? AND ${discoverable}` : `p.user_id=? AND ${activeSharedGroup}`;
   const args = email ? [email] : [target, actor];
-  await db.prepare(`INSERT INTO friendships(id,sender,recipient,expires_at)
-    SELECT ?,?,p.user_id,? FROM split_profiles p WHERE p.user_id<>? AND ${match}
-    ON CONFLICT DO UPDATE SET id=excluded.id,sender=excluded.sender,recipient=excluded.recipient,expires_at=excluded.expires_at
-    WHERE friendships.accepted=0 AND friendships.expires_at<=?`)
-    .bind(await tokenHash(crypto.randomUUID()),actor,now+INVITE_DAYS*86400_000,actor,...args,now).run();
+  const id = await tokenHash(crypto.randomUUID());
+  const expires = now + INVITE_DAYS * 86400_000;
+  const receipt = email
+    ? db.prepare(`INSERT INTO friend_request_receipts VALUES (?,?,?,?,?)
+        ON CONFLICT(sender,target_key) DO UPDATE SET id=excluded.id,expires_at=excluded.expires_at
+        WHERE friend_request_receipts.expires_at<=?`).bind(id, actor, `email:${email}`, email, expires, now)
+    : db.prepare(`INSERT INTO friend_request_receipts
+        SELECT ?,?,?,p.name,? FROM split_profiles p WHERE ${match}
+        ON CONFLICT(sender,target_key) DO UPDATE SET id=excluded.id,expires_at=excluded.expires_at
+        WHERE friend_request_receipts.expires_at<=?`).bind(id, actor, `user:${target}`, expires, ...args, now);
+  await db.batch([
+    db.prepare('DELETE FROM friend_request_receipts WHERE sender=? AND expires_at<=?').bind(actor, now),
+    receipt,
+    db.prepare(`INSERT INTO friendships(id,sender,recipient,expires_at)
+      SELECT ?,?,p.user_id,? FROM split_profiles p WHERE p.user_id<>? AND ${match}
+      AND EXISTS (SELECT 1 FROM friend_request_receipts WHERE id=?)
+      ON CONFLICT DO UPDATE SET id=excluded.id,sender=excluded.sender,recipient=excluded.recipient,expires_at=excluded.expires_at
+      WHERE friendships.accepted=0 AND friendships.expires_at<=?`)
+      .bind(id,actor,expires,actor,...args,id,now),
+  ]);
   // Uniform response for unavailable, opted-out, already pending, and unknown addresses.
   return json({ok:true},202);
 }
 
 async function respondPeople(db: D1Database, userID: string, id: string, action: 'accept' | 'decline') {
   const pending = 'id=? AND recipient=? AND accepted=0 AND expires_at>?';
-  const result = await db.prepare(action === 'accept'
-    ? `UPDATE friendships SET accepted=1 WHERE ${pending}`
-    : `DELETE FROM friendships WHERE ${pending}`).bind(id,userID,Date.now()).run();
+  const args = [id,userID,Date.now()];
+  const [,result] = await db.batch([
+    db.prepare(`DELETE FROM friend_request_receipts WHERE id IN (SELECT id FROM friendships WHERE ${pending})`).bind(...args),
+    db.prepare(action === 'accept'
+      ? `UPDATE friendships SET accepted=1 WHERE ${pending}`
+      : `DELETE FROM friendships WHERE ${pending}`).bind(...args),
+  ]);
   if (result.meta.changes) return json({ok:true});
   const read = await db.prepare('UPDATE member_links SET read_at=? WHERE id=? AND recipient=? AND read_at IS NULL')
     .bind(Date.now(),id,userID).run();
@@ -175,6 +194,24 @@ export async function directoryRoute(request: Request, env: Env, userID: string)
     if (path === '/v1/people/known') return json(await listPeople(env.DB,userID,'known'));
     if (path === '/v1/people/shared') return json(await listPeople(env.DB,userID,'shared'));
     if (path === '/v1/friends') return json(await listPeople(env.DB,userID,'friends'));
+  }
+  if (path === '/v1/friends/requests' && request.method === 'GET') {
+    const {results} = await env.DB.prepare(`SELECT id,label,expires_at AS expiresAt FROM friend_request_receipts
+      WHERE sender=? AND expires_at>? ORDER BY expires_at DESC`).bind(userID,Date.now()).all();
+    return json(results);
+  }
+  const cancel = path.match(/^\/v1\/friends\/requests\/([a-f0-9]{64})\/cancel$/);
+  if (cancel && request.method === 'POST') {
+    const now = Date.now();
+    const receipt = 'id=? AND sender=? AND expires_at>?';
+    const args = [cancel[1],userID,now];
+    const [,deleted] = await env.DB.batch([
+      env.DB.prepare(`DELETE FROM friendships WHERE accepted=0
+        AND id IN (SELECT id FROM friend_request_receipts WHERE ${receipt})`).bind(...args),
+      env.DB.prepare(`DELETE FROM friend_request_receipts WHERE ${receipt}`).bind(...args),
+    ]);
+    if (!deleted.meta.changes) throw new HTTPError(404,'Sent request not found.');
+    return json({ok:true});
   }
   if (path === '/v1/friends/requests' && request.method === 'POST')
     return requestFriend(env.DB,userID,await body(request));

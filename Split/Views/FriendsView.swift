@@ -8,13 +8,27 @@ struct FriendsView: View {
     @State private var showCreate = false
     @State private var managingFriends = false
     @State private var query = ""
+    @State private var friends: [SplitUser] = []
+    @State private var requestCount = 0
+    @State private var directoryError: String?
+
+    private var friendByKey: [String: SplitUser] {
+        Dictionary(uniqueKeysWithValues: friends.map { ("u:" + $0.userID, $0) })
+    }
 
     private var rows: [PersonBalance] {
-        let all = Analytics.allPeople(groups: store.groups, entries: store.entries, userID: store.currentUserID)
-        guard !query.trimmingCharacters(in: .whitespaces).isEmpty else { return all }
-        return all.filter { $0.name.localizedCaseInsensitiveContains(query) }
+        let people = Analytics.allPeople(groups: store.groups, entries: store.entries, userID: store.currentUserID)
+        let balances = Dictionary(uniqueKeysWithValues: people.map { ($0.key, $0) })
+        let accepted = friends.map { friend in
+            let key = "u:" + friend.userID
+            var balance = balances[key] ?? PersonBalance(key: key, name: friend.name, memberIDs: [], groupIDs: [], amounts: [:])
+            balance.name = friend.name
+            return balance
+        }
+        let all = accepted + people.filter { friendByKey[$0.key] == nil }
+        let search = query.trimmingCharacters(in: .whitespaces)
+        return search.isEmpty ? all : all.filter { $0.name.localizedCaseInsensitiveContains(search) }
     }
-    private var openCount: Int { rows.filter(\.hasBalance).count }
 
     var body: some View {
         NavigationSplitView {
@@ -22,21 +36,27 @@ struct FriendsView: View {
                 Section {
                     if store.isDemo { Label("Sample people · changes stay here", systemImage: "sparkles").font(.caption).foregroundStyle(.secondary).listRowBackground(Color.clear) }
                 }
-                Section {
-                    ForEach(rows) { person in
-                        Button { selection = person.key } label: {
-                            FriendSidebarRow(person: person)
-                        }
-                        .buttonStyle(.plain)
-                        .listRowInsets(EdgeInsets(top: 6, leading: 14, bottom: 6, trailing: 14))
-                        .listRowSeparator(.hidden)
-                        .listRowBackground(
-                            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                .fill(selection == person.key && size == .regular ? Palette.lime.opacity(0.28) : Color.clear)
-                                .padding(.horizontal, 6)
-                        )
-                        .tag(person.key)
-                        .accessibilityLabel(accessibility(person))
+                Section("Your friends") {
+                    if let directoryError { InlineError(text: directoryError) }
+                    if friends.isEmpty && query.isEmpty {
+                        Text("Accepted requests appear here.").foregroundStyle(.secondary)
+                    }
+                    ForEach(rows.filter { friendByKey[$0.key] != nil }) { person in
+                        sidebarRow(person)
+                    }
+                }
+                Section("Requests") {
+                    Button {
+                        managingFriends = true
+                    } label: {
+                        Label(requestCount == 0 ? "Manage requests" : "Manage requests (\(requestCount))",
+                              systemImage: "tray")
+                    }
+                }
+                let others = rows.filter { friendByKey[$0.key] == nil }
+                if !others.isEmpty {
+                    Section("People in your groups") {
+                        ForEach(others) { person in sidebarRow(person) }
                     }
                 }
             }
@@ -47,42 +67,62 @@ struct FriendsView: View {
             .navigationTitle("Friends")
             .navigationBarTitleDisplayMode(.large)
             .overlay {
-                if rows.isEmpty {
-                    if !store.hasLoaded {
-                        ProgressView()
-                    } else if query.isEmpty {
-                        EmptyStateView(title: "No friends yet", message: "Add someone to start a one-to-one tab, or share a group.", symbol: "person.2", actionTitle: "Add a friend") { showCreate = true }
-                    } else {
-                        ContentUnavailableView.search
-                    }
-                }
+                if rows.isEmpty && !query.isEmpty { ContentUnavailableView.search }
             }
             .toolbar {
                 ToolbarItemGroup(placement: .topBarTrailing) {
-                    Button { managingFriends = true } label: { Label("Manage friends", systemImage: "person.crop.circle.badge.plus") }
+                    Button { managingFriends = true } label: { Label("Manage friends and send requests", systemImage: "person.crop.circle.badge.plus") }
                     Button { showCreate = true } label: { Label("New balance tab", systemImage: "plus") }
                 }
             }
             .searchable(text: $query, placement: .sidebar, prompt: "Search people")
-            .refreshable { await store.sync() }
+            .refreshable {
+                await store.sync()
+                await loadDirectory()
+            }
         } detail: {
             if let selection, let person = rows.first(where: { $0.key == selection }) {
-                FriendDetail(balance: person)
+                FriendDetail(balance: person, friend: friendByKey[person.key])
             } else {
                 FriendPlaceholder(showCreate: $showCreate)
             }
         }
         .navigationSplitViewStyle(.balanced)
         .sheet(isPresented: $showCreate) { CreateGroupView(friend: true) }
-        .sheet(isPresented: $managingFriends) {
+        .sheet(isPresented: $managingFriends, onDismiss: { Task { await loadDirectory() } }) {
             NavigationStack {
                 FriendSettingsView()
                     .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { managingFriends = false } } }
             }
         }
-        .onAppear {
-            if selection == nil, size == .regular, let first = rows.first?.key { selection = first }
+        .task { await loadDirectory() }
+    }
+
+    private func loadDirectory() async {
+        do {
+            async let friendList = store.friends()
+            async let invitations = store.invitations()
+            async let sent = store.sentFriendRequests()
+            let (loaded, incoming, outgoing) = try await (friendList, invitations, sent)
+            friends = loaded
+            requestCount = incoming.filter { $0.kind == "friend" }.count + outgoing.count
+            directoryError = nil
+            if selection == nil, size == .regular { selection = rows.first?.key }
+        } catch {
+            directoryError = error.localizedDescription
         }
+    }
+
+    private func sidebarRow(_ person: PersonBalance) -> some View {
+        let avatar = friendByKey[person.key]?.avatarURL
+        return Button { selection = person.key } label: {
+            FriendSidebarRow(person: person, avatarURL: avatar)
+        }
+        .buttonStyle(.plain)
+        .listRowInsets(EdgeInsets(top: 6, leading: 14, bottom: 6, trailing: 14))
+        .listRowBackground(selection == person.key && size == .regular ? Palette.lime.opacity(0.22) : Color.clear)
+        .tag(person.key)
+        .accessibilityLabel(accessibility(person))
     }
 
     private func accessibility(_ person: PersonBalance) -> String {
@@ -93,9 +133,10 @@ struct FriendsView: View {
 
 struct FriendSidebarRow: View {
     var person: PersonBalance
+    var avatarURL: String?
     var body: some View {
         HStack(alignment: .center, spacing: Spacing.s) {
-            Avatar(name: person.name, size: 40)
+            Avatar(name: person.name, size: 40, avatarURL: avatarURL)
             VStack(alignment: .leading, spacing: 2) {
                 Text(person.name)
                     .font(.body.weight(.semibold))
@@ -166,18 +207,20 @@ struct FriendPlaceholder: View {
 
 struct FriendDetail: View {
     var balance: PersonBalance
+    var friend: SplitUser? = nil
     @EnvironmentObject private var store: ExpenseStore
     @EnvironmentObject private var session: SessionStore
     @State private var newExpenseGroup: ExpenseGroup?
     @State private var settlingGroup: ExpenseGroup?
-    @State private var showSettlePicker = false
     @State private var inspecting: LedgerEntry?
     @State private var error: String?
     @State private var creating = false
 
     private var person: PersonBalance {
-        Analytics.allPeople(groups: store.groups, entries: store.entries, userID: store.currentUserID)
+        var current = Analytics.allPeople(groups: store.groups, entries: store.entries, userID: store.currentUserID)
             .first { $0.key == balance.key } ?? balance
+        if let friend { current.name = friend.name }
+        return current
     }
     private var sharedGroups: [ExpenseGroup] {
         person.groupIDs.compactMap { store.group($0) }.filter { !($0.archived ?? false) }
@@ -202,6 +245,15 @@ struct FriendDetail: View {
             VStack(alignment: .leading, spacing: 18) {
                 header
                 if let error { InlineError(text: error) }
+                if let methods = friend?.paymentMethods, !methods.isEmpty {
+                    Card {
+                        VStack(alignment: .leading, spacing: Spacing.s) {
+                            Text("Payment methods").font(.headline)
+                            PaymentOptions(methods: methods)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
                 if store.isDemo { Label("Sample tab · changes stay in this preview", systemImage: "sparkles").font(.caption).foregroundStyle(.secondary) }
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 360), spacing: 18, alignment: .top)], alignment: .leading, spacing: 18) {
                     historySection
@@ -224,7 +276,6 @@ struct FriendDetail: View {
         .refreshable { await store.sync() }
         .sheet(item: $newExpenseGroup) { group in AddExpenseView(group: group) }
         .sheet(item: $settlingGroup) { group in SettleUpView(group: group) }
-        .sheet(isPresented: $showSettlePicker) { FriendSettleSheet(groups: sharedGroups) { settlingGroup = $0 } }
         .sheet(item: $inspecting) { entry in EntrySheet(entry: entry) }
     }
 
@@ -232,7 +283,7 @@ struct FriendDetail: View {
         VStack(alignment: .leading, spacing: 12) {
             VStack(alignment: .leading, spacing: 16) {
                 HStack(spacing: 14) {
-                    Avatar(name: person.name, size: 52, tint: Palette.lime)
+                    Avatar(name: person.name, size: 52, tint: Palette.lime, avatarURL: friend?.avatarURL)
                     VStack(alignment: .leading, spacing: 3) {
                         Text(person.name)
                             .font(.splitDisplay(24))
@@ -255,7 +306,16 @@ struct FriendDetail: View {
             .overlay(RoundedRectangle(cornerRadius: Radius.header).stroke(Palette.lime.opacity(0.16), lineWidth: 1))
             ActionBar {
                 SplitActionButton(title: "Add expense", symbol: "plus", prominent: true) { addExpense() }
-                SplitActionButton(title: "Settle up", symbol: "arrow.left.arrow.right") { settle() }
+                if let group = friendGroup ?? (sharedGroups.count == 1 ? sharedGroups.first : nil) {
+                    SplitActionButton(title: "Settle up", symbol: "arrow.left.arrow.right") { settlingGroup = group }
+                } else if !sharedGroups.isEmpty {
+                    Menu("Settle up", systemImage: "arrow.left.arrow.right") {
+                        ForEach(sharedGroups) { group in
+                            Button(group.name, systemImage: group.symbol) { settlingGroup = group }
+                        }
+                    }
+                    .frame(minHeight: HitTarget.minimum)
+                }
             }
         }
     }
@@ -340,69 +400,23 @@ struct FriendDetail: View {
     private func addExpense() {
         if let friendGroup { newExpenseGroup = friendGroup; return }
         guard !creating else { return }
-        guard let userID = session.userID, let sourcePerson else {
+        guard let userID = session.userID, sourcePerson != nil || friend != nil else {
             error = "Add this person to a group first."; return
         }
         creating = true; error = nil
         defer { creating = false }
-        let draft = MemberDraft(name: sourcePerson.name, email: sourcePerson.email, phone: sourcePerson.phone, userID: sourcePerson.userID)
+        let draft = MemberDraft(name: person.name, email: sourcePerson?.email, phone: sourcePerson?.phone, userID: friend?.userID ?? sourcePerson?.userID)
         let currency = sharedGroups.first?.currency ?? (Money.currencies.contains(Locale.current.currency?.identifier ?? "") ? Locale.current.currency!.identifier : "USD")
         do {
-            try store.create(name: sourcePerson.name, kind: "friend", currency: currency, people: [draft], userID: userID, displayName: session.displayName)
+            try store.create(name: person.name, kind: "friend", currency: currency, people: [draft], userID: userID, displayName: session.displayName)
             if let created = store.groups.first(where: { $0.isFriend && $0.members.contains { Analytics.key($0) == person.key } }) {
                 newExpenseGroup = created
             }
         } catch { self.error = error.localizedDescription }
     }
 
-    private func settle() {
-        if let friendGroup { settlingGroup = friendGroup }
-        else if sharedGroups.isEmpty { error = "No shared expenses yet." }
-        else { showSettlePicker = true }
-    }
-
     private func monthDate(_ month: String) -> Date {
         let formatter = DateFormatter(); formatter.locale = Locale(identifier: "en_US_POSIX"); formatter.dateFormat = "yyyy-MM"
         return formatter.date(from: month) ?? Date()
-    }
-}
-
-struct FriendSettleSheet: View {
-    var groups: [ExpenseGroup]
-    var onPick: (ExpenseGroup) -> Void
-    @Environment(\.dismiss) private var dismiss
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                LazyVStack(spacing: 10) {
-                    Text("Choose a group to settle in.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.bottom, 4)
-                    ForEach(groups) { group in
-                        Button { dismiss(); onPick(group) } label: {
-                            Card {
-                                HStack {
-                                    Image(systemName: group.symbol).foregroundStyle(Palette.evergreen)
-                                    Text(group.name).font(.headline).foregroundStyle(Palette.ink)
-                                    Spacer()
-                                    Text(group.currency).font(.caption).foregroundStyle(.secondary)
-                                    Image(systemName: "chevron.right").font(.caption2.weight(.bold)).foregroundStyle(.tertiary)
-                                }
-                            }
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .padding(16)
-                .frame(maxWidth: 560)
-                .frame(maxWidth: .infinity)
-            }
-            .background(AppBackground())
-            .navigationTitle("Settle up")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
-        }
     }
 }

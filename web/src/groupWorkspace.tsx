@@ -18,6 +18,7 @@ import {
   dateText,
   entryItems,
   entryPayers,
+  groupTransfers,
   memberName,
   memberPath,
   minor,
@@ -598,8 +599,12 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
   const recentTransactions = useRef<HTMLElement>(null);
   const receiptFocusID = query.get("receipt");
 
-  // Settle up open form
-  const [settlingKey, setSettlingKey] = useState<string | null>(null);
+  const me = g.members.find((m) => m.userID === user);
+  const [settlingKey, setSettlingKey] = useState<string | null>(() =>
+    tab === "settle" && query.has("to") && query.has("currency") && me && !me.removed
+      ? [query.get("currency"), me.id, query.get("to")].join(":")
+      : null,
+  );
   const [flowFocus, setFlowFocus] = useState<{ groupID: string; currency: string; id: string }>();
 
   const entries = useMemo(
@@ -610,7 +615,6 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
     [data.entries, g.id],
   );
 
-  const me = g.members.find((m) => m.userID === user);
   const converted = useMemo(() => entries.map(settlementEntry), [entries]);
   const codes = useMemo(
     () => [...new Set([g.currency, ...converted.map((e) => e.currency)])],
@@ -640,7 +644,7 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
   const pendingCount = entries.filter((e) => e.pending && !e.handled).length;
   const myConfirmed = me ? memberBalances(entries, me.id, false) : {};
   const suggestions = codes.flatMap((currency) =>
-    breakdown(converted, g.members, currency).settlements.map((transfer) => ({ ...transfer, currency })),
+    groupTransfers(g, balances(converted, currency)).map((transfer) => ({ ...transfer, currency })),
   );
   const openReceiptsCount = entries.filter((e) => e.bill && !e.bill.closed && e.bill.items.some((i) => !i.memberIDs.length)).length;
   const openItemsCount = entries.reduce(
@@ -964,7 +968,8 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
                       {transfers.map((t) => {
                         const key = currency + ":" + t.from + ":" + t.to;
                         const recipient = g.members.find((m) => m.id === t.to);
-                        const isOpen = settlingKey === key;
+                        const canSettle = t.from === me?.id && !me.removed && recipient && !recipient.removed;
+                        const isOpen = canSettle && settlingKey === key;
                         return (
                           <div key={key} className="suggested-payment">
                             <div className="suggested-route">
@@ -987,7 +992,7 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
                               >
                                 Show on graph
                               </button>
-                              {t.from === me?.id && (
+                              {canSettle && (
                                 <button
                                   type="button"
                                   className="btn btn-sm btn-primary"

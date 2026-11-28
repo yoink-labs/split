@@ -1,0 +1,61 @@
+.personal-home { display: grid; gap: 20px; }
+.personal-home .page-head { margin: 0; }
+.personal-home h2 { font-size: 17px; font-weight: 750; letter-spacing: -.02em; }
+.personal-home h3 { font-size: 15px; font-weight: 700; }
+.personal-home p.muted { margin-top: 4px; font-size: 12px; }
+.personal-balance {
+  background: #162824;
+  color: #f0f7f0;
+  border-radius: 18px;
+  padding: clamp(16px, 3vw, 25px);
+}
+.personal-balance h2 { color: #bcd2c8; margin-bottom: 12px; }
+.personal-balance-row { display: flex; gap: 16px; align-items: baseline; padding-block: 10px; }
+.personal-balance-row + .personal-balance-row { border-top: 1px solid #3d5149; }
+.personal-balance-row dl, .personal-spend-totals { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 0; }
+.personal-balance-row dl { flex: 1; align-items: baseline; }
+.personal-currency { font-size: 12px; font-weight: 700; color: #bcd2c8; }
+.personal-balance dt, .personal-spend-totals dt { font-size: 12px; }
+.personal-balance dt { color: #bcd2c8; }
+.personal-balance dd, .personal-spend-totals dd { margin: 3px 0 0; font-size: clamp(16px, 2vw, 24px); font-weight: 700; overflow-wrap: anywhere; }
+.personal-balance .personal-net { color: #d8f78c; font-size: clamp(23px, 3.25vw, 42px); letter-spacing: -.035em; }
+.personal-balance .personal-net-negative { color: #ffbaa2; }
+.personal-columns { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(275px, 1fr); gap: 18px; align-items: start; }
+.personal-stack { display: grid; gap: 16px; min-width: 0; }
+.personal-panel { min-width: 0; padding: 16px; }
+.personal-spend-totals { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); }
+.personal-spend-totals dt { color: var(--muted); }
+.personal-breakdowns { display: grid; gap: 16px; }
+.personal-group-filter, .personal-group-row, .personal-transaction {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 10px 0; color: var(--ink); width: 100%;
+}
+.personal-group-filter { border: 0; background: none; border-bottom: 1px solid var(--border); text-align: start; cursor: pointer; }
+.personal-group-filter[aria-pressed="true"] { color: var(--primary); background: var(--primary-soft); }
+.personal-group-row + .personal-group-row, .personal-transaction + .personal-transaction, .personal-person + .personal-person { border-top: 1px solid var(--border); }
+.personal-group-row > span, .personal-transaction > span:last-child { text-align: end; }
+.personal-group-row > span > span, .personal-transaction > span:last-child > span { display: block; }
+.personal-group-row small, .personal-transaction small { display: block; color: var(--muted); font-size: 12px; }
+.personal-person summary { display: flex; cursor: pointer; align-items: center; gap: 10px; padding: 12px 0; }
+.personal-person summary::-webkit-details-marker { display: none; }
+.personal-person summary strong, .personal-person summary .num { display: block; }
+.personal-person .muted, .personal-transfer { font-size: 12px; }
+.personal-chevron { margin-inline-start: auto; font-size: 22px; color: var(--muted); }
+.personal-person[open] .personal-chevron { transform: rotate(90deg); }
+.personal-transfer { border-inline-start: 2px solid var(--border); margin: 0 0 10px 15px; padding: 4px 0 4px 10px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.personal-filters { display: flex; align-items: end; flex-wrap: wrap; gap: 8px 12px; margin: 12px 0; }
+.personal-filters > .picker { flex: 1 1 140px; max-width: 240px; }
+.personal-transaction > span:nth-child(2) { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+#personal-transactions { scroll-margin-top: 18px; }
+.personal-empty, .personal-more { margin-top: 10px; }
+.personal-home a:focus-visible, .personal-home summary:focus-visible, .personal-home button:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+@media (max-width: 850px) { .personal-columns { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 480px) {
+  .personal-home .personal-create { display: none; }
+  .personal-spend-totals { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .personal-spend-totals > :last-child { grid-column: 1 / -1; }
+  .personal-balance-row { display: grid; gap: 4px; }
+  .personal-balance-row dl { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .personal-balance-row dl > :first-child { grid-column: 1 / -1; }
+  .personal-transaction > span:last-child { max-width: 47%; }
+}

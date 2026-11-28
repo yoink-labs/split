@@ -43,6 +43,61 @@ function makeReceiptBlob(title: string, subtitle: string, lines: [string, string
   return new Blob([svg], { type: "image/svg+xml" });
 }
 
+/** Deterministic pseudo-random numbers so the demo history is identical on every load. */
+function seeded(seed: number) {
+  return () => {
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** Eighteen months of household history for the demo apartment, so long lists and charts have real volume. */
+function householdHistory(groupID: string, memberIDs: string[]): Expense[] {
+  const random = seeded(4242);
+  const pick = <T,>(items: readonly T[]) => items[Math.floor(random() * items.length)];
+  const entries: Expense[] = [];
+  const add = (day: string, title: string, amount: number, category: string, currency = "USD", rateE8 = 0) => {
+    const n = memberIDs.length;
+    const base = Math.floor(amount / n);
+    const extra = amount - base * n;
+    const index = entries.length;
+    entries.push({
+      id: `e-home-h${index}`, groupID, title, amount, currency, paidBy: memberIDs[index % n],
+      splits: memberIDs.map((memberID, i) => ({ memberID, amount: base + (i < extra ? 1 : 0) })),
+      kind: "expense", splitMode: "equal", category, createdAt: `${day}T${String(9 + (index % 11)).padStart(2, "0")}:15:00Z`,
+      editable: true,
+      ...(rateE8 ? { exchange: { target: "USD", rateE8, date: day, source: "Manual" as const } } : {}),
+    });
+  };
+  const grocers = ["Trader Joe’s", "Whole Foods", "Key Food", "Costco run", "Farmers market"];
+  const takeout = ["Thai takeout", "Pizza night", "Ramen delivery", "Taco Tuesday", "Dumpling order"];
+  const supplies = ["Paper towels & soap", "Cleaning supplies", "Light bulbs", "Dish sponges", "Laundry pods"];
+  for (let month = 0; month < 17; month++) {
+    const y = 2025 + Math.floor((5 + month) / 12);
+    const m = ((5 + month) % 12) + 1;
+    const ym = `${y}-${String(m).padStart(2, "0")}`;
+    const day = (d: number) => `${ym}-${String(Math.min(d, 28)).padStart(2, "0")}`;
+    add(day(1), "Rent", 285000, "Rent & Utilities");
+    add(day(6), "ConEd Electric & Gas", 9000 + Math.floor(random() * 9000), "Rent & Utilities");
+    add(day(9), "Spectrum Internet", 7999, "Rent & Utilities");
+    for (let week = 0; week < 4; week++) {
+      add(day(2 + week * 7), pick(grocers), 4200 + Math.floor(random() * 11000), "Groceries");
+      if (random() > 0.35) add(day(4 + week * 7), pick(takeout), 2800 + Math.floor(random() * 5200), "Dining");
+    }
+    add(day(14), pick(supplies), 1500 + Math.floor(random() * 3500), "Shopping");
+    if (random() > 0.6) add(day(20), "Movie night", 3600 + Math.floor(random() * 2000), "Activities");
+    if (random() > 0.7) add(day(23), "Coffee beans", 1800 + Math.floor(random() * 900), "Drinks");
+  }
+  // A long weekend in Lisbon, paid in euros with the rate the group agreed on.
+  add("2026-07-17", "Alfama apartment", 54000, "Lodging", "EUR", 108000000);
+  add("2026-07-18", "Time Out Market", 8640, "Dining", "EUR", 108000000);
+  add("2026-07-18", "Tram 28 passes", 3180, "Transport", "EUR", 108000000);
+  add("2026-07-19", "Sintra day trip", 11400, "Activities", "EUR", 108000000);
+  return entries;
+}
+
 export function createDemoState() {
   const gBA: Group = {
     id: "grp-ba-trip",
@@ -431,7 +486,7 @@ export function createDemoState() {
     snapshot: { userID: DEMO_USER, avatarURL: "preset:cobalt", paymentMethods: [{ platform: "venmo", handle: "harris-k", preferred: true }],
       groups: [gBA, gHome, gTokyo].map((group) => ({ ...group, canDelete: true, members: group.members.map((person) =>
         person.userID === DEMO_USER ? { ...person, paymentMethods: [{ platform: "venmo", handle: "harris-k", preferred: true }] } : person
-      ) })), entries } as Snapshot,
+      ) })), entries: [...entries, ...householdHistory(gHome.id, gHome.members.map((m) => m.id))] } as Snapshot,
     comments,
     invites,
     photos,

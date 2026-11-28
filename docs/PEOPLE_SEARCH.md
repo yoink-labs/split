@@ -29,4 +29,4 @@ matches invitations addressed to the caller, so another account gets a 404 and
 learns nothing. An email invitation also rechecks the live verified address with
 Clerk before claiming. Accepting reuses `claimSeat` to take over a linked
 placeholder, then runs the existing sign-in claim so other placeholders with the
-same verified email merge too. Migration `0023_people_directory.sql` is additive.
+same verified email merge too. Migration `0024_people_directory.sql` is additive.

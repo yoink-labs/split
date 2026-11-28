@@ -154,7 +154,8 @@ async function removeMember(request:Request,env:Env,groupID:string,targetID:stri
   }
   const aliases=(await env.DB.prepare('SELECT member_id FROM member_aliases WHERE canonical_id=?').bind(targetID).all<{member_id:string}>()).results;
   const seats=new Set([targetID,...aliases.map(a=>a.member_id)]);
-  const rows=(await env.DB.prepare(`SELECT payload FROM entries WHERE group_id=? AND id NOT IN (SELECT entry_id FROM deleted_entries)`).bind(groupID).all<{payload:string}>()).results;
+  const rows=(await env.DB.prepare(`SELECT payload FROM entries WHERE group_id=? AND
+    (id NOT IN (SELECT entry_id FROM deleted_entries) OR id IN (SELECT source_id FROM active_expense_combination_sources))`).bind(groupID).all<{payload:string}>()).results;
   const used=rows.some(r=>{
     const e=JSON.parse(r.payload) as {paidBy:string;payers?:{memberID:string}[];splits:{memberID:string}[];bill?:{items:{memberIDs:string[]}[]}};
     return seats.has(e.paidBy) || e.payers?.some(p=>seats.has(p.memberID)) || e.splits.some(s=>seats.has(s.memberID)) || e.bill?.items.some(i=>i.memberIDs.some(id=>seats.has(id)));
@@ -221,7 +222,7 @@ export async function deleteGroup(env:Env,groupID:string,userID:string,expected?
         AND id NOT IN (SELECT member_id FROM member_aliases) ORDER BY rowid))=json(?)
       AND (SELECT count(*) FROM (${live}) WHERE json_extract(payload,'$.kind')='expense')=?
       AND (SELECT count(*) FROM (${live}) WHERE json_extract(payload,'$.kind')='settlement')=?
-      AND (SELECT count(*) FROM receipts WHERE entry_id IN (SELECT id FROM (${live})))=?`;
+      AND (SELECT count(*) FROM expense_receipts WHERE entry_id IN (SELECT id FROM (${live})))=?`;
     args.push(expected.name,groupID,JSON.stringify(expected.members.map(m=>[m.id,m.name])),
       groupID,expected.expenses,groupID,expected.settlements,groupID,expected.receipts);
   }

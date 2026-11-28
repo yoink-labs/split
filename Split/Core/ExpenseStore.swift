@@ -39,6 +39,8 @@ private struct ActiveInviteResponse: Decodable {
     @Published var joinedGroupID: String?
     @Published var pendingInvite: String?
     private var scope: String?
+    private var demoCombinations: [String: [LedgerEntry]] = [:]
+    private var demoCombinationHistory: [CombinationEvent] = []
     private var demoPhotos: [String:Data] = [:]
     private var demoComments: [String:[EntryComment]] = [:]
     private var demoInbox: [InboxReceipt] = []
@@ -85,6 +87,7 @@ private struct ActiveInviteResponse: Decodable {
         state = next
     }
     func activate(userID: String?, demo: Bool) async {
+        demoCombinations.removeAll(); demoCombinationHistory.removeAll()
         demoPhotos.removeAll(); demoComments.removeAll(); demoInbox.removeAll(); comments.removeAll()
         generation = UUID(); syncing = false; self.scope = userID.map { baseURL.host == "127.0.0.1" ? "local-" + $0 : $0 }; joinedGroupID = nil; self.demo = demo; state = DiskState(); error = nil; hasLoaded = false
         currentUserID = userID
@@ -92,6 +95,7 @@ private struct ActiveInviteResponse: Decodable {
         if demo {
             state.snapshot = Fixtures.snapshot(); demoComments = Fixtures.comments(); hasLoaded = true
             (demoInbox, demoPhotos) = Fixtures.inbox()
+            demoPhotos.merge(Fixtures.ridePhotos()) { current, _ in current }
         }
         else {
             do {
@@ -206,6 +210,85 @@ private struct ActiveInviteResponse: Decodable {
         await sync()
         return result
     }
+    func combinationInfo(_ groupID: String) async throws -> ([CombinationSuggestion], [CombinationEvent]) {
+        if demo {
+            let entries = self.entries.filter { $0.groupID == groupID }
+            let rides = entries.filter { $0.title.hasPrefix("Uber to ") && $0.canCombine(in: entries) }
+            let matches = Dictionary(grouping: rides) { $0.currency + $0.title }.values.compactMap { trip -> CombinationSuggestion? in
+                guard let first = trip.first, trip.count > 1, Set(trip.map(\.paidBy)).count > 1 else { return nil }
+                let formatter = ISO8601DateFormatter()
+                let dates = trip.compactMap { formatter.date(from: $0.createdAt) }.sorted()
+                guard let start = dates.first, let end = dates.last, end.timeIntervalSince(start) <= 7_200 else { return nil }
+                return CombinationSuggestion(title: first.title, entryIDs: trip.map(\.id))
+            }
+            return (matches, demoCombinationHistory.filter { demoCombinations[$0.entryID]?.first?.groupID == groupID })
+        }
+        let path = "/v1/groups/" + groupID
+        async let matches = request(path: path + "/combine-suggestions")
+        async let activity = request(path: path + "/combine-activity")
+        return (try JSONDecoder().decode(CombinationSuggestions.self, from: await matches).suggestions,
+                try JSONDecoder().decode(CombinationHistory.self, from: await activity).events)
+    }
+
+    func combineExpenses(group: String, ids: [String], title: String, mode: SplitMode,
+                         members: [String], values: [String: String]) async throws -> LedgerEntry? {
+        let originals = entries.filter { ids.contains($0.id) && $0.groupID == group }.sorted { $0.createdAt < $1.createdAt }
+        guard let first = originals.first, originals.count >= 2, originals.count == ids.count,
+              originals.allSatisfy({ $0.currency == first.currency }) else {
+            throw LedgerError.invalid("Choose at least two expenses in one currency.")
+        }
+        let total = originals.reduce(0) { $0 + $1.amount }
+        let splits = try Ledger.split(total: total, people: members, mode: mode, values: values)
+        let description = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard description.count <= 120 else { throw LedgerError.invalid("Use a description of up to 120 characters.") }
+        if demo {
+            let payers = Dictionary(grouping: originals.flatMap(\.allPayers), by: \.memberID)
+                .map { Payer(memberID: $0.key, amount: $0.value.reduce(0) { $0 + $1.amount }) }
+                .sorted { $0.memberID < $1.memberID }
+            let combined = LedgerEntry(groupID: group, title: description.isEmpty ? first.title : description, amount: total,
+                currency: first.currency, paidBy: first.paidBy, splits: splits, category: first.category,
+                receiptIDs: originals.flatMap { $0.receiptIDs ?? [] }, editable: false, splitMode: mode,
+                createdAt: first.createdAt, payers: payers, combinedCount: originals.count)
+            demoCombinations[combined.id] = originals
+            logDemoCombination(combined, action: "combine")
+            var next = state
+            next.snapshot.entries.removeAll { ids.contains($0.id) }
+            next.snapshot.entries.append(combined)
+            try persist(next)
+            return combined
+        }
+        let parts: [[String: Any]] = members.map { member in
+            let raw = values[member] ?? "0"
+            let amount = mode == .adjustment ? Money.parseSigned(raw) : Money.parse(raw)
+            return ["memberID": member, "amount": mode == .equal ? 1 : amount ?? 0]
+        }
+        var input: [String: Any] = ["entryIDs": ids, "splitMode": mode.rawValue, "parts": parts]
+        if !description.isEmpty { input["title"] = description }
+        let response = try await groupAction(group, "combine", input)
+        let id = try JSONDecoder().decode(CombinationResult.self, from: response).entryID
+        return entries.first { $0.id == id }
+    }
+
+    func uncombine(_ combined: LedgerEntry) async throws {
+        if demo {
+            guard let originals = demoCombinations[combined.id] else { throw LedgerError.invalid("Original expenses unavailable.") }
+            var next = state
+            next.snapshot.entries.removeAll { $0.id == combined.id }
+            next.snapshot.entries.append(contentsOf: originals)
+            logDemoCombination(combined, action: "uncombine")
+            try persist(next)
+        } else {
+            _ = try await post("/v1/entries/\(combined.id)/uncombine", Data("{}".utf8))
+            try await waitForSync()
+            await sync()
+        }
+    }
+
+    private func logDemoCombination(_ entry: LedgerEntry, action: String) {
+        demoCombinationHistory.insert(CombinationEvent(entryID: entry.id, title: entry.title, count: entry.combinedCount ?? 0,
+            action: action, at: ISO8601DateFormatter().string(from: Date())), at: 0)
+    }
+
     func search(_ query: String) async throws -> [SplitUser] {
         let clean = query.trimmingCharacters(in: .whitespacesAndNewlines)
         if clean.contains("@") {
@@ -989,6 +1072,13 @@ enum Fixtures {
         e[4].likeCount = 2
         e[4].commentCount = 1
         e[0].notes = "Split the provoleta three ways. Harris covered the tip in cash."
+        for (index, payer) in people.prefix(2).enumerated() {
+            let amount: Int64 = index == 0 ? 1_852_501 : 2_164_000
+            var ride = entry("demo-obelisco-\(index)", trip, "Uber to Obelisco", amount, "ARS", payer.id, [(payer.id, amount)],
+                             category: "Transport", day: "2026-11-19T19:0\(index):00Z")
+            ride.receiptIDs = ["demo-ride-photo-\(index)"]
+            e.append(ride)
+        }
         return Snapshot(groups:[group,house,spainGroup,samGroup,mayaGroup],entries:e,invitationCount:2,discoverable:true)
     }
 
@@ -1012,6 +1102,13 @@ enum Fixtures {
             list.append(item)
         }
         return (list, photos)
+    }
+
+    static func ridePhotos() -> [String: Data] {
+        [
+            "demo-ride-photo-0": receiptImage(["UBER", "Destino: Obelisco", "Total ARS 18.525,01"]),
+            "demo-ride-photo-1": receiptImage(["UBER", "Destino: Obelisco", "Total ARS 21.640,00"])
+        ]
     }
 
     private static func receiptImage(_ lines: [String]) -> Data {

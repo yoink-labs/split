@@ -71,7 +71,7 @@ export async function groupTools(req:Request,env:Env,user:string) {
     const entry:Entry=JSON.parse(e.payload), cadence=String(b.cadence);
     if(cadence==='off') await env.DB.prepare('DELETE FROM recurring WHERE entry_id=?').bind(entry.id).run();
     else {
-      if(!['daily','weekly','monthly','yearly'].includes(cadence) || entry.kind!=='expense' || entry.bill || entry.exchange) throw new InputError('Choose an ordinary fixed-currency expense to repeat.');
+      if(!['daily','weekly','monthly','yearly'].includes(cadence) || entry.kind!=='expense' || entry.bill || entry.exchange || entry.combinedCount) throw new InputError('Choose an ordinary fixed-currency expense to repeat.');
       const today=new Date().toISOString().slice(0,10), start=entry.createdAt.slice(0,10), anchor=Number(start.slice(-2));
       let day=start;
       if(start<today) {
@@ -86,8 +86,9 @@ export async function groupTools(req:Request,env:Env,user:string) {
         }
       }
       const due=day>today && day!==start ? day : nextDate(day,cadence,anchor);
-      await env.DB.prepare('INSERT INTO recurring VALUES (?,?,?,?) ON CONFLICT(entry_id) DO UPDATE SET cadence=excluded.cadence,due=excluded.due,anchor=excluded.anchor WHERE cadence<>excluded.cadence')
-        .bind(entry.id,cadence,due,anchor).run();
+      await env.DB.prepare(`INSERT INTO recurring SELECT ?,?,?,? WHERE ? NOT IN (SELECT entry_id FROM deleted_entries)
+        ON CONFLICT(entry_id) DO UPDATE SET cadence=excluded.cadence,due=excluded.due,anchor=excluded.anchor WHERE cadence<>excluded.cadence`)
+        .bind(entry.id,cadence,due,anchor,entry.id).run();
     }
   }
   return json({ok:true});

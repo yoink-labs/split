@@ -23,8 +23,8 @@ interface Args {
   description?: string; start?: string; end?: string; simplify?: 'on'|'off'; format?: 'ledger'|'summary'|'json';
   text?: string; comment?: string; avatar?: string;
   csv?: string; file?: string; me?: string; mapping?: Record<string,string>;
-  photos?: string[]; items?: string[];
-  from: string; to: string; category?:string; item:string; photo:string; action?:string; mode?: 'equal'|'exact'|'percent'|'shares'|'archive'|'restore'|'delete'; participants?: string[]; values?: string[];
+  photos?: string[]; items?: string[]; expenses?: string[];
+  from: string; to: string; category?:string; item:string; photo:string; action?:string; mode?: 'equal'|'exact'|'percent'|'shares'|'adjustment'|'archive'|'restore'|'delete'; participants?: string[]; values?: string[];
   yes?: boolean; revision?: string; preview?: boolean; settlement?: string; state?: 'handled'|'unhandled'|'pending'|'confirmed'; reset?: boolean;
   pending?: boolean; pendingNote?: string; receiver?: string; note?: string;
   methods?: { platform: string; handle: string; preferred?: boolean }[]; paypal?: string; venmo?: string; mercado?: string; alias?: string;
@@ -344,6 +344,27 @@ export async function operate(name: string, input: unknown, env: Env, user: stri
     await ledger('/v1/entries/'+original!.id+'/resolve',{action:'refund',refund});
     return { id: original!.id, pending: false, refund: { ...refund, receiverName: nameOf(refund.paidBy) } };
   }
+  if (name === 'expenses_combine') {
+    const mode = a.mode ?? 'equal';
+    const participants = a.participants ?? members.filter(m => !m.removed).map(m => m.id);
+    if (mode === 'equal' ? a.values !== undefined : a.values?.length !== participants.length)
+      throw new InputError('Supply one value per participant for a custom split.');
+    const values = a.values?.map(value => {
+      if (mode !== 'adjustment' && /^[+-]/.test(value)) throw new InputError('Use unsigned values for this split mode.');
+      return value.startsWith('-') ? -minor(value.slice(1)) : minor(value.replace(/^\+/, ''));
+    });
+    return ledger('/v1/groups/'+group.id+'/combine', {
+      entryIDs:a.expenses, title:a.title, splitMode:mode,
+      parts:participants.map((memberID, index) => ({memberID, amount:values?.[index] ?? 1})),
+    });
+  }
+  if (name === 'expenses_uncombine') {
+    if (!snapshot.entries.some(e => e.id === a.expense && e.groupID === group.id && e.combinedCount))
+      throw new HTTPError(404, 'Combined expense not found.');
+    return ledger('/v1/entries/'+a.expense+'/uncombine', {});
+  }
+  if (name === 'expenses_suggestions') return ledger('/v1/groups/'+group.id+'/combine-suggestions');
+  if (name === 'expenses_combination_activity') return ledger('/v1/groups/'+group.id+'/combine-activity');
   if(name==='expenses_repeat') return ledger('/v1/groups/'+group.id+'/repeat',{entryID:a.expense,cadence:a.cadence});
   if (name === 'groups_show') return group;
   if (name === 'groups_update') return ledger('/v1/groups/'+group.id+'/update', {

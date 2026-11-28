@@ -30,6 +30,7 @@ import { ExpenseForm } from "./expense";
 import { ConverterScreen } from "./fxui";
 import { GroupSummary } from "./groupSummary";
 import { GroupWorkspace } from "./groupWorkspace";
+import { canCombineExpense, combinationSuggestions, combinedEntry, type CombinationEvent } from "../../worker/src/combinationMath";
 import { adjustedEntry, confirmed } from "../../worker/src/refundMath";
 import { isAbort, mergeSnapshot, singleFlight } from "./refresh";
 import {
@@ -91,6 +92,7 @@ function DemoLedger({ onExit }: { onExit: () => void }) {
   const [data, setData] = useState<Snapshot>(initial.snapshot);
   const latestImportData = useRef(data);
   useEffect(() => { latestImportData.current = data; }, [data]);
+  const combinationsRef = useRef(new Map<string, { originals: Expense[]; groupID: string; events: CombinationEvent[] }>());
   const commentsRef = useRef<Record<string, ExpenseComment[]>>(initial.comments);
   const claimEmails = useRef<Record<string, Record<string, string>>>({});
   const invitesRef = useRef<Record<string, ActiveInvite[]>>(initial.invites);
@@ -130,6 +132,47 @@ function DemoLedger({ onExit }: { onExit: () => void }) {
         const { id } = body as { id: string };
         connections.current = connections.current.filter((connection) => connection.id !== id);
         return { revoked: true } as T;
+      }
+
+      const combinations = path.match(/^\/v1\/groups\/([\w-]+)\/(combine|combine-suggestions|combine-activity)$/);
+      if (combinations) {
+        const [, groupID, action] = combinations;
+        const group = data.groups.find((group) => group.id === groupID);
+        if (!group) throw new Error("Group unavailable.");
+        const entries = data.entries.filter((entry) => entry.groupID === groupID);
+        const eligible = entries.filter((entry) => canCombineExpense(entry, entries));
+        if (action === "combine-suggestions") return { suggestions: combinationSuggestions(eligible) } as T;
+        if (action === "combine-activity") return {
+          events: [...combinationsRef.current.values()].filter((c) => c.groupID === groupID)
+            .flatMap((c) => c.events).sort((a, b) => b.at.localeCompare(a.at)),
+        } as T;
+        const input = body as { entryIDs: string[] };
+        const originals = eligible.filter((entry) => input.entryIDs.includes(entry.id))
+          .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+        if (originals.length < 2 || originals.length !== input.entryIDs.length) throw new Error("Choose available expenses.");
+        const entryID = crypto.randomUUID();
+        const entry = combinedEntry(entryID, originals, group.members.map((m) => ({ id: m.id, removed_at: m.removed })), input);
+        const events: CombinationEvent[] = [{ entryID, title: entry.title, count: originals.length,
+          actor: DEMO_USER, at: new Date().toISOString(), action: "combine" }];
+        combinationsRef.current.set(entryID, { originals, groupID, events });
+        const receiptIDs = originals.flatMap((original) => original.receiptIDs ?? []);
+        setData((current) => ({ ...current, entries: [
+          { ...entry, receiptIDs, combinedCount: originals.length, editable: false },
+          ...current.entries.filter((original) => !input.entryIDs.includes(original.id)),
+        ] }));
+        return { entryID } as T;
+      }
+      const reverse = path.match(/^\/v1\/entries\/([\w-]+)\/uncombine$/);
+      if (reverse) {
+        const record = combinationsRef.current.get(reverse[1]);
+        if (!record) throw new Error("Original expenses unavailable.");
+        if (record.events.length === 1) {
+          record.events.push({ ...record.events[0], at: new Date().toISOString(), action: "uncombine" });
+          setData((current) => ({ ...current, entries: [
+            ...current.entries.filter((entry) => entry.id !== reverse[1]), ...record.originals,
+          ] }));
+        }
+        return { entryIDs: record.originals.map((entry) => entry.id) } as T;
       }
 
       // Photo download

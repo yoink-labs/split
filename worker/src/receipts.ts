@@ -47,7 +47,7 @@ export async function purchaseRoute(req:Request,env:Env,user:string,ownExpensesO
       const {paid,share}=viewerAmounts(resolveEntry(entry,new Map(aliases.map(a=>[a.member_id,a.canonical_id]))),row.viewer);
       if (entry.kind!=='expense' || (!paid && !share)) throw new HTTPError(404,'Expense not found.');
     }
-    const result=await env.DB.prepare('SELECT image FROM receipts WHERE entry_id=? AND id=?').bind(id,photo).first<number[] | ArrayBuffer>('image');
+    const result=await env.DB.prepare('SELECT image FROM expense_receipts WHERE entry_id=? AND id=?').bind(id,photo).first<number[] | ArrayBuffer>('image');
     if(!result) throw new HTTPError(404,'Receipt not found.');
     return jpegResponse(result);
   }

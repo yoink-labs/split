@@ -368,3 +368,11 @@
   flex-shrink: 0;
   white-space: nowrap;
 }
+
+.expense-combinations .workspace-section-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+.expense-combinations .workspace-section-head h3 { margin: 0; }
+.expense-combinations fieldset { min-inline-size: 0; border: 1px solid var(--line); border-radius: 10px; }
+.expense-combinations legend { padding-inline: 6px; font-weight: 650; }
+.expense-combinations .combination-entries { max-block-size: 16rem; overflow: auto; }
+.expense-combinations .row { flex-wrap: wrap; gap: 8px; }
+.expense-combinations .row input[type="text"] { max-width: 10rem; }

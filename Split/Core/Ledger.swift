@@ -106,6 +106,7 @@ struct LedgerEntry: Codable, Identifiable, Equatable {
     /// Pending entries count toward balances by default but may still change.
     var pending: Bool? = nil
     var pendingNote: String? = nil
+    var combinedCount: Int? = nil
     /// Payers in canonical form. Older entries paid by one person.
     var allPayers: [Payer] {
         if let payers, !payers.isEmpty { return payers }

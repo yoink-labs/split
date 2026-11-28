@@ -74,7 +74,7 @@ function ExpenseDrawer({
   const refund = entry.kind === "refund";
   const original = refund && entry.refundOf ? entries.find((e) => e.id === entry.refundOf) : undefined;
   const linked = entry.kind === "expense" ? refundsOf(entries, entry.id) : [];
-  const room = entry.kind === "expense" ? refundRoom(entry, linked) : undefined;
+  const room = entry.kind === "expense" && !entry.combinedCount ? refundRoom(entry, linked) : undefined;
   const drawer = useRef<HTMLElement>(null);
 
   useEffect(() => {
@@ -96,7 +96,7 @@ function ExpenseDrawer({
   }, [request, entry.id]);
 
   const payers = entryPayers(entry);
-  const canSetHandled = entry.kind === "expense" && !entry.pending && payers.some((payer) =>
+  const canSetHandled = entry.kind === "expense" && !entry.combinedCount && !entry.pending && payers.some((payer) =>
     g.members.some((person) => person.id === payer.memberID && person.userID === user && !person.removed),
   );
 
@@ -181,6 +181,15 @@ function ExpenseDrawer({
         </div>
 
         <div className="drawer-body">
+          {entry.combinedCount && g.members.some((m) => m.userID === user && !m.removed) ? (
+            <div className="card card-pad">
+              <p>Combined from {entry.combinedCount} expenses</p>
+              <Form label="Restore original expenses" submit={async () => {
+                await save(`/v1/entries/${entry.id}/uncombine`, {});
+                onClose();
+              }} />
+            </div>
+          ) : null}
           {/* Amount & FX summary */}
           <div className="card card-pad" style={{ background: "var(--bg)" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10 }}>
@@ -237,7 +246,7 @@ function ExpenseDrawer({
             )}
           </div>
 
-          {!refunding && <PendingPanel g={g} entry={entry} entries={entries} />}
+          {!refunding && !entry.combinedCount && <PendingPanel g={g} entry={entry} entries={entries} />}
 
           {refunding && (
             <div className="card card-pad">
@@ -288,7 +297,7 @@ function ExpenseDrawer({
             <div className="card card-pad" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
               <div>
                 <strong style={{ fontSize: 13.5 }}>
-                  {entry.bill ? "Itemized receipt" : "Receipt photo attached"}
+                  {entry.bill ? "Itemized receipt" : entry.receiptIDs?.length === 1 ? "Receipt photo" : "Receipt photos"}
                 </strong>
                 <p className="muted" style={{ fontSize: 12 }}>
                   {entry.bill

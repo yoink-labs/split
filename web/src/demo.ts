@@ -174,6 +174,15 @@ export function createDemoState() {
   };
 
   const entries: Expense[] = [
+    ...["m-harris", "m-maya"].map((paidBy, index): Expense => {
+      const amount = index === 0 ? 1851 : 2164;
+      return {
+        id: "e-ba-obelisco-" + index, groupID: gBA.id, title: "Uber to Obelisco",
+        amount, currency: "USD", paidBy, splits: [{memberID: paidBy, amount}],
+        kind: "expense", splitMode: "equal", category: "Transport", editable: index === 0,
+        receiptIDs: ["photo-obelisco-" + index], createdAt: `2026-11-19T19:0${index}:00Z`,
+      };
+    }),
     {
       id: "e-ba-donjulio",
       groupID: gBA.id,
@@ -514,6 +523,8 @@ export function createDemoState() {
   };
 
   const photos: Record<string, Blob> = {
+    "photo-obelisco-0": makeReceiptBlob("UBER", "Destino: Obelisco", [["Viaje", "$18.51"]], "$0.00", "$0.00", "$18.51"),
+    "photo-obelisco-1": makeReceiptBlob("UBER", "Destino: Obelisco", [["Viaje", "$21.64"]], "$0.00", "$0.00", "$21.64"),
     "photo-donjulio": makeReceiptBlob(
       "PARRILLA DON JULIO",
       "Guatemala 4691 · Palermo, Buenos Aires",

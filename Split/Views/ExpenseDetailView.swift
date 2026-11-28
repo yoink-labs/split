@@ -34,6 +34,7 @@ struct EntryDetails: View {
     @State private var resolvingRefund = false
     @State private var markingPending = false
     @State private var adjusting = false
+    @State private var restoring = false
     @State private var attaching = false
     @State private var moving: String?
     @State private var receiptWorking = false
@@ -51,10 +52,10 @@ struct EntryDetails: View {
     }
     private var liveGroup: ExpenseGroup { store.group(group.id) ?? group }
     private var me: Person? { Analytics.me(in: liveGroup, userID: session.userID) }
-    private var editable: Bool { entry.editable == true || store.isDemo }
+    private var editable: Bool { entry.combinedCount == nil && (entry.editable == true || store.isDemo) }
     /// Author or an active payer (the receiver, for a refund) can mark pending and resolve, as on the Worker.
     private var canResolve: Bool {
-        guard entry.isSpending, me?.removed != true else { return false }
+        guard entry.combinedCount == nil, entry.isSpending, me?.removed != true else { return false }
         return editable || entry.allPayers.contains { payer in
             liveGroup.members.contains { $0.id == payer.memberID && $0.userID == session.userID && $0.removed != true }
         }
@@ -62,10 +63,10 @@ struct EntryDetails: View {
     private var refunds: [LedgerEntry] { entry.kind == "expense" ? Refunds.linked(to: entry, in: store.entries) : [] }
     private var refundOriginal: LedgerEntry? { entry.refundOf.flatMap { id in store.entries.first { $0.id == id } } }
     private var canRefund: Bool {
-        entry.kind == "expense" && me != nil && me?.removed != true && Refunds.remaining(of: entry, refunds: refunds) > 0
+        entry.kind == "expense" && entry.combinedCount == nil && me != nil && me?.removed != true && Refunds.remaining(of: entry, refunds: refunds) > 0
     }
     private var canSetHandled: Bool {
-        entry.kind == "expense" && !entry.isPending && entry.allPayers.contains { payer in
+        entry.kind == "expense" && entry.combinedCount == nil && !entry.isPending && entry.allPayers.contains { payer in
             liveGroup.members.contains { $0.id == payer.memberID && $0.userID == session.userID && $0.removed != true }
         }
     }
@@ -128,6 +129,16 @@ struct EntryDetails: View {
             ScrollView {
                 VStack(spacing: 16) {
                     hero
+                    if let count = entry.combinedCount, me != nil, me?.removed != true {
+                        Card {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Combined from \(count) expenses")
+                                Button("Restore original expenses") { restoring = true }
+                                    .buttonStyle(GhostButton())
+                                    .disabled(working)
+                            }
+                        }
+                    }
                     if entry.isPending { pendingCard }
                     if entry.isRefund { refundOfCard }
                     if entry.kind == "expense" && (!refunds.isEmpty || canRefund) { refundsCard }
@@ -165,6 +176,18 @@ struct EntryDetails: View {
                 .frame(maxWidth: .infinity)
             }
             .scrollDismissesKeyboard(.interactively)
+        }
+        .confirmationDialog("Restore the original expenses?", isPresented: $restoring, titleVisibility: .visible) {
+            Button("Restore original expenses") {
+                working = true
+                Task {
+                    defer { working = false }
+                    do {
+                        try await store.uncombine(entry)
+                        dismiss()
+                    } catch { self.error = error.localizedDescription }
+                }
+            }
         }
         .background(AppBackground())
         .navigationTitle(entry.kind == "settlement" ? "Payment" : entry.isRefund ? (entry.refundOf == nil ? "Credit" : "Refund") : "Expense")
@@ -468,7 +491,7 @@ struct EntryDetails: View {
                         gallery = presentation
                     }
                 }
-                if entry.kind == "expense" {
+                if entry.kind == "expense" && entry.combinedCount == nil {
                     FlowLayout(spacing: 8) {
                         if ids.count < receiptLimit {
                             Button { attaching = true } label: { Label("Attach from inbox", systemImage: "tray.and.arrow.up") }

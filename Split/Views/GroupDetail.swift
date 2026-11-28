@@ -44,6 +44,7 @@ struct GroupDetail: View {
     @State private var presentedSheet: GroupDetailSheet?
     @State private var settings = false
     @State private var insights = false
+    @State private var combining = false
     @State private var exportingPDF = false
     @State private var section: Section = .overview
     @State private var filter: LedgerFilter = .all
@@ -123,6 +124,10 @@ struct GroupDetail: View {
                         case .overview:
                             overview(group)
                         case .transactions:
+                            if group.members.contains(where: { $0.userID == store.currentUserID && $0.userID != nil && $0.removed != true }) {
+                                Button { combining = true } label: { Label("Combine expenses", systemImage: "rectangle.on.rectangle") }
+                                    .buttonStyle(GhostButton())
+                            }
                             GroupTransactionsView(group: group, entries: entries) {
                                 present(.transaction($0))
                             } exportPDF: {
@@ -157,6 +162,7 @@ struct GroupDetail: View {
                         }
                     }
                 }
+                .sheet(isPresented: $combining) { ExpenseCombinationsView(group: group) }
                 .sheet(isPresented: $settings) { GroupTools(group: group) }
                 .sheet(isPresented: $exportingPDF) {
                     NavigationStack {

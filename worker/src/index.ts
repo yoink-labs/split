@@ -9,6 +9,7 @@ import { directoryRoute, invitations, isDiscoverable } from './directory';
 import { activeGroupMember, activePlaceholder, emailInvitation, newInviteCode, requireActiveMember, reserveMemberEmail, sendMemberEmail, tokenHash } from './memberEmail';
 import { HTTPError, json, body, optionalDay } from './http';
 import { deviceRoute, deviceIdentity, manageDevices } from './cli/devices';
+import { combinationRoute } from './combinations';
 import { cliRoute } from './cli/routes';
 import { financeRoute } from './finance';
 import { createRemoteJWKSet, jwtVerify } from 'jose';
@@ -66,6 +67,8 @@ async function notifyResolved(env:Env,id:string,userID:string) {
 }
 export async function handle(request:Request,env:Env,userID:string):Promise<Response> {
   const url=new URL(request.url), path=url.pathname;
+  const combination=await combinationRoute(request,env,userID);
+  if(combination) return combination;
   const extra=await groupTools(request,env,userID);
   if(extra) return extra;
   const inbox=await receiptInboxRoute(request,env,userID);
@@ -152,7 +155,7 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
     let entries: SnapshotEntryRow[];
     try {
       entries=(await env.DB.prepare(`SELECT e.payload,e.author,(SELECT cadence FROM recurring WHERE entry_id=e.id) AS recurrence,
-        (SELECT json_group_array(id) FROM receipts WHERE entry_id=e.id) AS photos,
+        (SELECT json_group_array(id) FROM expense_receipts WHERE entry_id=e.id) AS photos,
         (SELECT count(*) FROM entry_comments c WHERE c.entry_id=e.id) AS commentCount,
         (SELECT count(*) FROM entry_reactions r WHERE r.entry_id=e.id) AS likeCount,
         EXISTS(SELECT 1 FROM entry_reactions v WHERE v.entry_id=e.id AND v.user_id=?) AS likedByMe
@@ -161,7 +164,7 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
         .bind(userID,userID).all<SnapshotEntryRow>()).results;
     } catch {
       entries=(await env.DB.prepare(`SELECT e.payload,e.author,(SELECT cadence FROM recurring WHERE entry_id=e.id) AS recurrence,
-        (SELECT json_group_array(id) FROM receipts WHERE entry_id=e.id) AS photos,
+        (SELECT json_group_array(id) FROM expense_receipts WHERE entry_id=e.id) AS photos,
         0 AS commentCount,0 AS likeCount,0 AS likedByMe
         FROM entries e JOIN members m ON m.group_id=e.group_id
         WHERE m.user_id=? AND e.id NOT IN (SELECT entry_id FROM deleted_entries) ORDER BY e.created_at DESC LIMIT 5001`)
@@ -172,8 +175,11 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
       .map(row => resolveEntry(JSON.parse(row.payload),aliases));
     const profilePayment=await env.DB.prepare('SELECT details FROM account_payment_profiles WHERE user_id=?').bind(userID).first<string>('details');
     const [pendingInvitations,discoverable]=await Promise.all([invitations(env.DB,userID),isDiscoverable(env.DB,userID)]);
-    return json({userID,paymentMethods:paymentMethods(profilePayment)??[],settlementRequests,invitationCount:pendingInvitations.length,discoverable,...(avatarURL ? {avatarURL} : {}),groups:all,entries:entries.map(e=>({...resolveEntry(JSON.parse(e.payload),aliases), recurrence:e.recurrence,receiptIDs:JSON.parse(e.photos),editable:e.author===userID,
-      commentCount:Number(e.commentCount),likeCount:Number(e.likeCount),likedByMe:Boolean(e.likedByMe)}))});
+    return json({userID,paymentMethods:paymentMethods(profilePayment)??[],settlementRequests,invitationCount:pendingInvitations.length,discoverable,...(avatarURL ? {avatarURL} : {}),groups:all,entries:entries.map(e=>{
+      const entry=resolveEntry(JSON.parse(e.payload),aliases);
+      return {...entry,recurrence:e.recurrence,receiptIDs:JSON.parse(e.photos),editable:e.author===userID && !entry.combinedCount,
+        commentCount:Number(e.commentCount),likeCount:Number(e.likeCount),likedByMe:Boolean(e.likedByMe)};
+    })});
   }
   if(path==='/v1/import/splitwise' && request.method==='POST') return importSplitwise(env.DB,userID,await body(request,2_000_000));
   if(path==='/v1/groups' && request.method==='POST') {
@@ -263,6 +269,7 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
       .bind(userID,handled[1]).first<{payload:string;groupID:string;viewer:string}>();
     if(!row) throw new HTTPError(404,'Expense unavailable.');
     const entry=JSON.parse(row.payload);
+    if(entry.combinedCount) throw new HTTPError(409,'Split this expense back into its originals first.');
     if(entry.kind!=='expense') throw new InputError('Only expenses can be marked as already handled.');
     const aliases=new Map((await env.DB.prepare(`SELECT a.member_id,a.canonical_id FROM member_aliases a
       JOIN members m ON m.id=a.canonical_id WHERE m.group_id=?`).bind(row.groupID)
@@ -284,9 +291,12 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
     if (!saved || saved.author!==userID) throw new HTTPError(403,'Only the person who recorded this entry can change it.');
     await member(env,saved.group_id,userID);
     const old=JSON.parse(saved.payload);
+    if(old.combinedCount) throw new HTTPError(409,'Split this expense back into its originals first.');
     const deleted=await env.DB.prepare('SELECT entry_id FROM deleted_entries WHERE entry_id=?').bind(revise[1]).first();
     const deleting=revise[2]==='delete';
     if (deleted) {
+      if(await env.DB.prepare('SELECT 1 FROM active_expense_combination_sources WHERE source_id=?').bind(revise[1]).first())
+        throw new HTTPError(409,'Restore the original expenses before changing this expense.');
       if (deleting) return json({ok:true});
       throw new HTTPError(409,'This entry has been deleted.');
     }
@@ -333,7 +343,7 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
       : await env.DB.prepare(`UPDATE entries SET payload=? WHERE id=? AND payload=? AND id NOT IN (SELECT entry_id FROM deleted_entries)${guard?' AND '+guard.sql:''}`)
         .bind(payload!,revise[1],saved.payload,...(guard?.binds??[]));
     const [result]=await env.DB.batch([statement,...(deleting?[]:attachments(env.DB,JSON.parse(payload!),userID,payload!,b.photos))]);
-    if (!result.meta.changes && !(deleting && await env.DB.prepare('SELECT entry_id FROM deleted_entries WHERE entry_id=?').bind(revise[1]).first()))
+    if (!result.meta.changes && !(deleting && await env.DB.prepare('SELECT entry_id FROM deleted_entries WHERE entry_id=? AND entry_id NOT IN (SELECT source_id FROM active_expense_combination_sources)').bind(revise[1]).first()))
       throw new HTTPError(409,'This entry changed. Refresh and try again.');
     return json({ok:true});
   }

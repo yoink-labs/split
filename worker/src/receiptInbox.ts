@@ -8,6 +8,7 @@ import { jpegBytes, jpegResponse } from './receipts';
 
 const MAX_PER_EXPENSE = 4;
 const liveExpense = `SELECT id FROM entries WHERE id=? AND group_id=? AND json_extract(payload,'$.kind')='expense'
+  AND json_extract(payload,'$.combinedCount') IS NULL
   AND id NOT IN (SELECT entry_id FROM deleted_entries)`;
 
 async function seat(env: Env, groupID: string, userID: string, active: boolean) {
@@ -80,8 +81,9 @@ export async function receiptInboxRoute(req: Request, env: Env, userID: string):
       const [copied] = await env.DB.batch([
         env.DB.prepare(`INSERT INTO receipts(entry_id,id,image) SELECT ?,id,image FROM inbox_receipts
           WHERE group_id=? AND id=? AND EXISTS (${liveExpense})`).bind(entryID, groupID, receiptID, entryID, groupID),
-        env.DB.prepare(`DELETE FROM inbox_receipts WHERE group_id=? AND id=? AND EXISTS (SELECT 1 FROM receipts WHERE entry_id=? AND id=?)`)
-          .bind(groupID, receiptID, entryID, receiptID)
+        env.DB.prepare(`DELETE FROM inbox_receipts WHERE group_id=? AND id=? AND EXISTS (SELECT 1 FROM receipts WHERE entry_id=? AND id=?)
+          AND EXISTS (${liveExpense})`)
+          .bind(groupID, receiptID, entryID, receiptID, entryID, groupID)
       ]);
       if (!copied.meta.changes) throw new HTTPError(409, 'This receipt or expense changed. Refresh and try again.');
       return json({ ok: true, entryID, receiptID });
@@ -102,9 +104,9 @@ export async function receiptInboxRoute(req: Request, env: Env, userID: string):
       throw new HTTPError(409, 'The inbox already has a receipt with this ID.');
     const [copied] = await env.DB.batch([
       env.DB.prepare(`INSERT INTO inbox_receipts(group_id,id,uploaded_by,user_id,note,created_at,image)
-        SELECT ?,id,?,?,NULL,?,image FROM receipts WHERE entry_id=? AND id=?`)
+        SELECT ?,id,?,?,NULL,?,image FROM receipts WHERE entry_id=? AND id=? AND entry_id NOT IN (SELECT entry_id FROM deleted_entries)`)
         .bind(source.groupID, memberID, userID, new Date().toISOString(), sourceID, receiptID),
-      env.DB.prepare(`DELETE FROM receipts WHERE entry_id=? AND id=? AND EXISTS (SELECT 1 FROM inbox_receipts WHERE group_id=? AND id=?)`)
+      env.DB.prepare(`DELETE FROM receipts WHERE entry_id=? AND id=? AND entry_id NOT IN (SELECT entry_id FROM deleted_entries) AND EXISTS (SELECT 1 FROM inbox_receipts WHERE group_id=? AND id=?)`)
         .bind(sourceID, receiptID, source.groupID, receiptID)
     ]);
     if (!copied.meta.changes) throw new HTTPError(409, 'This receipt changed. Refresh and try again.');
@@ -114,7 +116,7 @@ export async function receiptInboxRoute(req: Request, env: Env, userID: string):
   const entryID = await targetExpense(env, b.entryID, source.groupID);
   if (await env.DB.prepare('SELECT 1 FROM receipts WHERE entry_id=? AND id=?').bind(entryID, receiptID).first())
     throw new HTTPError(409, 'That expense already has a receipt with this ID.');
-  const moved = await env.DB.prepare(`UPDATE receipts SET entry_id=? WHERE entry_id=? AND id=? AND EXISTS (${liveExpense})`)
+  const moved = await env.DB.prepare(`UPDATE receipts SET entry_id=? WHERE entry_id=? AND id=? AND entry_id NOT IN (SELECT entry_id FROM deleted_entries) AND EXISTS (${liveExpense})`)
     .bind(entryID, sourceID, receiptID, entryID, source.groupID).run();
   if (!moved.meta.changes) throw new HTTPError(409, 'This receipt or expense changed. Refresh and try again.');
   return json({ ok: true, entryID, receiptID });

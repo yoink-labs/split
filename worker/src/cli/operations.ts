@@ -261,8 +261,11 @@ export async function operate(name: string, input: unknown, env: Env, user: stri
       : { group: { id: await importGroupID(parsed.fingerprint, user), name: (a.name ?? parsed.name).slice(0, 80), kind: a.kind ?? 'trip', currency }, people, rows: parsed.rows };
     return ledger('/v1/import/splitwise', body);
   }
-  if (name === 'members_lookup') return ledger('/v1/people/search', { query: a.query });
-  if (name === 'people_show') return ledger('/v1/people/' + encodeURIComponent(a.user!));
+  if (name === 'members_known') return ledger('/v1/people/known');
+  if (name === 'friends_shared') return ledger('/v1/people/shared');
+  if (name === 'friends_list') return ledger('/v1/friends');
+  if (name === 'friends_request') return ledger('/v1/friends/requests', { email: a.email, userID: a.user });
+  if (name === 'friends_remove') return ledger('/v1/friends/' + encodeURIComponent(a.user!) + '/remove', {});
   if (name === 'invitations_list') return ledger('/v1/invitations');
   if (name === 'invitations_accept' || name === 'invitations_decline')
     return ledger(`/v1/invitations/${a.invitation}/${name === 'invitations_accept' ? 'accept' : 'decline'}`, {});
@@ -415,6 +418,8 @@ export async function operate(name: string, input: unknown, env: Env, user: stri
       id: crypto.randomUUID(), name: a.name, userID: a.user, email: a.email, phone: a.phone
     });
   }
+  if (name === 'members_link') return ledger(`/v1/groups/${group.id}/members/${a.member}/link`, { userID: a.user });
+  if (name === 'members_links') return ledger(`/v1/groups/${group.id}/member-links`);
   if (name === 'members_invite') return ledger(`/v1/groups/${group.id}/invites/direct`, { userID: a.user, memberID: a.member });
   if (name === 'invite') return ledger(`/v1/groups/${group.id}/invites`, { memberID: a.member, name: a.name, email: a.email });
   if (name === 'expenses_add' || name === 'settle_up') {

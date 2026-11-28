@@ -1,3 +1,4 @@
+import { knownPerson, knownAccount } from './relationships';
 import { legacyPayment, paymentMethods, saveAccountPayments } from './paymentProfiles';
 import { preserveStatementAmount } from './exchange';
 import {groupTools,generateRecurring} from './groupTools';
@@ -200,8 +201,8 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
     for (const person of m) {
       let name=person.name.trim();
       if (person.userID && person.userID!==userID) {
-        const profile=await env.DB.prepare('SELECT name FROM split_profiles WHERE user_id=?').bind(person.userID).first<{name:string}>();
-        if (!profile) throw new InputError('Choose an existing Split user.');
+        const profile=await knownPerson(env.DB,userID,person.userID);
+        if (!profile) throw new InputError('Choose a friend or someone from a shared group.');
         name=profile.name;
       }
       inserts.push(env.DB.prepare('INSERT INTO members(id,group_id,user_id,name) VALUES (?,?,?,?)').bind(person.id,b.id,person.userID||null,name));
@@ -396,21 +397,29 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
   }
   if (addMember && request.method==='POST') {
     const groupID=addMember[1];
-    await member(env,groupID,userID);
+    await requireActiveMember(env,groupID,userID);
     const b=await body(request);
     if(!validID(b.id)) throw new InputError('Invalid member.');
     const name=typeof b.name==='string' ? b.name.trim() : '';
     if (!name || name.length>60) throw new InputError('Enter a name of up to 60 characters.');
     const {email,phone}=contactInfo(b.email,b.phone);
-    const target=b.userID ? await env.DB.prepare('SELECT user_id,name FROM split_profiles WHERE user_id=?').bind(String(b.userID)).first<{user_id:string;name:string}>() : null;
-    if (b.userID && !target) throw new InputError('Choose a Split user from search results.');
-    const existing=await env.DB.prepare('SELECT id FROM members WHERE group_id=? AND (id=? OR user_id=?)').bind(groupID,b.id,target?.user_id??null).first<{id:string}>();
+    const target=typeof b.userID==='string' ? await knownPerson(env.DB,userID,b.userID) : null;
+    if (b.userID && !target) throw new InputError('Choose a friend or someone from a shared group.');
+    const existing=await env.DB.prepare('SELECT id FROM members WHERE group_id=? AND (id=? OR user_id=?)')
+      .bind(groupID,b.id,target?.userID??null).first<{id:string}>();
     if (existing) return json({id:existing.id});
-    await env.DB.batch([
-      env.DB.prepare('INSERT INTO members(id,group_id,user_id,name) VALUES (?,?,?,?)').bind(b.id,groupID,target?.user_id??null,target?.name??name),
-      ...(email || phone ? [env.DB.prepare('INSERT INTO member_contacts VALUES (?,?,?)').bind(b.id,email||null,phone||null)] : [])
+    const added=target
+      ? env.DB.prepare(`INSERT INTO members(id,group_id,user_id,name) SELECT ?,?,p.user_id,p.name FROM split_profiles p
+          WHERE p.user_id=? AND ${knownAccount} AND ${activeGroupMember}`)
+        .bind(b.id,groupID,target.userID,userID,userID,userID,groupID,userID)
+      : env.DB.prepare(`INSERT INTO members(id,group_id,user_id,name) SELECT ?,?,NULL,? WHERE ${activeGroupMember}`)
+        .bind(b.id,groupID,name,groupID,userID);
+    const [saved]=await env.DB.batch([added,
+      ...(!target && (email || phone) ? [env.DB.prepare(`INSERT INTO member_contacts SELECT id,?,? FROM members WHERE id=? AND ${activeGroupMember}`)
+        .bind(email||null,phone||null,b.id,groupID,userID)] : [])
     ]);
-    if (target) await emailGroupInvite(env,{groupID,inviterUserID:userID,inviteeUserID:target.user_id,added:true});
+    if (!saved.meta.changes) throw new HTTPError(409,'Membership changed. Refresh and try again.');
+    if (target) await emailGroupInvite(env,{groupID,inviterUserID:userID,inviteeUserID:target.userID,added:true});
     return json({id:b.id},201);
   }
   const editMemberEmail=path.match(/^\/v1\/groups\/([\w-]+)\/members\/([\w-]+)\/email$/);

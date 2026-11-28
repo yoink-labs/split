@@ -1,129 +1,62 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { Form, useLedger, value } from "./context";
-import type { DirectoryPerson, DirectoryProfile, Group, Invitation } from "./data";
+import type { DirectoryPerson, Invitation } from "./data";
 import { Avatar } from "./ui";
 
 const kindLabel: Record<string, string> = { trip: "Trip", home: "Home", friend: "Friend tab" };
 
-/** Groups the viewer can invite someone into: active, not archived, and not already joined by them. */
-function invitableGroups(groups: Group[], user: string, target: string) {
-  return groups.filter((group) => !group.archived && group.kind !== "friend"
-    && group.members.some((member) => member.userID === user && !member.removed)
-    && !group.members.some((member) => member.userID === target && !member.removed));
-}
-
-export function InviteToGroup({ person, onSent }: { person: DirectoryPerson; onSent?: (group: Group) => void }) {
-  const { data, user, request } = useLedger();
-  const [sent, setSent] = useState("");
-  const groups = invitableGroups(data.groups, user, person.userID);
-  if (!groups.length) return <p className="muted people-note">No groups to invite {person.name} to yet.</p>;
-  return (
-    <Form label="Send invitation" submit={async (form) => {
-      const group = groups.find((item) => item.id === value(form, "group"));
-      if (!group) throw new Error("Choose a group.");
-      await request(`/v1/groups/${group.id}/invites/direct`, { userID: person.userID });
-      setSent(`Invitation sent. ${person.name} will see it in their inbox for ${group.name}.`);
-      onSent?.(group);
-    }}>
-      <label className="field">Invite {person.name} to
-        <select name="group" defaultValue={groups[0].id}>
-          {groups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}
-        </select>
-      </label>
-      {sent && <p className="ok-banner" role="status">{sent}</p>}
-    </Form>
-  );
-}
-
-export function PeopleScreen() {
+export function FriendsScreen() {
   const { request } = useLedger();
-  const [results, setResults] = useState<DirectoryPerson[]>();
-  const [inviting, setInviting] = useState<string>();
-  return (
-    <div className="people-page form-stack">
-      <div className="page-head">
-        <div>
-          <h1 className="page-title">Find people</h1>
-          <p className="page-sub">Look up someone on Split to invite them to a group.</p>
-        </div>
-      </div>
-      <div className="card card-pad form-stack">
-        <Form label="Search" submit={async (form) => {
-          setResults(undefined);
-          setInviting(undefined);
-          setResults(await request<DirectoryPerson[]>("/v1/people/search", { query: value(form, "query") }));
-        }}>
-          <label className="field">Name or email
-            <input type="search" name="query" required minLength={3} maxLength={254} autoComplete="off"
-              placeholder="First 3 letters of a name, or a full email" />
-            <small>Split shows names and avatars only. Email addresses and phone numbers stay private.</small>
-          </label>
-        </Form>
-      </div>
-      {results?.length === 0 && (
-        <div className="card card-pad"><p className="muted">No one matched. Try a full email address, or ask them to turn on “Let people find me” in Account.</p></div>
-      )}
-      {results && results.length > 0 && (
-        <div className="card people-results" aria-label="Search results">
-          {results.map((person) => (
-            <div className="people-row" key={person.userID}>
-              <div className="people-row-main">
-                <Avatar name={person.name} avatarURL={person.avatarURL} size={40} />
-                <strong>{person.name}</strong>
-                <div className="people-row-actions">
-                  <Link className="btn btn-sm" to={`/people/${encodeURIComponent(person.userID)}`}>Profile</Link>
-                  <button className="btn btn-sm btn-primary" type="button" aria-expanded={inviting === person.userID}
-                    onClick={() => setInviting(inviting === person.userID ? undefined : person.userID)}>Invite</button>
-                </div>
-              </div>
-              {inviting === person.userID && <InviteToGroup person={person} />}
-            </div>
-          ))}
-        </div>
-      )}
-      <p className="muted people-note">Results are limited to 10 people. You can run 60 searches an hour.</p>
-    </div>
-  );
-}
-
-export function PersonScreen() {
-  const { uid = "" } = useParams();
-  const { request } = useLedger();
-  const [profile, setProfile] = useState<DirectoryProfile>();
+  const [friends, setFriends] = useState<DirectoryPerson[]>([]);
+  const [shared, setShared] = useState<DirectoryPerson[]>([]);
   const [error, setError] = useState("");
-  useEffect(() => {
-    let live = true;
-    request<DirectoryProfile>(`/v1/people/${encodeURIComponent(uid)}`)
-      .then((next) => { if (live) setProfile(next); })
-      .catch((e: unknown) => { if (live) setError(e instanceof Error ? e.message : "Could not load this person."); });
-    return () => { live = false; };
-  }, [request, uid]);
-  if (error) return <div className="people-page"><p className="error-banner" role="alert">{error}</p></div>;
-  if (!profile) return <div className="people-page"><p className="muted" role="status">Loading…</p></div>;
+  const [notice, setNotice] = useState("");
+  const load = useCallback(async () => {
+    try {
+      const [friends, shared] = await Promise.all([
+        request<DirectoryPerson[]>("/v1/friends"),
+        request<DirectoryPerson[]>("/v1/people/shared"),
+      ]);
+      setFriends(friends);
+      setShared(shared);
+    } catch (e) { setError(e instanceof Error ? e.message : "Could not load friends."); }
+  }, [request]);
+  useEffect(() => { void load(); }, [load]);
+  async function send(target: { email: string } | { userID: string }) {
+    await request("/v1/friends/requests", target);
+    setNotice("If this person can receive your request, it will appear in their invitation inbox.");
+  }
+  const candidates = shared.filter((person) => !friends.some((friend) => friend.userID === person.userID));
   return (
     <div className="people-page form-stack">
-      <Link to="/people" className="muted">‹ Find people</Link>
-      <div className="card card-pad people-profile">
-        <Avatar name={profile.name} avatarURL={profile.avatarURL} size={72} />
-        <div>
-          <h1 className="page-title">{profile.name}</h1>
-          <p className="muted">{profile.sharedGroups.length
-            ? `In ${profile.sharedGroups.length} of your groups`
-            : "You don’t share any groups yet"}</p>
-        </div>
-      </div>
-      {profile.sharedGroups.length > 0 && (
-        <div className="card">
-          {profile.sharedGroups.map((group) => (
-            <Link className="row" key={group.id} to={`/g/${group.id}`}><span>{group.name}</span><span className="muted">›</span></Link>
-          ))}
-        </div>
-      )}
-      <div className="card card-pad form-stack">
-        <h3>Invite to a group</h3>
-        <InviteToGroup person={profile} />
-      </div>
+      <div className="page-head"><h1 className="page-title">Friends</h1></div>
+      {notice && <p className="ok-banner" role="status">{notice}</p>}
+      {error && <p className="error-banner" role="alert">{error}</p>}
+      <section className="card card-pad form-stack">
+        <h2>Send a friend request</h2>
+        <Form label="Send by email" submit={async (form) => send({ email: value(form, "email") })}>
+          <label className="field">Full email address<input type="email" name="email" required maxLength={254} /></label>
+        </Form>
+        {candidates.length > 0 && <Form label="Send to group member" submit={async (form) => send({ userID: value(form, "user") })}>
+          <label className="field">From shared groups<select name="user" required>
+            <option value="">Choose a person</option>
+            {candidates.map((person) => <option key={person.userID} value={person.userID}>{person.name}</option>)}
+          </select></label>
+        </Form>}
+      </section>
+      <section className="card card-pad form-stack">
+        <h2>Your friends</h2>
+        {friends.length === 0 && <p className="muted">Accepted requests appear here.</p>}
+        {friends.map((friend) => <div className="people-row-main" key={friend.userID}>
+          <Avatar name={friend.name} avatarURL={friend.avatarURL} size={36} />
+          <strong>{friend.name}</strong>
+          <div className="people-row-actions"><Form label="Remove" submit={async () => {
+            await request(`/v1/friends/${encodeURIComponent(friend.userID)}/remove`, {});
+            await load();
+          }} /></div>
+        </div>)}
+      </section>
     </div>
   );
 }
@@ -155,7 +88,7 @@ export function InvitationsScreen() {
     try {
       await request(`/v1/invitations/${invite.id}/${action}`, {});
       await refresh();
-      if (action === "accept") navigate(`/g/${invite.groupID}`);
+      if (action === "accept" && invite.groupID && invite.kind !== "linked") navigate(`/g/${invite.groupID}`);
       else await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Try again.");
@@ -169,7 +102,7 @@ export function InvitationsScreen() {
       <div className="page-head">
         <div>
           <h1 className="page-title">Invitations</h1>
-          <p className="page-sub">Groups you’ve been invited to. Accepting adds you and keeps any history recorded for you.</p>
+          <p className="page-sub">Group invitations, friend requests, and updates when someone links you to a placeholder.</p>
         </div>
       </div>
       {error && <p className="error-banner" role="alert">{error}</p>}
@@ -184,23 +117,24 @@ export function InvitationsScreen() {
       {items && items.length > 0 && (
         <div className="inbox-list">
           {items.map((invite) => (
-            <article className="card card-pad inbox-card" key={invite.id} aria-label={`Invitation to ${invite.groupName}`}>
+            <article className="card card-pad inbox-card" key={invite.id} aria-label={invite.kind === "friend" ? "Friend request" : invite.groupName}>
               <div className="inbox-card-head">
                 <div>
-                  <span className="tag">{kindLabel[invite.groupKind] ?? "Group"}</span>
-                  <h3>{invite.groupName}</h3>
-                  <p className="muted">{describe(invite)} · {invite.memberCount} {invite.memberCount === 1 ? "member" : "members"}</p>
+                  <span className="tag">{invite.kind === "friend" ? "Friend request" : invite.kind === "linked" ? "Placeholder linked" : kindLabel[invite.groupKind] ?? "Group"}</span>
+                  <h3>{invite.kind === "friend" ? invite.inviterName : invite.groupName}</h3>
+                  {invite.kind === "linked" ? <p className="muted">{invite.inviterName ?? "A group member"} linked you to {invite.memberName}. Their expense history is now yours.</p>
+                    : invite.kind !== "friend" && <p className="muted">{describe(invite)} · {invite.memberCount} {invite.memberCount === 1 ? "member" : "members"}</p>}
                 </div>
               </div>
-              {invite.memberName && (
+              {invite.memberName && invite.kind !== "linked" && (
                 <p className="inbox-claim">You’ll take over <strong>{invite.memberName}</strong>’s place, with their expenses and balances.</p>
               )}
               <div className="inbox-actions">
-                <small className="muted">Expires {new Date(invite.expiresAt).toLocaleDateString()}</small>
+                {invite.kind !== "linked" && <small className="muted">Expires {new Date(invite.expiresAt).toLocaleDateString()}</small>}
                 <button className="btn btn-sm" type="button" disabled={busy !== undefined}
-                  onClick={() => void answer(invite, "decline")}>Decline</button>
-                <button className="btn btn-sm btn-primary" type="button" disabled={busy !== undefined}
-                  onClick={() => void answer(invite, "accept")}>{busy === invite.id ? "Joining…" : "Accept"}</button>
+                  onClick={() => void answer(invite, "decline")}>{invite.kind === "linked" ? "Dismiss" : "Decline"}</button>
+                {invite.kind === "linked" ? <Link className="btn btn-sm btn-primary" to={`/g/${invite.groupID}`}>Open group</Link> : <button className="btn btn-sm btn-primary" type="button" disabled={busy !== undefined}
+                  onClick={() => void answer(invite, "accept")}>Accept</button>}
               </div>
             </article>
           ))}
@@ -229,7 +163,7 @@ export function DiscoverySetting() {
         }} />
         <span>
           <strong>Let people find me</strong>
-          <small className="muted">{demo ? "Sample setting. " : ""}When on, people can find you by your full email address or the start of your name, and see only your name and avatar. When off, only people who already share a group with you can see your profile.</small>
+          <small className="muted">{demo ? "Sample setting. " : ""}Allow friend requests addressed to your full sign-in email. People in your shared groups can still send requests.</small>
         </span>
       </label>
       {error && <p className="error-banner" role="alert">{error}</p>}

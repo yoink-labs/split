@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Pending invitations to groups the account has not joined yet.
+/// Group invitations, friend requests, and placeholder link notifications.
 struct InvitationsView: View {
     @EnvironmentObject private var store: ExpenseStore
     @Environment(\.dismiss) private var dismiss
@@ -19,13 +19,19 @@ struct InvitationsView: View {
                         ContentUnavailableView {
                             Label("You’re all caught up", systemImage: "tray")
                         } description: {
-                            Text("Invitations appear here when someone invites you in Split or emails an invite to your sign-in address.")
+                            Text("Group invitations, friend requests, and linked placeholders appear here.")
                         }
                         .listRowBackground(Color.clear)
                     }
                     ForEach(invitations) { invitation in
-                        InvitationCard(invitation: invitation, working: working) { accept in
-                            Task { await answer(invitation, accept: accept) }
+                        Group {
+                            if invitation.kind == "friend" || invitation.kind == "linked" {
+                                peopleCard(invitation)
+                            } else {
+                                InvitationCard(invitation: invitation, working: working) { accept in
+                                    Task { await answer(invitation, accept: accept) }
+                                }
+                            }
                         }
                         .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
                         .listRowBackground(Color.clear)
@@ -44,6 +50,27 @@ struct InvitationsView: View {
             }
             .task { await load() }
             .refreshable { await load() }
+        }
+    }
+
+    private func peopleCard(_ invitation: GroupInvitation) -> some View {
+        Card {
+            VStack(alignment: .leading, spacing: 10) {
+                if invitation.kind == "friend" {
+                    Label("Friend request", systemImage: "person.crop.circle.badge.plus").font(.caption)
+                    Text(invitation.inviterName ?? "Split member").font(.headline)
+                    HStack {
+                        Button("Decline") { Task { await answer(invitation, accept: false) } }.buttonStyle(.bordered)
+                        Button("Accept") { Task { await answer(invitation, accept: true) } }.buttonStyle(.borderedProminent)
+                    }
+                } else {
+                    Label("Placeholder linked", systemImage: "link").font(.caption)
+                    Text(invitation.groupName).font(.headline)
+                    Text("\(invitation.inviterName ?? "A group member") linked you to \(invitation.memberName ?? "a placeholder"). Their expense history is now yours.")
+                    Button("Dismiss") { Task { await answer(invitation, accept: false) } }.buttonStyle(.bordered)
+                }
+            }
+            .disabled(working != nil)
         }
     }
 
@@ -114,134 +141,6 @@ private struct InvitationCard: View {
                 }
                 .disabled(working != nil)
             }
-        }
-    }
-}
-
-/// Look up people who use Split, then view a minimal profile or invite them to a group.
-struct PeopleSearchView: View {
-    @EnvironmentObject private var store: ExpenseStore
-    @Environment(\.dismiss) private var dismiss
-    var showsClose = true
-    @State private var query = ""
-    @State private var results: [SplitUser]?
-    @State private var searching = false
-    @State private var error: String?
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section {
-                    TextField("Full email or first 3 letters of a name", text: $query)
-                        .textInputAutocapitalization(.never).autocorrectionDisabled()
-                        .submitLabel(.search).onSubmit(search)
-                    Button("Search", action: search)
-                        .disabled(query.trimmingCharacters(in: .whitespacesAndNewlines).count < 3 || searching)
-                } footer: {
-                    Text("Split shows names only. Email addresses and phone numbers stay private, and people can turn off being found.")
-                }
-                if searching { ProgressView() }
-                if let error { ErrorText(text: error) }
-                if let results {
-                    Section {
-                        if results.isEmpty { Text("No one matched.").foregroundStyle(.secondary) }
-                        ForEach(results) { person in
-                            NavigationLink { PersonProfileView(person: person) } label: {
-                                HStack(spacing: 12) { Avatar(name: person.name, size: 36); Text(person.name) }
-                            }
-                        }
-                    } footer: { Text("Up to 10 people per search.") }
-                }
-            }
-            .navigationTitle("Find people")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                if showsClose { ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } } }
-            }
-            .onChange(of: query) { _, _ in results = nil; error = nil }
-        }
-    }
-
-    private func search() {
-        guard !searching else { return }
-        let submitted = query
-        searching = true; error = nil
-        Task {
-            defer { searching = false }
-            do { let found = try await store.search(submitted); if submitted == query { results = found } }
-            catch { self.error = error.localizedDescription }
-        }
-    }
-}
-
-struct PersonProfileView: View {
-    @EnvironmentObject private var store: ExpenseStore
-    @EnvironmentObject private var session: SessionStore
-    var person: SplitUser
-    @State private var profile: PersonProfile?
-    @State private var groupID = ""
-    @State private var sending = false
-    @State private var notice: String?
-    @State private var error: String?
-
-    private var invitable: [ExpenseGroup] {
-        store.groups.filter { group in
-            group.archived != true && !group.isFriend
-                && group.members.contains { $0.userID == session.userID && $0.removed != true }
-                && !group.members.contains { $0.userID == person.userID && $0.removed != true }
-        }
-    }
-
-    var body: some View {
-        Form {
-            Section {
-                HStack(spacing: 16) {
-                    Avatar(name: person.name, size: 64)
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(person.name).font(.title2.bold())
-                        if let profile {
-                            Text(profile.sharedGroups.isEmpty ? "You don’t share any groups yet" : "In \(profile.sharedGroups.count) of your groups")
-                                .font(.subheadline).foregroundStyle(.secondary)
-                        }
-                    }
-                }
-                .padding(.vertical, 6)
-            }
-            if let shared = profile?.sharedGroups, !shared.isEmpty {
-                Section("Shared groups") { ForEach(shared) { Text($0.name) } }
-            }
-            Section {
-                if invitable.isEmpty {
-                    Text("No groups to invite \(person.name) to yet.").foregroundStyle(.secondary)
-                } else {
-                    Picker("Group", selection: $groupID) {
-                        ForEach(invitable) { Text($0.name).tag($0.id) }
-                    }
-                    Button(sending ? "Sending…" : "Send invitation", action: send).disabled(sending || groupID.isEmpty)
-                }
-                if let notice { Label(notice, systemImage: "paperplane.fill").foregroundStyle(Palette.evergreen) }
-                if let error { ErrorText(text: error) }
-            } header: { Text("Invite to a group") } footer: {
-                Text("\(person.name) sees the invitation in Split and can accept or decline it.")
-            }
-        }
-        .navigationTitle(person.name)
-        .navigationBarTitleDisplayMode(.inline)
-        .task {
-            if groupID.isEmpty { groupID = invitable.first?.id ?? "" }
-            do { profile = try await store.profile(person.userID) } catch { self.error = error.localizedDescription }
-        }
-    }
-
-    private func send() {
-        guard let group = invitable.first(where: { $0.id == groupID }) else { return }
-        sending = true; error = nil; notice = nil
-        Task {
-            defer { sending = false }
-            do {
-                try await store.inviteUser(groupID: group.id, userID: person.userID)
-                notice = "Invitation sent for \(group.name)."
-            } catch { self.error = error.localizedDescription }
         }
     }
 }

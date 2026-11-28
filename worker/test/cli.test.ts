@@ -214,7 +214,8 @@ describe('CLI and MCP', () => {
     await expect(run('groups_show',{group},outsider)).rejects.toThrow('Group not found');
     expect(await run('members_list',{group})).toHaveLength(2);
     await env.DB.prepare('INSERT INTO split_profiles VALUES (?,?,?,?,?)').bind('new-user','Pat','pat','pat@example.test',Date.now()).run();
-    expect((await run('members_lookup',{query:'pat@example.test'}))[0].userID).toBe('new-user');
+    await env.DB.prepare('INSERT INTO friendships VALUES (?,?,?,?,?)').bind('pat-friend','alex','new-user',1,Date.now()).run();
+    expect((await run('members_known',{}))[0].userID).toBe('new-user');
     await run('members_add',{group,name:'Pat',user:'new-user'});
     await run('members_add',{group,name:'Guest',email:'guest@example.test'});
     const invite = await run('invite',{group,member:other});
@@ -411,7 +412,7 @@ describe('CLI and MCP', () => {
     await fetch('/v1/device/logout',{},token);
     expect((await fetch('/mcp',call,token,headers)).status).toBe(401);
   });
-  it('searches people, sends an invitation and lets only the recipient accept it from the CLI', async () => {
+  it('adds a friend and lets only the recipient accept a group invitation from the CLI', async () => {
     const alex = await authorize('cli-alex'), pat = await authorize('cli-pat'), sam = await authorize('cli-sam');
     async function run(name: string, args: object, device = alex): Promise<any> {
       const r = await fetch('/v1/cli', { name, arguments: args }, device);
@@ -421,9 +422,13 @@ describe('CLI and MCP', () => {
     }
     await saveProfile(env.DB, { userID: 'cli-pat', name: 'Pat Rivera', username: 'pat', email: 'pat@example.test' });
     const { id: group } = await run('groups_create', { name: 'Ski', self: 'Alex' });
-    const [found] = await run('members_lookup', { query: 'riv' });
+    await run('friends_request', { email:'pat@example.test' });
+    const { invitations: [friendRequest] } = await run('invitations_list', {}, pat);
+    expect(friendRequest.kind).toBe('friend');
+    expect(await run('invitations_accept', { invitation:friendRequest.id }, pat)).toEqual({ok:true});
+    const [found] = await run('members_known', {});
     expect(found).toEqual({ userID: 'cli-pat', name: 'Pat Rivera' });
-    expect(await run('people_show', { user: 'cli-pat' })).toEqual({ userID: 'cli-pat', name: 'Pat Rivera', sharedGroups: [] });
+    expect(await run('friends_list', {})).toEqual([found]);
     const { id } = await run('members_invite', { group, user: found.userID });
     expect(await run('invitations_list', {}, pat)).toMatchObject({ invitations: [{ id, groupName: 'Ski', kind: 'direct' }] });
     await expect(run('invitations_accept', { invitation: id }, sam)).rejects.toMatchObject({ status: 404 });
@@ -431,6 +436,6 @@ describe('CLI and MCP', () => {
     expect((await run('members_list', { group })).map((m: any) => m.name)).toContain('Pat Rivera');
     expect(await run('profile_discoverable', {}, pat)).toEqual({ discoverable: true });
     expect(await run('profile_discoverable', { discoverable: 'off' }, pat)).toEqual({ discoverable: false });
-    expect(await run('members_lookup', { query: 'pat@example.test' })).toEqual([]);
+    expect(await run('friends_list', {})).toEqual([found]);
   });
 });

@@ -591,6 +591,8 @@ export function createDemoState() {
     { userID: "user-noah", name: "Noah Brooks" },
   ];
   const invitations: Invitation[] = [
+    { id: "c".repeat(64), kind: "friend", groupID: "", groupName: "Friend request", groupKind: "",
+      inviterName: "Jordan Lee", memberCount: 0, expiresAt: Date.now() + 10 * 86_400_000 },
     { id: "a".repeat(64), kind: "direct", groupID: "demo-lisbon", groupName: "Lisbon Long Weekend", groupKind: "trip",
       memberCount: 4, inviterName: "Priya Shah", expiresAt: now + 13 * 86_400_000 },
     { id: "b".repeat(64), kind: "email", groupID: "demo-climbing", groupName: "Climbing Club Dues", groupKind: "home",

@@ -16,7 +16,6 @@ import {
   itemSplit,
   MAX_RECEIPTS,
   type ActiveInvite,
-  type DirectoryProfile,
   type Expense,
   type Invitation,
   type ExpenseComment,
@@ -41,7 +40,7 @@ import {
   NewGroup,
 } from "./screens";
 import { AppShell } from "./shell";
-import { InvitationsScreen, PeopleScreen, PersonScreen } from "./people";
+import { FriendsScreen, InvitationsScreen } from "./people";
 import { SplitwiseImport } from "./splitwise";
 import { importGroupID, type ImportRow } from "../../worker/src/splitwiseCsv";
 import "./style.css";
@@ -59,8 +58,7 @@ function RoutesBody() {
         <Route path="/join" element={<Join />} />
         <Route path="/invite/:code" element={<Join />} />
         <Route path="/you" element={<Account />} />
-        <Route path="/people" element={<PeopleScreen />} />
-        <Route path="/people/:uid" element={<PersonScreen />} />
+        <Route path="/friends" element={<FriendsScreen />} />
         <Route path="/invitations" element={<InvitationsScreen />} />
         <Route path="/ai" element={<LocalAIScreen />} />
         <Route path="/import/splitwise" element={<SplitwiseImport />} />
@@ -96,6 +94,8 @@ function DemoLedger({ onExit }: { onExit: () => void }) {
   const commentsRef = useRef<Record<string, ExpenseComment[]>>(initial.comments);
   const claimEmails = useRef<Record<string, Record<string, string>>>({});
   const invitesRef = useRef<Record<string, ActiveInvite[]>>(initial.invites);
+  const memberLinksRef = useRef<Record<string, { id: string; memberName: string; actorName: string; userName: string }[]>>({});
+  const friendsRef = useRef(initial.directory.slice(0, 1));
   const invitationsRef = useRef<Invitation[]>(initial.invitations);
   const photosRef = useRef<Record<string, Blob>>(initial.photos);
   const inboxRef = useRef<InboxReceipt[]>(initial.inbox);
@@ -467,25 +467,34 @@ function DemoLedger({ onExit }: { onExit: () => void }) {
         return { ok: true } as T;
       }
 
-      // People search mirrors the Worker: full email or a 3+ letter name prefix, names and avatars only.
-      if (path === "/v1/people/search" && body) {
-        const query = (body as { query: string }).query.trim().toLowerCase();
-        if (query.includes("@")) {
-          if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(query)) throw new Error("Enter a full email address, like name@example.com.");
-          return initial.directory.filter((person) => query === person.name.split(" ")[0].toLowerCase() + "@example.com") as T;
-        }
-        if (query.length < 3) throw new Error("Enter at least 3 letters of a name.");
-        return initial.directory.filter((person) => person.name.toLowerCase().split(" ").some((word) => word.startsWith(query))
-          || person.name.toLowerCase().startsWith(query)).slice(0, 10) as T;
+      if (path === "/v1/people/known") return [...new Map([...initial.directory, ...friendsRef.current].map((person) => [person.userID, person])).values()] as T;
+      if (path === "/v1/people/shared") return initial.directory as T;
+      if (path === "/v1/friends") return friendsRef.current as T;
+      if (path === "/v1/friends/requests" && body) return { ok: true } as T;
+      const unfriend = path.match(/^\/v1\/friends\/([\w-]+)\/remove$/);
+      if (unfriend && body) {
+        friendsRef.current = friendsRef.current.filter((person) => person.userID !== unfriend[1]);
+        return { ok: true } as T;
       }
-      const personMatch = path.match(/^\/v1\/people\/([\w-]+)$/);
-      if (personMatch && body === undefined) {
-        const person = initial.directory.find((item) => item.userID === personMatch[1]);
-        if (!person) throw new Error("Person not found.");
-        const sharedGroups = data.groups.filter((group) => group.members.some((member) => member.userID === person.userID))
-          .map((group) => ({ id: group.id, name: group.name }));
-        return { ...person, sharedGroups } as DirectoryProfile as T;
+      const link = path.match(/^\/v1\/groups\/([\w-]+)\/members\/([\w-]+)\/link$/);
+      if (link && body) {
+        const { userID } = body as { userID: string };
+        const roster = data.groups.find((group) => group.id === link[1])?.members ?? [];
+        const member = roster.find((person) => person.id === link[2] && !person.userID && !person.removed);
+        const recipient = [...initial.directory, ...friendsRef.current].find((person) => person.userID === userID);
+        if (!member || !recipient || roster.some((person) => person.userID === userID))
+          throw new Error("Choose an available demo placeholder and account.");
+        memberLinksRef.current[link[1]] = [
+          { id: crypto.randomUUID(), memberName: member.name, actorName: "You", userName: recipient.name },
+          ...(memberLinksRef.current[link[1]] ?? []),
+        ];
+        setData((prev) => ({ ...prev, groups: prev.groups.map((group) => group.id !== link[1] ? group : {
+          ...group, members: group.members.map((person) => person.id === link[2] ? { ...person, userID } : person),
+        }) }));
+        return { ok: true } as T;
       }
+      const activity = path.match(/^\/v1\/groups\/([\w-]+)\/member-links$/);
+      if (activity) return { links: memberLinksRef.current[activity[1]] ?? [] } as T;
       const directInvite = path.match(/^\/v1\/groups\/([\w-]+)\/invites\/direct$/);
       if (directInvite && body) {
         const { userID } = body as { userID: string };
@@ -504,10 +513,12 @@ function DemoLedger({ onExit }: { onExit: () => void }) {
         const invite = invitationsRef.current.find((item) => item.id === answer[1]);
         if (!invite) throw new Error("Invitation not found.");
         invitationsRef.current = invitationsRef.current.filter((item) => item.id !== invite.id);
+        if (invite.kind === "friend" && answer[2] === "accept")
+          friendsRef.current = [...friendsRef.current, { userID: "demo-friend-request", name: invite.inviterName ?? "Split member" }];
         setData((prev) => ({
           ...prev,
           invitationCount: invitationsRef.current.length,
-          groups: answer[2] === "decline" ? prev.groups : [{
+          groups: answer[2] === "decline" || invite.kind === "friend" || invite.kind === "linked" ? prev.groups : [{
             id: invite.groupID, name: invite.groupName, kind: invite.groupKind, currency: "EUR", simplify: true,
             members: [
               { id: invite.groupID + "-me", name: "Harris", userID: DEMO_USER, avatarURL: "preset:cobalt" },

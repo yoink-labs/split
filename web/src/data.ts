@@ -87,13 +87,9 @@ export interface DirectoryPerson {
   avatarURL?: string;
 }
 
-export interface DirectoryProfile extends DirectoryPerson {
-  sharedGroups: { id: string; name: string }[];
-}
-
 export interface Invitation {
   id: string;
-  kind: "email" | "direct";
+  kind: "email" | "direct" | "friend" | "linked";
   groupID: string;
   groupName: string;
   groupKind: string;

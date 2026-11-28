@@ -44,6 +44,8 @@ private struct ActiveInviteResponse: Decodable {
     private var demoPhotos: [String:Data] = [:]
     private var demoComments: [String:[EntryComment]] = [:]
     private var demoInbox: [InboxReceipt] = []
+    private var demoFriends = Array(Fixtures.directory.prefix(1))
+    private var demoLinks: [String: [MemberLink]] = [:]
     private var demoInvitations: [GroupInvitation] = Fixtures.invitations()
     private var demo = false
     private var monitor = NWPathMonitor()
@@ -291,47 +293,59 @@ private struct ActiveInviteResponse: Decodable {
             action: action, at: ISO8601DateFormatter().string(from: Date())), at: 0)
     }
 
-    func search(_ query: String) async throws -> [SplitUser] {
-        let clean = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        if clean.contains("@") {
-            guard clean.range(of: #"^[^\s@]+@[^\s@]+\.[^\s@]+$"#, options: .regularExpression) != nil else {
-                throw LedgerError.invalid("Enter a full email address, like name@example.com.")
-            }
-        } else if clean.count < 3 {
-            throw LedgerError.invalid("Enter at least 3 letters of a name.")
-        }
-        if demo {
-            let needle = clean.lowercased()
-            return Fixtures.directory.filter { person in
-                person.name.lowercased().split(separator: " ").contains { $0.hasPrefix(needle) }
-                    || needle == person.name.split(separator: " ").first.map { $0.lowercased() + "@example.com" }
-            }
-        }
-        let result = try await post("/v1/people/search", JSONEncoder().encode(["query":clean]))
-        return try JSONDecoder().decode([SplitUser].self, from:result)
-    }
-
-    // MARK: People and the invitation inbox
-
     var invitationCount: Int { state.snapshot.invitationCount ?? 0 }
     var discoverable: Bool { state.snapshot.discoverable ?? true }
 
-    func profile(_ userID: String) async throws -> PersonProfile {
-        if demo {
-            guard let person = Fixtures.directory.first(where: { $0.userID == userID }) else { throw LedgerError.invalid("Person not found.") }
-            let shared = groups.filter { $0.members.contains { $0.userID == userID } }.map { PersonProfile.SharedGroup(id: $0.id, name: $0.name) }
-            return PersonProfile(userID: person.userID, name: person.name, avatarURL: person.avatarURL, sharedGroups: shared)
-        }
-        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_"))
-        let id = userID.addingPercentEncoding(withAllowedCharacters: allowed) ?? userID
-        return try JSONDecoder().decode(PersonProfile.self, from: try await request(path: "/v1/people/" + id))
+    func knownPeople() async throws -> [SplitUser] {
+        if demo { return Fixtures.directory + demoFriends.filter { !Fixtures.directory.contains($0) } }
+        return try await people(at: "/v1/people/known")
     }
 
-    /// Sends an in-app invitation. The person accepts or declines it from their inbox.
-    func inviteUser(groupID: String, userID: String, memberID: String? = nil) async throws {
+    func sharedPeople() async throws -> [SplitUser] {
+        if demo { return Fixtures.directory }
+        return try await people(at: "/v1/people/shared")
+    }
+
+    func friends() async throws -> [SplitUser] {
+        if demo { return demoFriends }
+        return try await people(at: "/v1/friends")
+    }
+
+    private func people(at path: String) async throws -> [SplitUser] {
+        try JSONDecoder().decode([SplitUser].self, from: try await request(path: path))
+    }
+
+    func sendFriendRequest(email: String? = nil, userID: String? = nil) async throws {
         if demo { return }
-        let payload = ["userID": userID, "memberID": memberID].compactMapValues { $0 }
-        _ = try await post("/v1/groups/\(groupID)/invites/direct", JSONEncoder().encode(payload))
+        let target = ["email": email, "userID": userID].compactMapValues { $0 }
+        _ = try await post("/v1/friends/requests", JSONEncoder().encode(target))
+    }
+
+    func removeFriend(_ userID: String) async throws {
+        if demo { demoFriends.removeAll { $0.userID == userID }; return }
+        _ = try await post("/v1/friends/\(userID)/remove", Data("{}".utf8))
+    }
+
+    func linkMember(groupID: String, memberID: String, person: SplitUser) async throws {
+        if demo {
+            guard let groupIndex = groups.firstIndex(where: { $0.id == groupID }),
+                  let memberIndex = groups[groupIndex].members.firstIndex(where: { $0.id == memberID && $0.userID == nil }),
+                  !groups[groupIndex].members.contains(where: { $0.userID == person.userID })
+            else { throw LedgerError.invalid("Choose an available demo placeholder and account.") }
+            var next = state
+            let name = next.snapshot.groups[groupIndex].members[memberIndex].name
+            next.snapshot.groups[groupIndex].members[memberIndex].userID = person.userID
+            try persist(next)
+            demoLinks[groupID, default: []].insert(MemberLink(id: UUID().uuidString, memberName: name, actorName: "You", userName: person.name), at: 0)
+            return
+        }
+        _ = try await groupAction(groupID, "members/\(memberID)/link", ["userID": person.userID])
+    }
+
+    func memberLinks(groupID: String) async throws -> [MemberLink] {
+        if demo { return demoLinks[groupID] ?? [] }
+        let data = try await request(path: "/v1/groups/\(groupID)/member-links")
+        return try JSONDecoder().decode(MemberLinkList.self, from: data).links
     }
 
     func invitations() async throws -> [GroupInvitation] {
@@ -350,6 +364,9 @@ private struct ActiveInviteResponse: Decodable {
     @discardableResult
     func answer(_ invitation: GroupInvitation, accept: Bool) async throws -> String? {
         if demo {
+            if invitation.kind == "friend", accept {
+                demoFriends.append(SplitUser(userID: "demo-friend-request", name: invitation.inviterName ?? "Split member"))
+            }
             demoInvitations.removeAll { $0.id == invitation.id }
             var next = state
             next.snapshot.invitationCount = demoInvitations.count
@@ -360,7 +377,7 @@ private struct ActiveInviteResponse: Decodable {
         let groupID = try? JSONDecoder().decode(JoinResult.self, from: result).groupID
         try await waitForSync()
         await sync()
-        return accept ? groupID ?? invitation.groupID : nil
+        return accept && invitation.kind != "friend" && invitation.kind != "linked" ? groupID ?? invitation.groupID : nil
     }
 
     func setDiscoverable(_ value: Bool) async throws {
@@ -1007,6 +1024,8 @@ enum Fixtures {
     static func invitations() -> [GroupInvitation] {
         let now = Date().timeIntervalSince1970 * 1000
         return [
+            GroupInvitation(id: String(repeating: "c", count: 64), kind: "friend", groupID: "", groupName: "Friend request",
+                            groupKind: "", memberCount: 0, inviterName: "Jordan Lee", memberName: nil, expiresAt: now + 10 * 86_400_000),
             GroupInvitation(id: String(repeating: "a", count: 64), kind: "direct", groupID: "demo-lisbon", groupName: "Lisbon Long Weekend",
                             groupKind: "trip", memberCount: 4, inviterName: "Priya Shah", memberName: nil, expiresAt: now + 13 * 86_400_000),
             GroupInvitation(id: String(repeating: "b", count: 64), kind: "email", groupID: "demo-climbing", groupName: "Climbing Club Dues",
@@ -1083,7 +1102,7 @@ enum Fixtures {
             ride.receiptIDs = ["demo-ride-photo-\(index)"]
             e.append(ride)
         }
-        return Snapshot(groups:[group,house,spainGroup,samGroup,mayaGroup],entries:e,invitationCount:2,discoverable:true)
+        return Snapshot(groups:[group,house,spainGroup,samGroup,mayaGroup],entries:e,invitationCount:3,discoverable:true)
     }
 
     /// Two demo receipts waiting in the Buenos Aires inbox, with rendered photos.
@@ -1148,20 +1167,20 @@ enum Fixtures {
     }
 }
 
-/// A people search result. The server returns only these fields, never contact details.
+/// An account card with public display fields.
 struct SplitUser: Decodable, Identifiable, Hashable {
     var userID: String
     var name: String
     var avatarURL: String?
     var id: String { userID }
 }
-struct PersonProfile: Decodable, Hashable {
-    struct SharedGroup: Decodable, Hashable, Identifiable { var id: String; var name: String }
-    var userID: String
-    var name: String
-    var avatarURL: String?
-    var sharedGroups: [SharedGroup]
+struct MemberLink: Decodable, Identifiable {
+    var id: String
+    var memberName: String
+    var actorName: String?
+    var userName: String?
 }
+private struct MemberLinkList: Decodable { var links: [MemberLink] }
 struct GroupInvitation: Decodable, Identifiable, Hashable {
     var id: String
     var kind: String

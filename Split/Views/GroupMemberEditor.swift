@@ -10,6 +10,9 @@ struct GroupMemberEditor: View {
     @Environment(\.dismiss) private var dismiss
     @State var claimEmail: String
     @State var inviteEmail: String
+    @State private var candidates: [SplitUser] = []
+    @State private var selectedUser = ""
+    @State private var confirmLink = false
     @State private var busy = false
     @State private var confirmArchive = false
     @State private var confirmDelete = false
@@ -22,30 +25,45 @@ struct GroupMemberEditor: View {
                 if member.removed != true {
                     if member.userID == nil {
                         Section {
-                            emailField("Claim email", text: $claimEmail)
-                            Button("Save claim email") {
-                                run {
-                                    try await store.updateClaimEmail(groupID: groupID, memberID: member.id, email: clean(claimEmail))
-                                    notice = "Claim email updated."
-                                    await onChange()
+                            if candidates.isEmpty {
+                                Text("Add a friend or join a shared group to link an account.").foregroundStyle(.secondary)
+                            } else {
+                                Picker("Existing account", selection: $selectedUser) {
+                                    Text("Choose a person").tag("")
+                                    ForEach(candidates) { Text($0.name).tag($0.userID) }
                                 }
+                                Button("Link placeholder") { confirmLink = true }.disabled(selectedUser.isEmpty)
                             }
-                        } footer: {
-                            Text("This address can claim the placeholder automatically after sign-in. Clear it to remove that access.")
+                        } header: { Text("Link to an account") } footer: {
+                            Text("Their expense history will merge with the selected account, and Split will notify them.")
                         }
-                        Section {
-                            emailField("Recipient email", text: $inviteEmail)
-                            Button("Send invite email") {
-                                run {
-                                    let address = clean(inviteEmail)
-                                    try await store.sendMemberEmail(groupID: groupID, memberID: member.id, email: address)
-                                    notice = "Invitation sent to \(address)."
-                                    await onChange()
+                        if !store.isDemo {
+                            Section {
+                                emailField("Claim email", text: $claimEmail)
+                                Button("Save claim email") {
+                                    run {
+                                        try await store.updateClaimEmail(groupID: groupID, memberID: member.id, email: clean(claimEmail))
+                                        notice = "Claim email updated."
+                                        await onChange()
+                                    }
                                 }
+                            } footer: {
+                                Text("This address can claim the placeholder automatically after sign-in. Clear it to remove that access.")
                             }
-                            .disabled(clean(inviteEmail).isEmpty)
-                        } footer: {
-                            Text("The recipient signs in with this email and opens the link to claim the placeholder.")
+                            Section {
+                                emailField("Recipient email", text: $inviteEmail)
+                                Button("Send invite email") {
+                                    run {
+                                        let address = clean(inviteEmail)
+                                        try await store.sendMemberEmail(groupID: groupID, memberID: member.id, email: address)
+                                        notice = "Invitation sent to \(address)."
+                                        await onChange()
+                                    }
+                                }
+                                .disabled(clean(inviteEmail).isEmpty)
+                            } footer: {
+                                Text("The recipient signs in with this email and opens the link to claim the placeholder.")
+                            }
                         }
                     } else {
                         Section {
@@ -60,7 +78,7 @@ struct GroupMemberEditor: View {
                         }
                     }
                 }
-                if !isMe {
+                if !isMe && !store.isDemo {
                     Section {
                         if member.removed == true {
                             Button("Restore member") { changeMembership("restore") }
@@ -79,6 +97,25 @@ struct GroupMemberEditor: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() }.disabled(busy) } }
             .interactiveDismissDisabled(busy)
+            .task {
+                if member.userID == nil && member.removed != true {
+                    do { candidates = try await store.knownPeople() }
+                    catch { self.error = error.localizedDescription }
+                }
+            }
+            .alert("Link \(member.name)?", isPresented: $confirmLink) {
+                Button("Link placeholder") {
+                    guard let person = candidates.first(where: { $0.userID == selectedUser }) else { return }
+                    run {
+                        try await store.linkMember(groupID: groupID, memberID: member.id, person: person)
+                        await onChange()
+                        dismiss()
+                    }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("This permanently merges the placeholder’s expenses and balances with the selected account.")
+            }
             .alert("Archive \(member.name)?", isPresented: $confirmArchive) {
                 Button("Archive member", role: .destructive) { changeMembership("archive") }
                 Button("Cancel", role: .cancel) {}

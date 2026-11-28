@@ -209,3 +209,27 @@ it('refunds specific items back to exactly the people who had them',async()=>{
   expect(()=>itemRefund(e,['item-missing'])).toThrow('original receipt');
   expect(()=>itemRefund(expense('expense-plain'),['item-wine'])).toThrow('itemized');
 });
+
+it('refunds specific receipt items through the Worker, CLI and MCP',async()=>{
+  const total=bill.items.reduce((s,i)=>s+i.amount,bill.tax+bill.tip);
+  const e:Entry={id:'expense-items',groupID:group,title:'Trattoria',amount:total,currency:'USD',paidBy:alex,
+    splits:itemSplit(bill,alex),kind:'expense',splitMode:'exact',createdAt:'2026-11-22T20:00:00Z',bill};
+  await call('alex','/v1/entries',e);
+  const {itemRefund}=await import('../src/items');
+  const exact=itemRefund(e,['item-wine']);
+  const refund={id:'refund-wine',groupID:group,title:'Refund: Wine',amount:exact.amount,currency:'USD',paidBy:alex,splits:exact.splits,
+    kind:'refund',splitMode:'exact',createdAt:'2026-11-23T12:00:00Z',refundOf:e.id,refundItems:['item-wine']};
+  // Credits that do not match what each person paid for the items are refused.
+  const wrong=exact.splits.map((p,i)=>({...p,amount:p.amount+(i===0?1:i===1?-1:0)}));
+  await expect(call('alex','/v1/entries',{...refund,splits:wrong})).rejects.toThrow('Refresh the item refund');
+  await call('alex','/v1/entries',refund);
+  await expect(call('alex','/v1/entries',{...refund,id:'refund-wine-2'})).rejects.toThrow('already been refunded');
+  await expect(call('maya','/v1/entries/expense-items/claim',{itemID:'item-wine',original:[alex,maya,jules],memberIDs:[maya]})).rejects.toThrow('refunded');
+  const cmd=(name:string,args:object,user='alex')=>operate(name,{group,...args},env,user,handle);
+  const pasta=await cmd('refunds_add',{expense:e.id,items:['item-pasta']}) as Entry;
+  expect(pasta).toMatchObject({refundItems:['item-pasta'],title:'Refund: Pasta',splits:[{memberID:maya,amount:itemRefund(e,['item-pasta']).amount}]});
+  await expect(cmd('refunds_add',{expense:e.id,items:['item-salad'],amount:'1.00'})).rejects.toThrow('Omit amount');
+  await expect(cmd('refunds_add',{expense:e.id})).rejects.toThrow('choose items');
+  const entries=(await (await call('maya','/v1/snapshot')).json<{entries:Entry[]}>()).entries;
+  expect(entries.filter(x=>x.refundOf===e.id).map(x=>x.refundItems)).toEqual(expect.arrayContaining([['item-wine'],['item-pasta']]));
+});

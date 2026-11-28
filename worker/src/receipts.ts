@@ -57,6 +57,9 @@ export async function purchaseRoute(req:Request,env:Env,user:string,ownExpensesO
   const entry=resolveEntry(raw,new Map(seats.filter(s=>s.canonical_id).map(s=>[s.id,s.canonical_id!])));
   const bill=entry.bill;
   if(!bill || bill.closed) throw new HTTPError(409,'This receipt is closed or has no items.');
+  const refunded=new Set((await env.DB.prepare(`SELECT j.value FROM entries r, json_each(json_extract(r.payload,'$.refundItems')) j
+    WHERE r.group_id=? AND json_extract(r.payload,'$.refundOf')=? AND r.id NOT IN (SELECT entry_id FROM deleted_entries)`)
+    .bind(raw.groupID,id).all<{value:string}>()).results.map(r=>r.value));
   const b=await body(req);
   const ids=b.memberIDs;
   if(!Array.isArray(ids) || ids.length>50 || new Set(ids).size!==ids.length || ids.some(id=>!seats.some(s=>s.id===id && !s.canonical_id))) throw new InputError('Choose group members.');
@@ -64,11 +67,13 @@ export async function purchaseRoute(req:Request,env:Env,user:string,ownExpensesO
     const payer=seats.find(s=>s.id===entry.paidBy);
     if(row.viewer!==entry.paidBy && !(payer?.user_id===null && row.author===user)) throw new HTTPError(403,'Only the payer can close this receipt.');
     if(!ids.length && bill.items.some(i=>!i.memberIDs.length)) throw new InputError('Choose who will cover the open items.');
+    if(bill.items.some(i=>!i.memberIDs.length && refunded.has(i.id))) throw new HTTPError(409,'An open item was refunded. Delete its refund before closing this receipt.');
     for(const i of bill.items) if(!i.memberIDs.length) i.memberIDs=ids;
     bill.closed=true;
   } else {
     const item=bill.items.find(i=>i.id===b.itemID);
     if(!item) throw new HTTPError(404,'Item not found.');
+    if(refunded.has(item.id)) throw new HTTPError(409,'This item was refunded. Delete its refund before changing who had it.');
     if(!Array.isArray(b.original) || b.original.length>50 || new Set(b.original).size!==b.original.length || b.original.some(id=>!validID(id))) throw new InputError('Include the original claimants.');
     if(b.mergeEdits!==undefined && typeof b.mergeEdits!=='boolean') throw new InputError('Choose whether to merge edits.');
     let next=ids;

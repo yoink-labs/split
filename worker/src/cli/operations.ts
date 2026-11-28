@@ -1,6 +1,6 @@
 import {settlementEntry} from '../exchange';
 import {rateE8 as parseRate} from '../fx';
-import { breakdown, consumptionReport, grossItems, itemSplit, type Bill } from '../items';
+import { breakdown, consumptionReport, grossItems, itemRefund, itemSplit, type Bill } from '../items';
 import { exportGroup } from './export';
 import { refundRoom, refundsOf } from '../refundMath';
 import { deleteGroup } from '../social';
@@ -23,7 +23,7 @@ interface Args {
   description?: string; start?: string; end?: string; simplify?: 'on'|'off'; format?: 'ledger'|'summary'|'json';
   text?: string; comment?: string; avatar?: string;
   csv?: string; file?: string; me?: string; mapping?: Record<string,string>;
-  photos?: string[]; note?: string;
+  photos?: string[]; items?: string[];
   from: string; to: string; category?:string; item:string; photo:string; action?:string; mode?: 'equal'|'exact'|'percent'|'shares'|'archive'|'restore'|'delete'; participants?: string[]; values?: string[];
   yes?: boolean; revision?: string; preview?: boolean; settlement?: string; state?: 'handled'|'unhandled'|'pending'|'confirmed'; reset?: boolean;
   pending?: boolean; pendingNote?: string; receiver?: string; note?: string;
@@ -129,7 +129,17 @@ function pendingFields(a: Args, old?: Entry) {
   const pending = a.pending ?? old?.pending;
   return pending ? { pending: true, pendingNote: a.pendingNote ?? old?.pendingNote } : {};
 }
-function makeRefund(a: Args, group: Group, entries: Entry[], original?: Entry, id = crypto.randomUUID()): Entry {
+function makeRefund(a: Args, group: Group, entries: Entry[], original?: Entry, id = crypto.randomUUID(), refundItems?: string[]): Entry {
+  if (a.items) {
+    if (!original) throw new InputError('Choose the itemized expense whose items were refunded.');
+    if (a.amount || a.participants || a.values) throw new InputError('An item refund credits each person for their items. Omit amount, participants and values.');
+    const exact = itemRefund(original, a.items);
+    const receiver = a.receiver ?? original.paidBy;
+    const names = a.items.map(id => original.bill!.items.find(i => i.id === id)!.title).join(', ');
+    return makeRefund({ ...a, items: undefined, amount: (exact.amount / 100).toFixed(2), participants: exact.splits.map(s => s.memberID),
+      values: exact.splits.map(s => (s.amount / 100).toFixed(2)), title: a.title ?? ('Refund: ' + names).slice(0, 120), receiver }, group, entries, original, id, a.items);
+  }
+  if (!a.amount) throw new InputError('Enter a positive refund amount, or choose items to refund.');
   const amount = minor(a.amount!);
   if (!amount) throw new InputError('Enter a positive refund amount.');
   const receiver = a.receiver ?? original?.paidBy;
@@ -150,7 +160,7 @@ function makeRefund(a: Args, group: Group, entries: Entry[], original?: Entry, i
   return validateEntry({ id, groupID: group.id, kind: 'refund', title: a.title ?? (original ? 'Refund: ' + original.title : 'Credit').slice(0, 120),
     amount, currency: original?.currency ?? group.currency, paidBy: receiver, splitMode: a.values ? 'exact' : 'shares',
     splits: participants.map((memberID, i) => ({ memberID, amount: portions[i] })), createdAt,
-    ...(original ? { refundOf: original.id } : {}), ...(exchange ? { exchange } : {}), ...(original?.category ? { category: original.category } : {}),
+    ...(original ? { refundOf: original.id } : {}), ...(refundItems ? { refundItems } : {}), ...(exchange ? { exchange } : {}), ...(original?.category ? { category: original.category } : {}),
     ...(a.notes ? { notes: a.notes } : {}), ...pendingFields(a) }, group.members.map(m => m.id));
 }
 

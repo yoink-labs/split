@@ -7,6 +7,7 @@ struct Exchange:Codable,Equatable {
     var source:String
     var statementAmount: Int64? = nil
     var rate:Decimal { Decimal(rateE8)/100_000_000 }
+    var isPublishedEstimate: Bool { ["Frankfurter", "Frankfurter blended", "BCRA"].contains(source) }
     func description(base:String)->String { "1 \(base) = \(NSDecimalNumber(decimal:rate).stringValue) \(target) · \(source) · \(date)" }
     static func date(fromDay day: String) -> Date? {
         let formatter = DateFormatter()
@@ -26,17 +27,28 @@ struct Exchange:Codable,Equatable {
               let d=Decimal(string:clean), d>0, d<=10_000_000 else { return nil }
         return NSDecimalNumber(decimal:d*100_000_000).int64Value
     }
-    func converting(_ e:LedgerEntry, maximumTotal: Int64 = Money.maxAmount)throws->LedgerEntry {
-        guard let amount = statementAmount ?? FXMath.convert(e.amount, rateE8: rateE8),
-              amount <= maximumTotal, amount >= (maximumTotal == Money.maxAmount ? 1 : 0) else {
+    func convertedAmount(_ original: Int64, maximumTotal: Int64 = Money.maxAmount) throws -> Int64 {
+        let minimum = maximumTotal == Money.maxAmount && !isPublishedEstimate ? 1 : 0
+        guard let amount = statementAmount ?? FXMath.convert(original, rateE8: rateE8),
+              amount <= maximumTotal, amount >= minimum else {
             throw LedgerError.invalid("Check the converted amount.")
         }
+        return amount
+    }
+
+    static func distribute(_ amount: Int64, weights: [Int64], maximumTotal: Int64 = Money.maxAmount) throws -> [Int64] {
+        if amount == 0 { return weights.map { _ in 0 } }
+        return try Ledger.allocate(total: amount, weights: weights, maximumTotal: maximumTotal)
+    }
+
+    func converting(_ e:LedgerEntry, maximumTotal: Int64 = Money.maxAmount)throws->LedgerEntry {
+        let amount = try convertedAmount(e.amount, maximumTotal: maximumTotal)
         var output=e
         output.amount=amount
-        let shares = amount == 0 ? e.splits.map { _ in 0 } : try Ledger.allocate(total: amount, weights: e.splits.map(\.amount), maximumTotal: maximumTotal)
+        let shares = try Self.distribute(amount, weights: e.splits.map(\.amount), maximumTotal: maximumTotal)
         output.splits=zip(e.splits,shares).map{Portion(memberID:$0.memberID,amount:$1)}
         if let payers=e.payers {
-            let converted = amount == 0 ? payers.map { _ in 0 } : try Ledger.allocate(total: amount, weights: payers.map(\.amount), maximumTotal: maximumTotal)
+            let converted = try Self.distribute(amount, weights: payers.map(\.amount), maximumTotal: maximumTotal)
             output.payers=zip(payers,converted).map{Payer(memberID:$0.memberID,amount:$1)}
         }
         output.exchange=nil;output.currency=target

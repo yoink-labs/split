@@ -1,11 +1,14 @@
 // Parser for Splitwise's per-group "Export as spreadsheet" CSV. Shared by the web client and
 // covered by Worker tests; the iOS app has the same rules in SplitwiseImport.swift.
 import { allocate, currencies } from './ledger';
+import { distributeConvertedAmount } from './exchange';
+import { convert, type Exchange } from './fx';
 
 export interface ImportShare { name: string; amount: number }
 export interface ImportRow {
   title: string; day: string; payer: string; amount: number; currency: string; category?: string;
   payment: boolean; splits: ImportShare[]; payers?: ImportShare[];
+  exchange?: Exchange;
 }
 export interface SplitwiseGroup {
   name: string; members: string[]; rows: ImportRow[];
@@ -94,7 +97,7 @@ export async function parseSplitwise(raw: string, fileName: string): Promise<Spl
   if (!columns.length || columns.length > 50) throw new Error(`${fileName} needs 1–50 member columns.`);
   if (new Set(columns.map(c => key(c[1]))).size !== columns.length) throw new Error(`Two people in ${fileName} share a name. Rename one in Splitwise and export again.`);
   const order = columns.map(c => c[1]);
-  const out: ImportRow[] = [], totals: SplitwiseGroup['totals'] = {}, skipped: string[] = [];
+  const out: ImportRow[] = [], totals: SplitwiseGroup['totals'] = Object.create(null), skipped: string[] = [];
   for (let r = start + 1; r < rows.length; r++) {
     const row = rows[r], line = r + 1, cell = (i: number) => (row[i] ?? '').trim();
     if (row.every(c => !c.trim())) continue;
@@ -136,16 +139,27 @@ export async function parseSplitwise(raw: string, fileName: string): Promise<Spl
 export function importedBalances(g: Pick<SplitwiseGroup, 'rows'>) {
   const result: Record<string, Record<string, number>> = {};
   for (const r of g.rows) {
-    const c = (result[r.currency] ??= {});
+    const c = (result[r.currency] ??= Object.create(null));
     for (const p of r.payers ?? [{ name: r.payer, amount: r.amount }]) c[p.name] = (c[p.name] ?? 0) + p.amount;
     for (const s of r.splits) c[s.name] = (c[s.name] ?? 0) - s.amount;
   }
   return result;
 }
+
+export function settledImportRow(row: ImportRow): ImportRow {
+  if (!row.exchange) return row;
+  const amount = convert(row.amount, row.exchange.rateE8);
+  const distribute = (shares: ImportShare[]) => {
+    const amounts = distributeConvertedAmount(amount, shares.map(share => share.amount));
+    return shares.map((share, index) => ({ ...share, amount: amounts[index] }));
+  };
+  return { ...row, amount, currency: row.exchange.target, exchange: undefined,
+    splits: distribute(row.splits), payers: row.payers && distribute(row.payers) };
+}
 /** Imported balances against Splitwise's "Total balance" rows. Empty means exact to the cent. */
 export function reconcile(g: SplitwiseGroup): Mismatch[] {
   const imported = importedBalances(g), out: Mismatch[] = [];
-  for (const currency of [...new Set([...Object.keys(g.totals), ...Object.keys(imported)])].sort()) {
+  for (const currency of Object.keys(g.totals).sort()) {
     if (!currencies.includes(currency as typeof currencies[number])) continue;
     for (const member of g.members) {
       const expected = g.totals[currency]?.[member] ?? 0, got = imported[currency]?.[member] ?? 0;

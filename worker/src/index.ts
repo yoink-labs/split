@@ -250,7 +250,8 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
         if(!entryPayers(canonical).some(p=>p.memberID===viewer))
           throw new HTTPError(403,'Only a payer can change whether this expense is handled.');
       }
-      if(updated.exchange && updated.exchange.target!==await env.DB.prepare('SELECT currency FROM groups WHERE id=?').bind(saved.group_id).first('currency')) throw new InputError('Use the group settlement currency.');
+      if(updated.exchange && updated.exchange.target!==canonical.exchange?.target &&
+        updated.exchange.target!==await env.DB.prepare('SELECT currency FROM groups WHERE id=?').bind(saved.group_id).first('currency')) throw new InputError('Use the group settlement currency.');
       if((updated.exchange || updated.bill) && await env.DB.prepare('SELECT 1 FROM recurring WHERE entry_id=?').bind(updated.id).first()) throw new InputError('Stop the recurring schedule before itemizing or converting this expense.');
       payload=JSON.stringify(updated);
       if(updated.bill?.closed && !old.bill?.closed) throw new InputError('Use the payer close action.');

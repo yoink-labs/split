@@ -147,10 +147,10 @@ function Composer({ g, existing }: { g: Group; existing?: Expense }) {
   const [category, setCategory] = useState(existing?.category ?? "Dining");
   const [notes, setNotes] = useState(existing?.notes ?? "");
   const [extrasOpen, setExtrasOpen] = useState(Boolean(existing?.notes || existing?.handled || query.has("receipt")));
-  const savedExchange = currency === existing?.currency && existing.exchange?.target === g.currency
-    ? existing.exchange : undefined;
+  const settlementCurrency = existing?.exchange?.target ?? (currency === existing?.currency ? existing.currency : g.currency);
+  const savedExchange = currency === existing?.currency ? existing.exchange : undefined;
   const [exchange, setExchange] = useState<Exchange | null>(savedExchange ?? null);
-  const foreign = currency !== g.currency;
+  const foreign = currency !== settlementCurrency;
   const [converter, setConverter] = useState(false);
 
   let typed: number | null = null;
@@ -400,15 +400,15 @@ function Composer({ g, existing }: { g: Group; existing?: Expense }) {
                 <RateField
                   key={currency}
                   from={currency}
-                  to={g.currency}
+                  to={settlementCurrency}
                   amount={chargeAmount}
                   date={date}
                   saved={savedExchange}
-                  tripRate={g.tripRates?.[currency]}
+                  tripRate={settlementCurrency === g.currency ? g.tripRates?.[currency] : undefined}
                   onChange={setExchange}
                 />
               )}
-              <ConverterDialog open={converter} onClose={() => setConverter(false)} from={currency} to={g.currency} amount={chargeAmount} date={date} />
+              <ConverterDialog open={converter} onClose={() => setConverter(false)} from={currency} to={settlementCurrency} amount={chargeAmount} date={date} />
 
             </section>
 

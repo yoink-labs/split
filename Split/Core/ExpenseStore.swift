@@ -363,7 +363,17 @@ private struct ActiveInviteResponse: Decodable {
         return result.id
     }
 
-    struct SplitwiseResult: Decodable, Equatable { var groupID: String; var created: Bool; var inserted: Int; var duplicates: Int }
+    struct SplitwiseResult: Decodable, Equatable {
+        struct ImportedPerson: Decodable, Equatable {
+            var name: String
+            var memberID: String
+        }
+        var groupID: String
+        var created: Bool
+        var inserted: Int
+        var duplicates: Int
+        var people: [ImportedPerson]?
+    }
 
     /// Imports one Splitwise group in a single atomic request. Demo mode applies it on the device.
     func importSplitwise(_ request: SplitwiseImportRequest) async throws -> SplitwiseResult {
@@ -390,14 +400,16 @@ private struct ActiveInviteResponse: Decodable {
             if person.me == true {
                 if let mine = next.snapshot.groups[index].members.first(where: { $0.userID == currentUserID }) { ids[key] = mine.id }
                 else {
-                    let me = Person(id: "demo-me-" + groupID, groupID: groupID, userID: currentUserID, name: person.name)
+                    let me = Person(id: "demo-me-" + groupID, groupID: groupID, userID: currentUserID, name: person.displayName ?? person.name)
                     next.snapshot.groups[index].members.append(me); ids[key] = me.id
                 }
             } else if let id = person.memberID { ids[key] = id }
             else {
                 let id = "demo-sw-" + SplitwiseCSV.fingerprint(groupID + key).prefix(16)
-                if !next.snapshot.groups[index].members.contains(where: { $0.id == id }) {
-                    next.snapshot.groups[index].members.append(Person(id: id, groupID: groupID, name: person.name))
+                if let member = next.snapshot.groups[index].members.firstIndex(where: { $0.id == id }) {
+                    if let name = person.displayName { next.snapshot.groups[index].members[member].name = name }
+                } else {
+                    next.snapshot.groups[index].members.append(Person(id: id, groupID: groupID, name: person.displayName ?? person.name))
                 }
                 ids[key] = id
             }
@@ -414,11 +426,15 @@ private struct ActiveInviteResponse: Decodable {
                                     splits: try row.splits.map { Portion(memberID: try id($0.name), amount: $0.amount) }, category: row.category,
                                     kind: row.payment ? "settlement" : "expense", editable: true, splitMode: .exact, createdAt: row.day + "T12:00:00Z")
             if let payers = row.payers, payers.count > 1 { entry.payers = try payers.map { Payer(memberID: try id($0.name), amount: $0.amount) } }
+            entry.exchange = row.exchange
             next.snapshot.entries.append(entry)
             inserted += 1
         }
         try persist(next)
-        return SplitwiseResult(groupID: groupID, created: created, inserted: inserted, duplicates: request.rows.count - inserted)
+        let people = request.people.compactMap { person in
+            ids[person.name.lowercased()].map { SplitwiseResult.ImportedPerson(name: person.name, memberID: $0) }
+        }
+        return SplitwiseResult(groupID: groupID, created: created, inserted: inserted, duplicates: request.rows.count - inserted, people: people)
     }
 
     func requestSettlement(_ entry: LedgerEntry) async throws {
@@ -584,8 +600,13 @@ private struct ActiveInviteResponse: Decodable {
     }
 
     func invite(group: ExpenseGroup, memberID: String? = nil) async throws -> URL {
+        try await invite(groupID: group.id, memberID: memberID)
+    }
+
+    func invite(groupID: String, memberID: String?, email: String? = nil) async throws -> URL {
         guard !demo else { throw LedgerError.invalid("Sign in to share a group invitation.") }
-        let data = try await post("/v1/groups/\(group.id)/invites", JSONEncoder().encode(["memberID":memberID]))
+        let payload = ["memberID": memberID, "email": email].compactMapValues { $0 }
+        let data = try await post("/v1/groups/\(groupID)/invites", JSONEncoder().encode(payload))
         return try JSONDecoder().decode(InviteResponse.self, from:data).url
     }
 
@@ -697,7 +718,7 @@ enum Fixtures {
     }
 }
 
-struct SplitUser: Decodable, Identifiable {
+struct SplitUser: Decodable, Identifiable, Hashable {
     var userID: String
     var name: String
     var username: String?

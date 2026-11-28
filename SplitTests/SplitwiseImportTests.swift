@@ -65,13 +65,41 @@ final class SplitwiseImportTests: XCTestCase {
     func testRequestMappingAndStableGroupID() throws {
         let group = try SplitwiseCSV.parse(try fixture("buenos-aires-trip_2026-11-18_export.csv"), fileName: "trip.csv")
         XCTAssertThrowsError(try SplitwiseImportRequest.make(group, name: "Trip", currency: "ARS", kind: "trip", target: nil, mapping: [:], userID: "u"))
+        let account = SplitUser(userID: "user-maya", name: "Maya R", username: "maya")
         let request = try SplitwiseImportRequest.make(group, name: "Trip", currency: "ARS", kind: "trip", target: nil,
-                                                      mapping: ["Harris": .me, "Maya": .placeholder], userID: "u")
-        XCTAssertEqual(request.people.first { $0.name == "Harris" }?.me, true)
+                                                      mapping: ["Harris": .me, "Maya": .account(account)],
+                                                      displayNames: ["Harris": "Harris K", "Sam": "Sam P"], userID: "u")
+        let people = Dictionary(uniqueKeysWithValues: request.people.map { ($0.name, $0) })
+        XCTAssertEqual(people["Harris"]?.me, true)
+        XCTAssertEqual(people["Harris"]?.displayName, "Harris K")
+        XCTAssertEqual(people["Maya"]?.userID, account.userID)
+        XCTAssertEqual(people["Sam"]?.displayName, "Sam P")
+        XCTAssertEqual(request.rows, group.rows)
         XCTAssertEqual(request.group?.id, SplitwiseImportRequest.groupID(fingerprint: group.fingerprint, userID: "u"))
         XCTAssertNotEqual(request.group?.id, SplitwiseImportRequest.groupID(fingerprint: group.fingerprint, userID: "other"))
         // CRLF and a byte-order mark don't change the fingerprint, so iOS and the web agree.
         let raw = try fixture("buenos-aires-trip_2026-11-18_export.csv")
         XCTAssertEqual(SplitwiseCSV.fingerprint(SplitwiseCSV.normalized("\u{feff}" + raw.replacingOccurrences(of: "\n", with: "\r\n"))), group.fingerprint)
+    }
+
+    @MainActor
+    func testHistoricalEstimatesUseTheTransactionDate() async throws {
+        let raw = try fixture("buenos-aires-trip_2026-11-18_export.csv")
+        let group = try SplitwiseCSV.parse(raw, fileName: "trip.csv")
+        let fx = FXStore(fileURL: nil, fetcher: { url in
+            let day = try XCTUnwrap(URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "date" }?.value)
+            let rate = day == "2026-11-12" ? "0.00000001" : "0.00125"
+            let response = try XCTUnwrap(HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil))
+            return (Data(#"{"base":"ARS","quote":"USD","date":"\#(day)","rate":\#(rate)}"#.utf8), response)
+        })
+        let conversion = try await SplitwiseConversion.prepare(group.rows, currency: "USD", fx: fx)
+        XCTAssertEqual(Set(conversion.settled.map(\.currency)), ["USD"])
+        XCTAssertEqual(conversion.rows[0].exchange?.date, group.rows[0].day)
+        XCTAssertEqual(conversion.rows[0].amount, group.rows[0].amount)
+        XCTAssertEqual(conversion.settled[0].amount, 0)
+        XCTAssertEqual(conversion.settled[1].amount, 23_000)
+        XCTAssertEqual(conversion.settled[1].splits.reduce(0) { $0 + $1.amount }, 23_000)
+        XCTAssertEqual(conversion.settled.first { $0.title == "Maya paid Sam" }?.amount, 1_250)
+        XCTAssertEqual(SplitwiseGroup.balances(conversion.settled)["USD"]?.values.reduce(0, +), 0)
     }
 }

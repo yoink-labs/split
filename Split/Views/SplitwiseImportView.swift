@@ -8,9 +8,9 @@ struct SplitwiseImportView: View {
     var target: ExpenseGroup? = nil
 
     @EnvironmentObject private var store: ExpenseStore
+    @EnvironmentObject private var fx: FXStore
     @EnvironmentObject private var session: SessionStore
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.horizontalSizeClass) private var size
     @State private var drafts: [ImportDraft] = []
     @State private var failures: [String] = []
     @State private var choosing = false
@@ -34,6 +34,7 @@ struct SplitwiseImportView: View {
                         summaryHeader
                         ForEach($drafts) { $draft in
                             ImportDraftCard(draft: $draft, target: target, groups: candidateGroups, myName: session.displayName)
+                                .disabled(importing)
                         }
                     }
                     ForEach(failures, id: \.self) { InlineError(text: $0) }
@@ -72,7 +73,7 @@ struct SplitwiseImportView: View {
     }
 
     private var candidateGroups: [ExpenseGroup] {
-        store.groups.filter { !($0.archived ?? false) && $0.members.contains { $0.userID == session.userID } }
+        store.groups.filter { !($0.archived ?? false) && $0.members.contains { $0.userID == session.userID && $0.removed != true } }
     }
 
     // MARK: - Intro
@@ -127,7 +128,7 @@ struct SplitwiseImportView: View {
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 3) {
                 Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(Palette.ink)
-                Text(detail).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                if !detail.isEmpty { Text(detail).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
             }
             Spacer(minLength: 0)
         }
@@ -138,7 +139,7 @@ struct SplitwiseImportView: View {
     }
 
     private var privacyNote: some View {
-        Label("Files are read on this device. Only the expenses you confirm are sent to your Split account.", systemImage: "lock")
+        Label("Files are read on this device. Split saves the group and entries you confirm.", systemImage: "lock")
             .font(.caption)
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
@@ -172,9 +173,9 @@ struct SplitwiseImportView: View {
                     }
                 }
                 .buttonStyle(.splitPrimary)
-                .disabled(importing || pendingDrafts.isEmpty || pendingDrafts.contains { $0.blocker(target: target) != nil })
+                .disabled(importing || pendingDrafts.isEmpty || pendingDrafts.contains { $0.conversion?.currency != fx.home || $0.blocker(groups: candidateGroups, userID: session.userID) != nil })
                 .accessibilityIdentifier("splitwise-import-confirm")
-                if let blocker = pendingDrafts.lazy.compactMap({ $0.blocker(target: target) }).first {
+                if let blocker = pendingDrafts.lazy.compactMap({ $0.blocker(groups: candidateGroups, userID: session.userID) }).first {
                     Text(blocker).font(.caption).foregroundStyle(Palette.coral)
                 }
             }
@@ -213,21 +214,26 @@ struct SplitwiseImportView: View {
             return
         }
         let existing = store.groups.first { $0.id == SplitwiseImportRequest.groupID(fingerprint: parsed.fingerprint, userID: session.userID ?? "") }
-        var draft = ImportDraft(parsed: parsed, name: parsed.name, currency: parsed.mainCurrency, targetID: target?.id ?? existing?.id)
+        var draft = ImportDraft(parsed: parsed, name: parsed.name, targetID: target?.id ?? existing?.id)
         draft.autoMap(groups: candidateGroups, userID: session.userID, myName: session.displayName)
         if existing != nil { draft.note = "You imported this file before. Importing again only adds entries that are missing." }
         drafts.append(draft)
     }
 
     private func runImport() async {
+        let currency = fx.home
         importing = true
         defer { importing = false }
         for index in drafts.indices where drafts[index].result == nil {
             let draft = drafts[index]
+            guard let conversion = draft.conversion, conversion.currency == currency else { continue }
             do {
-                let request = try SplitwiseImportRequest.make(draft.parsed, name: draft.name, currency: draft.currency, kind: "trip",
-                                                              target: draft.targetID.flatMap { store.group($0) }, mapping: draft.mapping, userID: session.userID ?? "")
-                drafts[index].result = try await store.importSplitwise(request)
+                let request = try SplitwiseImportRequest.make(draft.parsed, name: draft.name, currency: currency, kind: "trip",
+                                                              target: draft.targetID.flatMap { store.group($0) }, mapping: draft.mapping,
+                                                              displayNames: draft.displayNames, conversion: conversion, userID: session.userID ?? "")
+                let result = try await store.importSplitwise(request)
+                drafts[index].result = result
+                drafts[index].targetID = result.groupID
                 drafts[index].error = nil
             } catch {
                 drafts[index].error = error.localizedDescription
@@ -249,44 +255,60 @@ struct ImportDraft: Identifiable {
     var id: String { parsed.fingerprint }
     var parsed: SplitwiseGroup
     var name: String
-    var currency: String
+    var conversion: SplitwiseConversion?
     /// nil creates a new group.
     var targetID: String?
     var mapping: [String: MemberMapping] = [:]
+    var displayNames: [String: String] = [:]
+    var inviteEmails: [String: String] = [:]
     var result: ExpenseStore.SplitwiseResult?
     var error: String?
     var note: String?
 
     mutating func autoMap(groups: [ExpenseGroup], userID: String?, myName: String) {
         let group = targetID.flatMap { id in groups.first { $0.id == id } }
-        var next: [String: MemberMapping] = [:]
-        let mine = myName.lowercased()
-        for name in parsed.members {
-            let key = name.lowercased()
-            if let group, let member = group.members.first(where: { $0.name.lowercased() == key }) {
-                next[name] = member.userID == userID && userID != nil ? .me : .member(member.id)
-            } else {
-                next[name] = .placeholder
+        let active = group?.members.filter { $0.removed != true } ?? []
+        let mySeat = active.first { $0.userID == userID && userID != nil }
+        let full = myName.lowercased()
+        let first = full.split(separator: " ").first.map(String.init) ?? full
+        let me = parsed.members.first { mapping[$0] == .me }
+            ?? parsed.members.first { $0.lowercased() == mySeat?.name.lowercased() }
+            ?? parsed.members.first { full != "you" && $0.lowercased() == full }
+            ?? parsed.members.first { first != "you" && $0.lowercased() == first }
+        let previous = mapping
+        mapping = Dictionary(uniqueKeysWithValues: parsed.members.map { name in
+            if name == me { return (name, .me) }
+            if let choice = previous[name], case .account = choice { return (name, choice) }
+            if let member = active.first(where: { $0.id != mySeat?.id && $0.name.lowercased() == name.lowercased() }) {
+                return (name, .member(member.id))
             }
-        }
-        if !next.values.contains(.me), mine != "you", !mine.isEmpty {
-            let first = mine.split(separator: " ").first.map(String.init) ?? mine
-            if let name = parsed.members.first(where: { $0.lowercased() == mine || $0.lowercased() == first || $0.lowercased().hasPrefix(first + " ") }) {
-                next[name] = .me
-            }
-        }
-        mapping = next
+            return (name, .placeholder)
+        })
     }
 
-    func blocker(target: ExpenseGroup?) -> String? {
+    func blocker(groups: [ExpenseGroup], userID: String?) -> String? {
         if targetID == nil {
-            if name.trimmingCharacters(in: .whitespaces).isEmpty { return "Name every new group." }
+            if name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || name.utf16.count > 80 { return "Enter a group name of up to 80 characters." }
             if !mapping.values.contains(.me) { return "In \(name), choose which Splitwise name is you." }
         }
-        if mapping.values.filter({ $0 == .me }).count > 1 { return "In \(name), choose yourself once." }
-        let members = mapping.values.compactMap { value -> String? in if case .member(let id) = value { return id } else { return nil } }
-        if Set(members).count != members.count { return "In \(name), two names point to the same person." }
+        let members = groups.first { $0.id == targetID }?.members ?? []
+        let identities = mapping.values.compactMap { value -> String? in
+            switch value {
+            case .me: return userID.map { "user:" + $0 } ?? "me"
+            case .account(let account): return "user:" + account.userID
+            case .member(let id): return members.first { $0.id == id }?.userID.map { "user:" + $0 } ?? id
+            case .placeholder: return nil
+            }
+        }
+        if Set(identities).count != identities.count { return "In \(name), two names point to the same person." }
         return nil
+    }
+
+    mutating func assign(_ choice: MemberMapping, to source: String) {
+        if choice == .me, let previous = mapping.first(where: { $0.key != source && $0.value == .me }) {
+            mapping[previous.key] = .placeholder
+        }
+        mapping[source] = choice
     }
 }
 
@@ -296,10 +318,17 @@ private struct ImportDraftCard: View {
     var groups: [ExpenseGroup]
     var myName: String
     @EnvironmentObject private var session: SessionStore
+    @EnvironmentObject private var store: ExpenseStore
+    @EnvironmentObject private var fx: FXStore
     @State private var showAll = false
+    @State private var editing: String?
+    @State private var rateRetry = 0
+    @State private var rateError: String?
 
     private var targetGroup: ExpenseGroup? { draft.targetID.flatMap { id in groups.first { $0.id == id } ?? (target?.id == id ? target : nil) } }
-    private var mismatches: [SplitwiseGroup.Mismatch] { draft.parsed.mismatches }
+    private var currency: String { draft.result == nil ? fx.home : draft.conversion?.currency ?? fx.home }
+    private var conversion: SplitwiseConversion? { draft.conversion?.currency == currency ? draft.conversion : nil }
+    private var members: [Person] { targetGroup?.members.filter { $0.userID != session.userID && $0.removed != true } ?? [] }
 
     var body: some View {
         Card(padding: 0) {
@@ -310,21 +339,37 @@ private struct ImportDraftCard: View {
                 reconciliation
                     .padding(14)
                 RowDivider(inset: 0)
-                people
-                    .padding(14)
+                if let result = draft.result {
+                    resultRow(result).padding(14)
+                    if !store.isDemo {
+                        emailInvites(result).padding(.horizontal, 14)
+                    }
+                    RowDivider(inset: 0)
+                } else {
+                    people.padding(14)
+                    RowDivider(inset: 0)
+                }
+                analytics.padding(14)
                 RowDivider(inset: 0)
                 preview
                     .padding(14)
-                if let result = draft.result {
-                    RowDivider(inset: 0)
-                    resultRow(result).padding(14)
-                }
                 if let error = draft.error {
                     InlineError(text: error).padding(14)
                 }
             }
         }
-        .disabled(draft.result != nil)
+        .task(id: "\(currency):\(rateRetry)") { await prepareConversion() }
+        .sheet(isPresented: Binding(get: { editing != nil }, set: { if !$0 { editing = nil } })) {
+            if let source = editing {
+                SplitwisePersonEditor(source: source, members: members, newGroup: draft.targetID == nil,
+                                      mapping: draft.mapping[source] ?? .placeholder, displayName: draft.displayNames[source] ?? "",
+                                      email: draft.inviteEmails[source] ?? "") { choice, name, email in
+                    draft.assign(choice, to: source)
+                    draft.displayNames[source] = name
+                    draft.inviteEmails[source] = email
+                }
+            }
+        }
     }
 
     private var header: some View {
@@ -338,7 +383,7 @@ private struct ImportDraftCard: View {
                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {
-                    if draft.targetID == nil {
+                    if draft.targetID == nil && draft.result == nil {
                         TextField("Group name", text: $draft.name)
                             .font(.headline)
                             .foregroundStyle(Palette.ink)
@@ -353,7 +398,7 @@ private struct ImportDraftCard: View {
             if let note = draft.note {
                 Label(note, systemImage: "info.circle").font(.caption).foregroundStyle(.secondary)
             }
-            if target == nil {
+            if target == nil && draft.result == nil {
                 HStack {
                     Text("Import into").font(.subheadline).foregroundStyle(Palette.ink)
                     Spacer()
@@ -368,50 +413,55 @@ private struct ImportDraftCard: View {
                     .labelsHidden()
                 }
             }
-            if draft.targetID == nil {
-                HStack {
-                    Text("Group currency").font(.subheadline).foregroundStyle(Palette.ink)
-                    Spacer()
-                    Picker("Group currency", selection: $draft.currency) {
-                        ForEach(Money.currencies, id: \.self) { Text($0).tag($0) }
-                    }
-                    .pickerStyle(.menu)
-                    .labelsHidden()
-                }
-                if draft.parsed.currencies.count > 1 {
-                    Text("Entries keep their original currency, just like in Splitwise. Convert any of them later.")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-            }
+
         }
     }
 
     private var stats: String {
         var parts = ["\(draft.parsed.expenseCount) \(draft.parsed.expenseCount == 1 ? "expense" : "expenses")"]
         if draft.parsed.paymentCount > 0 { parts.append("\(draft.parsed.paymentCount) \(draft.parsed.paymentCount == 1 ? "payment" : "payments")") }
-        parts.append(draft.parsed.currencies.joined(separator: ", "))
+
         return parts.joined(separator: " · ")
     }
 
     @ViewBuilder private var reconciliation: some View {
-        if draft.parsed.totals.isEmpty {
-            statusRow(symbol: "questionmark.circle", tint: Palette.amber, title: "No Total balance row", detail: "This file has no Splitwise totals to check against. Compare the balances after importing.")
-        } else if mismatches.isEmpty {
-            statusRow(symbol: "checkmark.seal.fill", tint: Palette.positive, title: "Matches Splitwise to the cent", detail: "Balances after import equal the Total balance \(draft.parsed.totals.count == 1 ? "row" : "rows") in the file.")
+        if !draft.parsed.mismatches.isEmpty {
+            statusRow(symbol: "exclamationmark.triangle.fill", tint: Palette.coral, title: "Source balances differ from Splitwise’s totals",
+                      detail: "Check the export if you expected the balances to match.")
+        } else if draft.parsed.reconciled {
+            statusRow(symbol: "checkmark.seal.fill", tint: Palette.positive, title: "Source balances match the Splitwise export", detail: "")
+        }
+    }
+
+    @ViewBuilder private var analytics: some View {
+        if let conversion {
+            SplitwiseAnalyticsPreview(conversion: conversion, members: draft.parsed.members, mappedName: mappedName)
         } else {
             VStack(alignment: .leading, spacing: 8) {
-                statusRow(symbol: "exclamationmark.triangle.fill", tint: Palette.coral, title: "Doesn’t match Splitwise’s totals", detail: "The file may have been edited. You can still import, then fix the difference with a payment.")
-                ForEach(mismatches.prefix(4), id: \.member) { miss in
-                    HStack {
-                        Text(miss.member).font(.caption.weight(.medium))
-                        Spacer()
-                        Text("Splitwise \(Money.text(miss.expected, miss.currency, signed: true)) · Split \(Money.text(miss.imported, miss.currency, signed: true))")
-                            .font(.caption.monospacedDigit())
-                            .foregroundStyle(.secondary)
-                    }
-                    .padding(.leading, 44)
+                Text("Analytics preview in \(currency)").font(.subheadline.weight(.semibold))
+                if let rateError {
+                    InlineError(text: rateError)
+                    Button("Retry exchange rates") { rateRetry += 1 }
+                } else {
+                    ProgressView("Loading historical exchange rates…")
+                        .font(.caption)
                 }
             }
+        }
+    }
+
+    private func prepareConversion() async {
+        guard draft.result == nil else { return }
+        let targetCurrency = currency
+        rateError = nil
+        draft.conversion = nil
+        do {
+            let prepared = try await SplitwiseConversion.prepare(draft.parsed.rows, currency: targetCurrency, fx: fx)
+            guard !Task.isCancelled, currency == targetCurrency else { return }
+            draft.conversion = prepared
+        } catch {
+            guard !Task.isCancelled, currency == targetCurrency else { return }
+            rateError = error.localizedDescription
         }
     }
 
@@ -424,7 +474,7 @@ private struct ImportDraftCard: View {
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(Palette.ink)
-                Text(detail).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                if !detail.isEmpty { Text(detail).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
             }
         }
         .accessibilityElement(children: .combine)
@@ -433,43 +483,71 @@ private struct ImportDraftCard: View {
     private var people: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("People").font(.subheadline.weight(.semibold)).foregroundStyle(Palette.ink)
-            ForEach(draft.parsed.members, id: \.self) { name in
-                HStack(alignment: .center, spacing: 10) {
-                    Avatar(name: name, size: 32)
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(name).font(.subheadline.weight(.medium)).foregroundStyle(Palette.ink)
-                        if let total = net(name) {
-                            Text(total).font(.caption2).foregroundStyle(.secondary)
-                        }
-                    }
-                    .fixedSize(horizontal: false, vertical: true)
-                    Spacer(minLength: 8)
-                    Picker(name, selection: Binding(get: { draft.mapping[name] ?? .placeholder }, set: { draft.mapping[name] = $0 })) {
-                        Text("Me").tag(MemberMapping.me)
-                        if let group = targetGroup {
-                            ForEach(group.members.filter { $0.userID != session.userID }) { member in
-                                Text(member.name).tag(MemberMapping.member(member.id))
-                            }
-                        }
-                        Text("Placeholder").tag(MemberMapping.placeholder)
-                    }
-                    .pickerStyle(.menu)
-                    .labelsHidden()
-                    .fixedSize()
-                    .accessibilityLabel("\(name) becomes")
-                }
-            }
-            Text("Placeholders keep their history and can claim it later with an invite.")
+            Text("Claim your history, link a Split account, or prepare an email invite.")
                 .font(.caption).foregroundStyle(.secondary)
+            ForEach(draft.parsed.members, id: \.self) { source in
+                Button {
+                    editing = source
+                } label: {
+                    HStack(spacing: 10) {
+                        Avatar(name: source, size: 32)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(source).font(.subheadline.weight(.medium)).foregroundStyle(Palette.ink)
+                            Text(mappingDetail(source)).font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer(minLength: 8)
+                        Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint("Edit how this person imports")
+            }
         }
     }
 
-    private func net(_ name: String) -> String? {
-        let parts = draft.parsed.totals.keys.sorted().compactMap { currency -> String? in
-            guard let value = draft.parsed.totals[currency]?[name], value != 0 else { return nil }
-            return (value > 0 ? "gets back " : "owes ") + Money.text(abs(value), currency)
+    private func mappingDetail(_ source: String) -> String {
+        switch draft.mapping[source] ?? .placeholder {
+        case .me: return "This is me · " + mappedName(source)
+        case .member, .account: return "Linked to " + mappedName(source)
+        case .placeholder:
+            if let email = draft.inviteEmails[source], !email.isEmpty { return "Invite " + email }
+            return mappedName(source) == source ? "Placeholder" : "Placeholder · " + mappedName(source)
         }
-        return parts.isEmpty ? "settled" : parts.joined(separator: " · ")
+    }
+
+    private func mappedName(_ source: String) -> String {
+        let rename = draft.displayNames[source].flatMap { $0.isEmpty ? nil : $0 }
+        switch draft.mapping[source] ?? .placeholder {
+        case .me:
+            if let name = targetGroup?.members.first(where: { $0.userID == session.userID })?.name { return name }
+            return rename ?? (myName.isEmpty ? source : myName)
+        case .member(let id):
+            let member = members.first { $0.id == id }
+            return (member?.userID == nil ? rename : nil) ?? member?.name ?? source
+        case .account(let account): return members.first { $0.userID == account.userID }?.name ?? account.name
+        case .placeholder: return rename ?? source
+        }
+    }
+
+    @ViewBuilder private func emailInvites(_ result: ExpenseStore.SplitwiseResult) -> some View {
+        let recipients = (result.people ?? []).filter { person in
+            guard let email = draft.inviteEmails[person.name], !email.isEmpty else { return false }
+            if let member = targetGroup?.members.first(where: { $0.id == person.memberID }) {
+                return member.userID == nil && member.removed != true
+            }
+            return draft.mapping[person.name] == .placeholder
+        }
+        if !recipients.isEmpty {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Email invites").font(.subheadline.weight(.semibold))
+                ForEach(recipients, id: \.name) { person in
+                    SplitwiseEmailInvite(groupID: result.groupID, memberID: person.memberID, name: mappedName(person.name),
+                                         email: draft.inviteEmails[person.name] ?? "")
+                }
+            }
+            .padding(.bottom, 14)
+        }
     }
 
     private var preview: some View {
@@ -482,21 +560,27 @@ private struct ImportDraftCard: View {
                         .font(.caption.weight(.semibold))
                 }
             }
-            ForEach(Array(draft.parsed.rows.prefix(showAll ? 200 : 4).enumerated()), id: \.offset) { _, row in
-                HStack(spacing: 10) {
-                    Image(systemName: row.payment ? "arrow.left.arrow.right" : CategoryMeta.named(row.category ?? "General").symbol)
-                        .font(.caption.weight(.semibold))
-                        .frame(width: 28, height: 28)
-                        .background(Palette.raised)
-                        .foregroundStyle(Palette.evergreen)
-                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                        .accessibilityHidden(true)
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(row.title).font(.subheadline).foregroundStyle(Palette.ink).lineLimit(1)
-                        Text("\(FXQuote.shortDay(row.day)) · \(row.allPayers.map(\.name).joined(separator: " & ")) paid").font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+            LazyVStack(alignment: .leading, spacing: 8) {
+                ForEach(Array(draft.parsed.rows.prefix(showAll ? draft.parsed.rows.count : 4).enumerated()), id: \.offset) { index, row in
+                    HStack(spacing: 10) {
+                        Image(systemName: row.payment ? "arrow.left.arrow.right" : CategoryMeta.named(row.category ?? "General").symbol)
+                            .font(.caption.weight(.semibold))
+                            .frame(width: 28, height: 28)
+                            .background(Palette.raised)
+                            .foregroundStyle(Palette.evergreen)
+                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            .accessibilityHidden(true)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(row.title).font(.subheadline).foregroundStyle(Palette.ink).lineLimit(1)
+                            Text("\(FXQuote.shortDay(row.day)) · \(row.allPayers.map { mappedName($0.name) }.joined(separator: " & ")) paid")
+                                .font(.caption).foregroundStyle(.secondary)
+                            Text((row.payment ? "Received by " : "Split between ") + row.splits.map { mappedName($0.name) }.joined(separator: ", "))
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer(minLength: 8)
+                        let amount = conversion.map { (row.currency == currency ? "" : "≈ ") + Money.text($0.settled[index].amount, currency) }
+                        Text(amount ?? "—").font(.splitAmount(14)).foregroundStyle(Palette.ink).lineLimit(1)
                     }
-                    Spacer(minLength: 8)
-                    Text(Money.text(row.amount, row.currency)).font(.splitAmount(14)).foregroundStyle(Palette.ink).lineLimit(1)
                 }
             }
             if !draft.parsed.skipped.isEmpty {
@@ -510,7 +594,7 @@ private struct ImportDraftCard: View {
 
     private func resultRow(_ result: ExpenseStore.SplitwiseResult) -> some View {
         let text: String
-        if result.inserted == 0 { text = "Already imported. Nothing new to add." }
+        if result.inserted == 0 { text = "All entries were already in Split." }
         else if result.duplicates > 0 { text = "Added \(result.inserted) entries. Skipped \(result.duplicates) already in Split." }
         else { text = "Added \(result.inserted) entries\(result.created ? " to a new group" : "")." }
         return Label(text, systemImage: "checkmark.circle.fill")

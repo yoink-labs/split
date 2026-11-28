@@ -318,13 +318,7 @@ final class FXStore: ObservableObject {
     func quote(base: String, target: String, date: String) async throws -> FXQuote {
         let today = Exchange.localDay(clock())
         if date < today {
-            if let cached = cache.published(base, target, day: date) { return cached }
-            if let historical = try? await fetchQuote(base: base, quote: target, date: date) {
-                cache.quotes[historical.key + "@" + date] = historical
-                offline = false
-                persist()
-                return historical
-            }
+            if let historical = try? await historicalQuote(base: base, target: target, date: date) { return historical }
             try Task.checkCancellation()
         }
         if !cache.needsRefresh(base, target, now: clock()), let cached = cache.published(base, target) {
@@ -343,6 +337,17 @@ final class FXStore: ObservableObject {
             }
             throw LedgerError.invalid("No published rate is available. Enter your own rate.")
         }
+    }
+
+    /// A reference rate published on or before the requested day.
+    func historicalQuote(base: String, target: String, date: String) async throws -> FXQuote {
+        if let cached = cache.published(base, target, day: date) { return cached }
+        let quote = try await fetchQuote(base: base, quote: target, date: date)
+        try Task.checkCancellation()
+        cache.quotes[quote.key + "@" + date] = quote
+        offline = false
+        persist()
+        return quote
     }
 
     private func fetchQuote(base: String, quote: String, date: String?) async throws -> FXQuote {

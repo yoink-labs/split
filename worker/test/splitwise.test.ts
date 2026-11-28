@@ -2,7 +2,8 @@ import { env } from 'cloudflare:test';
 import { describe, expect, it } from 'vitest';
 import { handle } from '../src/index';
 import { balances, type Entry } from '../src/ledger';
-import { csvTable, detectSplitwise, groupNameFromFile, importGroupID, importedBalances, isoDay, mainCurrency, minor, parseSplitwise, reconcile } from '../src/splitwiseCsv';
+import { saveProfile } from '../src/people';
+import { csvTable, detectSplitwise, groupNameFromFile, importGroupID, importedBalances, isoDay, mainCurrency, minor, parseSplitwise, reconcile, settledImportRow } from '../src/splitwiseCsv';
 import trip from '../../fixtures/splitwise/buenos-aires-trip_2026-11-18_export.csv?raw';
 import piso from '../../fixtures/splitwise/piso-compartido_2026-11-18_export.csv?raw';
 import wg from '../../fixtures/splitwise/wg-kasse_2026-11-18_export.csv?raw';
@@ -85,10 +86,17 @@ describe('Splitwise CSV', () => {
     await expect(parseSplitwise('Date,Title,Amount\n2026-01-01,x,1', 'other.csv')).rejects.toThrow('isn’t a Splitwise export');
     await expect(parseSplitwise('Date,Description,Category,Cost,Currency,A,B\n2026-01-01,x,General,1.00,USD,1.00,-0.50\n', 'bad.csv')).rejects.toThrow('doesn’t balance');
   });
+
+  it('labels an omitted row with its unsupported currency', async () => {
+    const extra = '2026-11-19,Other currency,General,1.00,ZZZ,1.00,-1.00,0,0\n';
+    const g = await parseSplitwise(trip + '\n' + extra, 'trip.csv');
+    expect(g.skipped).toContain('Other currency (ZZZ isn’t supported yet)');
+    expect(g.rows).toHaveLength(7);
+  });
 });
 
 describe('Splitwise import route', () => {
-  async function request(raw: string, file: string, people: { name: string; me?: boolean; memberID?: string }[], extra: Record<string, unknown> = {}) {
+  async function request(raw: string, file: string, people: { name: string; me?: boolean; memberID?: string; displayName?: string; userID?: string }[], extra: Record<string, unknown> = {}) {
     const g = await parseSplitwise(raw, file);
     return { g, body: { group: { id: await importGroupID(g.fingerprint, user), name: g.name, kind: 'trip', currency: mainCurrency(g) }, people, rows: g.rows, ...extra } };
   }
@@ -121,6 +129,112 @@ describe('Splitwise import route', () => {
     const snap = await snapshot();
     expect(snap.groups).toHaveLength(1);
     expect(snap.entries).toHaveLength(7);
+  });
+
+  it('settles imported expenses and payments in the preferred currency using fixed dated estimates', async () => {
+    const { body, g } = await request(trip.replaceAll('2026-', '2024-'), 'trip.csv', tripPeople);
+    const rows = g.rows.map((row, index) => row.currency === 'USD' ? row : {
+      ...row, exchange: { target: 'USD', rateE8: index === 0 ? 1 : 125_000 + index, date: row.day, source: 'BCRA' as const },
+    });
+    const converted = { ...body, group: { ...body.group, currency: 'USD' }, settlementCurrency: 'USD', rows };
+    await expect(call('/v1/import/splitwise', { ...converted, rows: g.rows })).rejects.toThrow('published rate');
+    const first = rows[0];
+    await expect(call('/v1/import/splitwise', {
+      ...converted, rows: [{ ...first, exchange: { ...first.exchange, date: '2024-11-13' } }, ...rows.slice(1)],
+    })).rejects.toThrow('published rate');
+    expect((await snapshot()).groups).toHaveLength(0);
+
+    const saved = await call('/v1/import/splitwise', converted);
+    expect(await saved.json()).toMatchObject({ inserted: 7 });
+    const snap = await snapshot();
+    const ids = new Map(snap.groups[0].members.map(member => [member.name, member.id]));
+    const expected = importedBalances({ rows: rows.map(settledImportRow) }).USD;
+    const actual = balances(snap.entries, 'USD');
+    for (const [name, amount] of Object.entries(expected)) expect(actual[ids.get(name)!]).toBe(amount);
+    expect(Object.values(balances(snap.entries, 'ARS'))).toEqual([]);
+    const foreign = snap.entries.find(entry => entry.title === first.title)!;
+    expect(foreign).toMatchObject({ amount: first.amount, currency: 'ARS', exchange: { target: 'USD', date: first.day, rateE8: 1 } });
+    expect(settledImportRow(first).amount).toBe(0);
+    expect(snap.entries.find(entry => entry.title === 'Maya paid Sam')?.exchange).toMatchObject({ target: 'USD' });
+
+    const retry = await call('/v1/import/splitwise', {
+      ...converted, rows: rows.map(row => row.exchange ? { ...row, exchange: { ...row.exchange, rateE8: 100_000 } } : row),
+    });
+    expect(await retry.json()).toMatchObject({ inserted: 0, duplicates: 7 });
+    expect((await snapshot()).entries.find(entry => entry.id === foreign.id)?.exchange).toEqual(foreign.exchange);
+  });
+
+  it('preserves the imported settlement currency when editing an expense in an existing group', async () => {
+    const groupID = 'existing-fx-group';
+    await call('/v1/groups', { id: groupID, name: 'Trip', kind: 'trip', currency: 'EUR', members: [{ id: 'seat-harris', userID: user, name: 'Harris' }] });
+    const { g } = await request(trip.replaceAll('2026-', '2024-'), 'trip.csv', tripPeople);
+    const row = { ...g.rows[0], exchange: { target: 'USD', rateE8: 125_000, date: '2024-11-11', source: 'BCRA' } };
+    await call('/v1/import/splitwise', { groupID, settlementCurrency: 'USD', people: tripPeople, rows: [row] });
+    const snap = await snapshot();
+    expect(snap.groups[0].currency).toBe('EUR');
+    const entry = snap.entries[0];
+    expect(entry.exchange).toEqual(row.exchange);
+    await call(`/v1/entries/${entry.id}/edit`, { entry: { ...entry, title: 'Airport taxi' }, original: entry });
+    expect((await snapshot()).entries[0]).toMatchObject({ title: 'Airport taxi', exchange: row.exchange });
+  });
+
+  it('links a Split account and prepares an email invite for the exact imported placeholder', async () => {
+    const maya = 'user-maya';
+    const sam = 'user-sam';
+    await saveProfile(env.DB, { userID: maya, name: 'Maya R', username: 'maya', email: null });
+    const people = [
+      { name: 'Harris', me: true, displayName: 'Harris K' },
+      { name: 'Maya', userID: maya },
+      { name: 'Alex' },
+      { name: 'Sam', displayName: 'Sam P' },
+    ];
+    const { body, g } = await request(trip, 'trip.csv', people);
+    const result = await (await call('/v1/import/splitwise', body)).json<{ people: { name: string; memberID: string }[] }>();
+    const mayaID = result.people.find(p => p.name === 'Maya')!.memberID;
+    const samID = result.people.find(p => p.name === 'Sam')!.memberID;
+    const linked = await snapshot(maya);
+    expect(linked.groups[0].members).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: 'Harris K', userID: user }),
+      expect.objectContaining({ id: mayaID, name: 'Maya R', userID: maya }),
+      expect.objectContaining({ id: samID, name: 'Sam P', userID: null }),
+    ]));
+    expect(balances(linked.entries, 'ARS')[mayaID]).toBe(g.totals.ARS.Maya);
+    expect(balances(linked.entries, 'USD')[samID]).toBe(g.totals.USD.Sam);
+
+    const invitePath = `/v1/groups/${body.group.id}/invites`;
+    await expect(call(invitePath, { memberID: samID, email: 'sam@example.test' }, sam)).rejects.toThrow('not a member');
+    const invite = await (await call(invitePath, { memberID: samID, email: 'sam@example.test' })).json<{ code: string }>();
+    await call('/v1/join', { token: invite.code }, sam);
+    expect((await snapshot(sam)).groups[0].members).toContainEqual(expect.objectContaining({ id: samID, userID: sam }));
+
+    const retry = await call('/v1/import/splitwise', body);
+    expect(await retry.json()).toMatchObject({ inserted: 0, duplicates: 7 });
+  });
+
+  it('associates previously imported history with an account already in the group', async () => {
+    const alex = 'user-alex';
+    await saveProfile(env.DB, { userID: alex, name: 'Alex R', username: 'alex', email: null });
+    const { body, g } = await request(trip, 'trip.csv', tripPeople);
+    await call('/v1/import/splitwise', body);
+    await call(`/v1/groups/${body.group.id}/members`, { id: 'seat-alex', name: 'Alex R', userID: alex });
+    const people = tripPeople.map(person => person.name === 'Alex' ? { ...person, userID: alex } : person);
+    const retry = await call('/v1/import/splitwise', { ...body, people });
+    expect(await retry.json()).toMatchObject({ inserted: 0, duplicates: 7 });
+    const linked = await snapshot(alex);
+    expect(linked.groups[0].members).toHaveLength(4);
+    expect(linked.entries).toHaveLength(7);
+    expect(balances(linked.entries, 'USD')['seat-alex']).toBe(g.totals.USD.Alex);
+  });
+
+  it('rejects unknown accounts and multiple source names for the same account', async () => {
+    const maya = 'user-maya';
+    const { body } = await request(trip, 'trip.csv', tripPeople);
+    const pick = (names: string[]) => tripPeople.map(person => names.includes(person.name) ? { ...person, userID: maya } : person);
+    await expect(call('/v1/import/splitwise', { ...body, people: pick(['Maya']) })).rejects.toThrow('Choose a Split user');
+    await saveProfile(env.DB, { userID: maya, name: 'Maya', username: 'maya', email: null });
+    await expect(call('/v1/import/splitwise', { ...body, people: pick(['Maya', 'Alex']) })).rejects.toThrow('same person');
+    expect((await snapshot()).groups).toHaveLength(0);
+    expect((await snapshot(maya)).groups).toHaveLength(0);
   });
 
   it('maps names onto existing members and rolls back everything on a bad row', async () => {

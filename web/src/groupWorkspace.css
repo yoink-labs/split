@@ -389,7 +389,7 @@
   padding: 0;
 }
 .history-timeline > li {
-  border-inline-start: 2px solid var(--line);
+  border-inline-start: 2px solid var(--border);
   padding: 6px 0 16px 14px;
   overflow-wrap: anywhere;
 }

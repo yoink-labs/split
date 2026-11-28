@@ -27,6 +27,9 @@ CREATE INDEX change_history_expense ON change_history(group_id,expense,id);
 CREATE INDEX change_history_member ON change_history(group_id,member,id);
 CREATE INDEX change_history_type ON change_history(group_id,type,id);
 
+CREATE TRIGGER change_history_no_replace BEFORE INSERT ON change_history
+WHEN EXISTS (SELECT 1 FROM change_history WHERE id=NEW.id)
+BEGIN SELECT RAISE(ABORT,'Change history is append-only'); END;
 CREATE TRIGGER change_history_no_update BEFORE UPDATE ON change_history
 BEGIN SELECT RAISE(ABORT,'Change history is append-only'); END;
 CREATE TRIGGER change_history_no_delete BEFORE DELETE ON change_history
@@ -54,9 +57,10 @@ FROM charged_amount_history h JOIN entries e ON e.id=h.entry_id ORDER BY h.chang
 CREATE TRIGGER history_entries_insert AFTER INSERT ON entries
 WHEN EXISTS (SELECT 1 FROM history_context)
   AND NOT EXISTS (SELECT 1 FROM settlement_requests s WHERE s.id=NEW.id)
+  AND (SELECT action FROM history_context)<>'combine'
 BEGIN
   INSERT INTO history_event(group_id,type,entity,expense,action,title,previous,current)
-  SELECT NEW.group_id, CASE WHEN json_extract(NEW.payload,'$.kind')='refund' AND json_extract(NEW.payload,'$.refundOf') IS NULL THEN 'credit' ELSE json_extract(NEW.payload,'$.kind') END, NEW.id, COALESCE(json_extract(NEW.payload,'$.refundOf'),NEW.id), CASE (SELECT action FROM history_context) WHEN 'combine' THEN 'combine' WHEN 'recurring' THEN 'recurring' ELSE 'add' END, json_extract(NEW.payload,'$.title'),
+  SELECT NEW.group_id, CASE WHEN json_extract(NEW.payload,'$.kind')='refund' AND json_extract(NEW.payload,'$.refundOf') IS NULL THEN 'credit' ELSE json_extract(NEW.payload,'$.kind') END, NEW.id, COALESCE(json_extract(NEW.payload,'$.refundOf'),NEW.id), CASE (SELECT action FROM history_context) WHEN 'recurring' THEN 'recurring' ELSE 'add' END, json_extract(NEW.payload,'$.title'),
     NULL,
     NEW.payload;
 END;
@@ -73,10 +77,14 @@ END;
 
 CREATE TRIGGER history_tombstone_insert AFTER INSERT ON deleted_entries
 WHEN EXISTS (SELECT 1 FROM history_context)
+  AND ((SELECT action FROM history_context)<>'uncombine'
+    OR NOT EXISTS (SELECT 1 FROM expense_combinations WHERE entry_id=NEW.entry_id))
 BEGIN
   INSERT INTO history_event(group_id,type,entity,expense,action,title,previous,current)
   SELECT e.group_id, CASE WHEN json_extract(e.payload,'$.kind')='refund' AND json_extract(e.payload,'$.refundOf') IS NULL THEN 'credit' ELSE json_extract(e.payload,'$.kind') END, e.id, COALESCE(json_extract(e.payload,'$.refundOf'),e.id), CASE (SELECT action FROM history_context) WHEN 'combine' THEN 'combine' WHEN 'uncombine' THEN 'undo-combine' ELSE 'delete' END, json_extract(e.payload,'$.title'),
-    e.payload,
+    CASE WHEN (SELECT action FROM history_context)='combine'
+      THEN json_set(e.payload,'$.combinedInto',(SELECT combined_id FROM active_expense_combination_sources WHERE source_id=e.id))
+      ELSE e.payload END,
     NULL
   FROM entries e WHERE e.id=NEW.entry_id;
 END;
@@ -357,7 +365,7 @@ WHEN EXISTS (SELECT 1 FROM history_context)
 BEGIN
   INSERT INTO history_event(group_id,type,entity,expense,action,title,previous,current)
   SELECT e.group_id,'expense',e.id,e.id,'combine',json_extract(e.payload,'$.title'),
-    NULL,json_object('sources',json(NEW.sources))
+    NULL,json_set(e.payload,'$.sources',json(NEW.sources))
   FROM entries e WHERE e.id=NEW.entry_id;
 END;
 
@@ -366,6 +374,6 @@ WHEN OLD.undone_at IS NULL AND NEW.undone_at IS NOT NULL AND EXISTS (SELECT 1 FR
 BEGIN
   INSERT INTO history_event(group_id,type,entity,expense,action,title,previous,current)
   SELECT e.group_id,'expense',e.id,e.id,'undo-combine',json_extract(e.payload,'$.title'),
-    json_object('sources',json(OLD.sources)),NULL
+    json_set(e.payload,'$.sources',json(OLD.sources)),NULL
   FROM entries e WHERE e.id=NEW.entry_id;
 END;

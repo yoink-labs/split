@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { Form, useLedger } from "./context";
-import { memberName, money, type Group } from "./data";
+import { memberName, memberPath, money, type Group } from "./data";
 
 type Change = { before: unknown; after: unknown };
 type Event = {
@@ -116,18 +116,26 @@ export function ChangeHistory({ group, expense, liveIDs, revision }: {
         {page.events.map((event, index) => {
           const name = event.actorName ?? (event.actor ? "Group member" : event.action === "recurring" ? "Split" : "Unknown actor");
           const title = event.title ?? (event.type === "group" ? group.name : event.type);
-          const href = event.expense
-            ? liveIDs?.has(event.expense) ? "/g/" + group.id + "/e/" + event.expense : activity + "&expense=" + event.expense
-            : event.type === "member" ? "/g/" + group.id + "?tab=members"
+          const linkedID = liveIDs?.has(event.entity) ? event.entity : event.expense;
+          const href = linkedID
+            ? liveIDs?.has(linkedID) ? "/g/" + group.id + "/e/" + linkedID : activity + "&expense=" + linkedID
+            : event.type === "member" ? group.members.some(person => person.id === event.entity)
+              ? memberPath(group, event.entity) : "/g/" + group.id + "?tab=members"
             : event.type === "receipt" ? "/g/" + group.id + "?tab=receipts" : "/g/" + group.id + "?tab=settings";
-          const restorable = !expense && params.has("expense") && index === 0 && event.type === "expense" &&
+          const lifecycle = page.events.findIndex(e => e.type === "expense" && e.entity === params.get("expense") &&
+            ["add", "delete", "restore", "combine", "undo-combine"].includes(e.action));
+          const restorable = !expense && index === lifecycle && event.type === "expense" &&
             event.action === "delete" && event.actor === user && !liveIDs?.has(event.entity);
+          const amountEdit = expense && event.action === "edit" && event.changes.amount?.before !== null && event.changes.amount?.before !== undefined;
+          const fields = Object.entries(event.changes).filter(([key]) => !amountEdit || key !== "amount");
           return <li key={event.id}>
-            <p><strong>{name}</strong> {actions[event.action] ?? event.action} {expense ? title : <Link to={href}>{title}</Link>}.</p>
+            <p><strong>{name}</strong> {amountEdit
+              ? <>changed the amount from {format("amount", "before", event, group)} to {format("amount", "after", event, group)}.</>
+              : <>{actions[event.action] ?? event.action} {expense ? title : <Link to={href}>{title}</Link>}.</>}</p>
             <time dateTime={event.timestamp}>{new Date(event.timestamp).toLocaleString()}</time>
             {event.reason && <p className="history-reason">Reason: {event.reason}</p>}
-            {Object.keys(event.changes).length > 0 && <dl>
-              {Object.entries(event.changes).map(([field, change]) =>
+            {fields.length > 0 && <dl>
+              {fields.map(([field, change]) =>
                 <div key={field}><dt>{labels[field] ?? field.replace(/[A-Z]/g, letter => " " + letter.toLowerCase())}</dt>
                   <dd>{change.before !== null && <>{format(field, "before", event, group)} <span aria-label="changed to">→</span> </>}
                     {format(field, "after", event, group)}</dd></div>,

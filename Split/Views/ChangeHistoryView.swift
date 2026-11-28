@@ -98,8 +98,16 @@ struct ChangeHistoryView: View {
     private func row(_ event: ChangeHistoryEvent) -> some View {
         let name = event.actorName ?? (event.actor == nil ? (event.action == "recurring" ? "Split" : "Unknown actor") : "Group member")
         let title = event.title ?? (event.type == "group" ? group.name : event.type)
+        let amountEdit = expense != nil && event.action == "edit" && event.changes["amount"]?.before != nil
+        let fields = event.changes.keys.filter { !amountEdit || $0 != "amount" }.sorted()
         return VStack(alignment: .leading, spacing: 5) {
-            Text("\(name) \(event.verb) \(title).").font(.subheadline.weight(.semibold))
+            if amountEdit, let change = event.changes["amount"] {
+                let old = display(change.before, field: "amount", event: event, after: false)
+                let new = display(change.after, field: "amount", event: event, after: true)
+                Text("\(name) changed the amount from \(old) to \(new).").font(.subheadline.weight(.semibold))
+            } else {
+                Text("\(name) \(event.verb) \(title).").font(.subheadline.weight(.semibold))
+            }
             if let timestamp = try? Date(event.timestamp, strategy: Date.ISO8601FormatStyle(includingFractionalSeconds: true)) {
                 Text(timestamp, format: .dateTime.month().day().year().hour().minute())
                     .font(.caption).foregroundStyle(.secondary)
@@ -107,7 +115,7 @@ struct ChangeHistoryView: View {
             if let reason = event.reason {
                 Text("Reason: \(reason)").font(.subheadline)
             }
-            ForEach(event.changes.keys.sorted(), id: \.self) { field in
+            ForEach(fields, id: \.self) { field in
                 if let change = event.changes[field] {
                     let before = display(change.before, field: field, event: event, after: false)
                     let after = display(change.after, field: field, event: event, after: true)

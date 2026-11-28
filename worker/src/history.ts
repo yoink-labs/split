@@ -85,7 +85,9 @@ export async function readHistory(db: D1Database, group: string, user: string, q
     const value = query.get(key);
     if (value === null) continue;
     if (key === 'type' ? !['expense','refund','credit','settlement','receipt','member','group'].includes(value) : !validID(value)) throw new InputError('Invalid history filter.');
-    where.push(key + '=?');
+    where.push(key === 'type' && value === 'receipt'
+      ? "(type=? OR (type='expense' AND json_extract(previous,'$.bill') IS NOT json_extract(current,'$.bill')))"
+      : key + '=?');
     args.push(value);
   }
   const from = optionalDay(query.get('from'), 'start date');
@@ -100,14 +102,17 @@ export async function readHistory(db: D1Database, group: string, user: string, q
     args.push(Number(cursor));
   }
   const active = 'SELECT 1 FROM members WHERE group_id=? AND user_id=? AND removed_at IS NULL';
+  const pageSize = 20;
   const [seat, records] = await db.batch<HistoryRow>([
     db.prepare(active).bind(group,user),
-    db.prepare(`SELECT id,actor,member,actor_name AS actorName,timestamp,type,entity,expense,action,title,reason,previous,current
-      FROM change_history WHERE ${where.join(' AND ')} AND EXISTS (${active}) ORDER BY id DESC LIMIT 51`)
+    db.prepare(`SELECT id,actor,COALESCE(member,(SELECT id FROM members WHERE group_id=change_history.group_id AND user_id=actor)) AS member,
+      COALESCE(actor_name,(SELECT name FROM members WHERE group_id=change_history.group_id AND user_id=actor)) AS actorName,
+      timestamp,type,entity,expense,action,title,reason,previous,current
+      FROM change_history WHERE ${where.join(' AND ')} AND EXISTS (${active}) ORDER BY id DESC LIMIT ${pageSize + 1}`)
       .bind(...args, group, user),
   ]);
   if (!seat.results.length) throw new HTTPError(403, 'You are not an active member of this group.');
-  const events = records.results.slice(0, 50).map(({ previous, current, ...event }) => {
+  const events = records.results.slice(0, pageSize).map(({ previous, current, ...event }) => {
     const before = fieldsOf(previous);
     const after = fieldsOf(current);
     const fields = [...new Set([...Object.keys(before), ...Object.keys(after)])];
@@ -128,5 +133,5 @@ export async function readHistory(db: D1Database, group: string, user: string, q
       .filter(key => JSON.stringify(before[key] ?? null) !== JSON.stringify(after[key] ?? null))
       .map(key => [key, { before: before[key] ?? null, after: after[key] ?? null }])) };
   });
-  return json({ events, next: records.results.length > 50 ? events.at(-1)!.id : null });
+  return json({ events, next: records.results.length > pageSize ? events.at(-1)!.id : null });
 }

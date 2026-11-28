@@ -1,3 +1,4 @@
+import { normalizeName } from './names';
 import { HTTPError, body, json, optionalDay } from './http';
 import { requireActiveMember } from './memberEmail';
 import { currencies, InputError } from './ledger';
@@ -283,7 +284,7 @@ export async function socialRoute(request:Request,env:Env,userID:string):Promise
     const [,groupID,id] = rename;
     await requireActiveMember(env,groupID,userID);
     const b = await body(request);
-    const name = typeof b.name === 'string' ? b.name.trim() : '';
+    const name = typeof b.name === 'string' ? normalizeName(b.name) : '';
     if (!name || name.length > 60) throw new InputError('Enter a name of up to 60 characters.');
     const result = await env.DB.prepare(`UPDATE members SET name=? WHERE id=? AND group_id=?
       AND removed_at IS NULL AND (user_id IS NULL OR user_id=?)

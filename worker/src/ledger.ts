@@ -124,4 +124,11 @@ export function balances(entries: Entry[], currency: string, { includeHandled = 
   }
   return result;
 }
+/** The signed contribution of one entry to a member’s outstanding balance. */
+export function balanceLine(entry: Entry, memberID: string) {
+  const settled = settlementEntry(entry);
+  const paid = entryPayers(settled).filter(p => p.memberID === memberID).reduce((sum, p) => sum + p.amount, 0);
+  const share = settled.splits.filter(s => s.memberID === memberID).reduce((sum, s) => sum + s.amount, 0);
+  return { currency: settled.currency, amount: entry.handled ? 0 : entrySign(entry) * (paid - share) };
+}
 export { transferPlan as simplify } from './settle';

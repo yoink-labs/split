@@ -1106,6 +1106,24 @@ enum Fixtures {
             LedgerEntry(id:id,groupID:group,title:title,amount:amount,currency:currency,paidBy:paidBy,splits:splits.map{Portion(memberID:$0.0,amount:$0.1)},category:category,createdAt:day,notes:notes)
         }
 
+        let airbnbGroupID = "demo-airbnb"
+        let amine = "airbnb-amine", alex = "airbnb-alex", guest = "airbnb-maya"
+        let airbnbGroup = ExpenseGroup(id: airbnbGroupID, name: "Airbnb Weekend", kind: "trip", currency: "USD", members: [
+            Person(id: amine, groupID: airbnbGroupID, name: "Amine"),
+            Person(id: alex, groupID: airbnbGroupID, userID: "demo-user", name: "Alex"),
+            Person(id: guest, groupID: airbnbGroupID, name: "Maya")
+        ])
+        let airbnb = entry("demo-airbnb-stay", airbnbGroupID, "Airbnb", 90000, "USD", amine,
+                           [amine, alex, guest].map { ($0, 30000) }, category: "Lodging", day: "2026-11-20T12:00:00Z")
+        let repayments = [alex, guest].map { member in
+            LedgerEntry(id: "demo-airbnb-payment-" + member, groupID: airbnbGroupID, title: "Settlement", amount: 30000,
+                        currency: "USD", paidBy: member, splits: [Portion(memberID: amine, amount: 30000)],
+                        kind: "settlement", splitMode: .exact, createdAt: "2026-11-21T12:00:00Z")
+        }
+        let refund = Refunds.make(id: "demo-airbnb-refund", original: airbnb, title: "Refund: Airbnb",
+                                  credits: [amine, alex, guest].map { Portion(memberID: $0, amount: 3000) },
+                                  receiver: amine, createdAt: "2026-11-22T12:00:00Z")
+
         var e: [LedgerEntry] = []
         e.append(entry("demo-dinner",trip,"Guerrín dinner (pizza, empanadas, beer)",20845000,"ARS",people[3].id,[("demo-alex",5200000),("demo-maya",4200000),("demo-sam",5200000),("demo-harris",6245000)],category:"Dining",notes:"Split the provoleta three ways. Harris covered the tip in cash."))
         e.append(entry("demo-uber",trip,"Uber EZE to Palermo",7592500,"ARS",people[3].id,[("demo-alex",1898125),("demo-maya",1898125),("demo-sam",1898125),("demo-harris",1898125)],category:"Transport",day:"2026-11-17T09:10:00Z"))
@@ -1156,7 +1174,7 @@ enum Fixtures {
             ride.receiptIDs = ["demo-ride-photo-\(index)"]
             e.append(ride)
         }
-        return Snapshot(groups:[group,house,spainGroup,samGroup,mayaGroup],entries:e,invitationCount:3,discoverable:true)
+        return Snapshot(groups:[group,house,spainGroup,samGroup,mayaGroup,airbnbGroup],entries:e + [airbnb] + repayments + [refund],invitationCount:3,discoverable:true)
     }
 
     /// Two demo receipts waiting in the Buenos Aires inbox, with rendered photos.

@@ -101,26 +101,33 @@
 .analytics-dates input { min-height: 32px; }
 .analytics-filter-end { margin-inline-start: auto; min-width: 170px; }
 
+.analytics { container-type: inline-size; }
 .analytics-stats {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px; /* the border colour shows through as dividers, however the cells wrap */
   margin: 0;
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  background: var(--surface);
+  background: var(--border);
   overflow: hidden;
 }
-.analytics-stats > div { padding: 13px 16px; min-width: 0; }
-.analytics-stats > div + div { border-inline-start: 1px solid var(--border); }
+.analytics-stats > div { padding: 13px 16px; min-width: 0; background: var(--surface); container-type: inline-size; }
 .analytics-stats dt { font-size: 12px; color: var(--muted); font-weight: 550; }
 .analytics-stats dd {
   margin: 4px 0 0;
-  font-size: 21px;
+  /* Scale with the cell so a figure fits on one line; wrap only as a last resort, never truncate. */
+  font-size: clamp(15px, 10cqi, 21px);
   font-weight: 750;
   letter-spacing: -.025em;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+@container (max-width: 820px) {
+  .analytics-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@container (max-width: 260px) {
+  .analytics-stats { grid-template-columns: minmax(0, 1fr); }
 }
 .analytics-stats dd small { font-size: 12px; font-weight: 600; }
 .analytics-note { font-size: 12.5px; }
@@ -299,10 +306,6 @@
 .analytics-hint { font-size: 12px; }
 
 @media (max-width: 720px) {
-  .analytics-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .analytics-stats > div:nth-child(3) { border-inline-start: 0; }
-  .analytics-stats > div:nth-child(n + 3) { border-top: 1px solid var(--border); }
-  .analytics-stats dd { font-size: 18px; }
   .analytics-filters { position: static; }
   .analytics-filter-end { margin-inline-start: 0; flex: 1 1 100%; }
   .analytics-dates { flex: 1 1 100%; }

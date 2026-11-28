@@ -4,6 +4,43 @@ import XCTest
 
 final class GroupSummaryPDFTests: XCTestCase {
     @MainActor
+    func testCustomReportSeparatesCurrenciesAndExcludesPaymentsFromSpending() throws {
+        let group = ExpenseGroup(id: "trip", name: "Group trip", kind: "trip", currency: "USD", members: [
+            Person(id: "one", groupID: "trip", name: "Alex"),
+            Person(id: "two", groupID: "trip", name: "Sam")
+        ])
+        let dinner = LedgerEntry(
+            groupID: group.id, title: "Dinner receipt", amount: 1011, currency: "USD", paidBy: "one",
+            splits: [Portion(memberID: "one", amount: 505), Portion(memberID: "two", amount: 506)],
+            category: "Dining", createdAt: "2026-08-01T12:00:00Z",
+            payers: [Payer(memberID: "one", amount: 711), Payer(memberID: "two", amount: 300)]
+        )
+        let lunch = LedgerEntry(
+            groupID: group.id, title: "Lunch receipt", amount: 101, currency: "EUR", paidBy: "two",
+            splits: [Portion(memberID: "one", amount: 101)], category: "Dining", createdAt: "2026-09-01T12:00:00Z"
+        )
+        let payment = LedgerEntry(
+            groupID: group.id, title: "Payback", amount: 211, currency: "USD", paidBy: "two",
+            splits: [Portion(memberID: "one", amount: 211)], category: "Dining", kind: "settlement"
+        )
+        let sections = GroupSummaryPDF.Sections(totals: false, balances: false, history: false,
+                                                categories: true, months: true, people: true)
+        let data = try GroupSummaryPDF.render(group: group, entries: [dinner, lunch, payment],
+                                              fx: FXStore(fileURL: nil), sections: sections)
+        let text = try XCTUnwrap(PDFDocument(data: data)?.string)
+        for label in ["Spending by category", "Spending by month", "Spending by person", "Dining", "2026-08", "2026-09"] {
+            XCTAssertTrue(text.contains(label))
+        }
+        for (amount, currency) in [(1011, "USD"), (101, "EUR"), (711, "USD"), (300, "USD"), (505, "USD"), (506, "USD")] {
+            XCTAssertTrue(text.contains(Money.text(Int64(amount), currency)))
+        }
+        for omitted in ["Total expenses", "Outstanding balances", "Expense and payment history", dinner.title,
+                        payment.title, Money.text(211, "USD")] {
+            XCTAssertFalse(text.contains(omitted))
+        }
+    }
+
+    @MainActor
     func testPDFKeepsOriginalAmountsAndAllocatedSharesAcrossPages() throws {
         let suite = UUID().uuidString
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))

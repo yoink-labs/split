@@ -11,40 +11,6 @@
   min-width: 0;
 }
 
-.ledger-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 10px;
-}
-
-.ledger-switch {
-  display: inline-flex;
-  padding: 3px;
-  gap: 2px;
-  border-radius: var(--radius-md);
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-}
-
-.ledger-switch button {
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--muted);
-  font-weight: 650;
-  padding: 7px 12px;
-  cursor: pointer;
-}
-
-.ledger-switch button[aria-pressed="true"] {
-  color: var(--ink);
-  border-color: var(--border);
-  background: var(--surface);
-  box-shadow: var(--shadow-sm);
-}
-
 .ledger-statement {
   container-type: inline-size;
   display: grid;

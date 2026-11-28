@@ -9,19 +9,34 @@ enum GroupSummaryPDF {
         case receipts = "With itemized receipts"
     }
 
+    struct Sections {
+        var totals = true
+        var balances = true
+        var history = true
+        var categories = false
+        var months = false
+        var people = false
+
+        var isEmpty: Bool { !(totals || balances || history || categories || months || people) }
+    }
+
     @MainActor
-    static func render(group: ExpenseGroup, entries: [LedgerEntry], fx: FXStore, layout: Layout = .receipts) throws -> Data {
-        let writer = try PDFWriter(title: "\(group.name) – \(layout.rawValue)")
+    static func render(group: ExpenseGroup, entries: [LedgerEntry], fx: FXStore, layout: Layout = .receipts,
+                       sections: Sections = .init()) throws -> Data {
+        guard !sections.isEmpty else { throw LedgerError.invalid("Choose at least one report section.") }
+        let report = sections.history ? layout.rawValue : "Group report"
+        let writer = try PDFWriter(title: "\(group.name) – \(report)")
         let home = fx.home
         let rows = entries.sorted { ($0.createdAt, $0.id) < ($1.createdAt, $1.id) }
-            .map { (recorded: $0, preferred: fx.homeEntry($0)) }
+            .map { (recorded: $0, preferred: sections.totals || sections.history ? fx.homeEntry($0) : nil) }
         let expenses = rows.filter { !$0.recorded.isSettlement }
-        var showsConversion = rows.contains { $0.recorded.currency != home && $0.preferred != nil }
+        var showsConversion = sections.history && rows.contains { $0.recorded.currency != home && $0.preferred != nil }
         let members = Dictionary(group.members.map { ($0.id, $0.name) }, uniquingKeysWith: { name, _ in name })
         func name(_ id: String) -> String { members[id] ?? "Former member" }
 
         writer.text(group.name, .title)
-        writer.text("\(layout.rawValue)  /  Preferred currency: \(home)", .heading)
+        writer.text(sections.totals || sections.balances || sections.history
+                    ? "\(report)  /  Preferred currency: \(home)" : report, .heading)
         let kind = switch group.kind { case "trip": "Trip"; case "home": "Household"; case "friend": "Friends"; default: "Group" }
         let dates = [group.startDate, group.endDate].compactMap { $0 }.map(displayDay)
         writer.text(([kind] + dates + ["Exported \(Date.now.formatted(date: .abbreviated, time: .omitted))"]).joined(separator: "  /  "), .detail)
@@ -30,25 +45,57 @@ enum GroupSummaryPDF {
             writer.text(description, .body)
         }
 
-        writer.section("Total expenses")
-        if expenses.isEmpty {
-            writer.text("No expenses recorded.", .body)
-        } else {
-            let preferred = expenses.reduce(Int64?(0)) { total, row in
-                guard let total, let amount = row.preferred?.amount else { return nil }
-                let (sum, overflow) = total.addingReportingOverflow(amount)
-                return overflow ? nil : sum
-            }
-            let converted = expenses.contains { $0.recorded.currency != home }
-            writer.row("Preferred currency", amount: preferred.map { money($0, home, approximate: converted) } ?? "Unavailable",
-                       detail: preferred == nil ? "See the recorded totals below." : nil)
-            let byCurrency = Dictionary(grouping: expenses.map(\.recorded), by: \.currency)
-            for currency in byCurrency.keys.sorted() {
-                let total = byCurrency[currency, default: []].reduce(0) { $0 + $1.amount }
-                writer.row("Recorded in \(currency)", amount: Money.text(total, currency))
+        if sections.totals {
+            writer.section("Total expenses")
+            if expenses.isEmpty {
+                writer.text("No expenses recorded.", .body)
+            } else {
+                let preferred = expenses.reduce(Int64?(0)) { total, row in
+                    guard let total, let amount = row.preferred?.amount else { return nil }
+                    let (sum, overflow) = total.addingReportingOverflow(amount)
+                    return overflow ? nil : sum
+                }
+                let converted = expenses.contains { $0.recorded.currency != home }
+                showsConversion = showsConversion || (converted && preferred != nil)
+                writer.row("Preferred currency", amount: preferred.map { money($0, home, approximate: converted) } ?? "Unavailable",
+                           detail: preferred == nil ? "See the recorded totals below." : nil)
+                let byCurrency = Dictionary(grouping: expenses.map(\.recorded), by: \.currency)
+                for currency in byCurrency.keys.sorted() {
+                    let total = byCurrency[currency, default: []].reduce(0) { $0 + $1.amount }
+                    writer.row("Recorded in \(currency)", amount: Money.text(total, currency))
+                }
             }
         }
 
+        if sections.balances, renderBalances(group: group, entries: entries, fx: fx, writer: writer, name: name) {
+            showsConversion = true
+        }
+
+        let recordedExpenses = expenses.map(\.recorded)
+        if sections.categories {
+            renderSpending("Spending by category", entries: recordedExpenses, writer: writer) {
+                CategoryMeta.named($0.category).name
+            }
+        }
+        if sections.months {
+            renderSpending("Spending by month", entries: recordedExpenses, writer: writer) {
+                String($0.day.prefix(7))
+            }
+        }
+        if sections.people {
+            renderPeople(entries: recordedExpenses, writer: writer, name: name)
+        }
+        guard sections.history else { return writer.finish(showRateNote: showsConversion) }
+
+        renderHistory(rows, layout: layout, home: home, writer: writer, name: name)
+        return writer.finish(showRateNote: showsConversion)
+    }
+
+    @MainActor
+    private static func renderBalances(group: ExpenseGroup, entries: [LedgerEntry], fx: FXStore,
+                                       writer: PDFWriter, name: (String) -> String) -> Bool {
+        let home = fx.home
+        var showsConversion = false
         writer.section("Outstanding balances")
         var balances: [String: [String: Int64]] = [:]
         var transfers: [Transfer] = []
@@ -92,6 +139,54 @@ enum GroupSummaryPDF {
             }
         }
 
+        return showsConversion
+    }
+
+    private static func renderSpending(_ title: String, entries: [LedgerEntry], writer: PDFWriter,
+                                       key: (LedgerEntry) -> String) {
+        writer.section(title)
+        guard !entries.isEmpty else {
+            writer.text("No expenses recorded.", .body)
+            return
+        }
+        let groups = Dictionary(grouping: entries, by: key)
+        for label in groups.keys.sorted() {
+            let byCurrency = Dictionary(grouping: groups[label, default: []], by: \.currency)
+            for currency in byCurrency.keys.sorted() {
+                let total = byCurrency[currency, default: []].reduce(Int64(0)) { $0 + $1.amount }
+                writer.row(label, amount: Money.text(total, currency))
+            }
+        }
+    }
+
+    private static func renderPeople(entries: [LedgerEntry], writer: PDFWriter, name: (String) -> String) {
+        writer.section("Spending by person")
+        guard !entries.isEmpty else {
+            writer.text("No expenses recorded.", .body)
+            return
+        }
+        var people: [String: [String: (paid: Int64, share: Int64)]] = [:]
+        for entry in entries {
+            for payer in entry.allPayers {
+                people[payer.memberID, default: [:]][entry.currency, default: (0, 0)].paid += payer.amount
+            }
+            for portion in entry.splits {
+                people[portion.memberID, default: [:]][entry.currency, default: (0, 0)].share += portion.amount
+            }
+        }
+        writer.draw(writer.tableRow("Person", "Paid", "Share", style: .detail))
+        writer.rule()
+        for id in people.keys.sorted(by: { (name($0), $0) < (name($1), $1) }) {
+            guard let amounts = people[id] else { continue }
+            for currency in amounts.keys.sorted() {
+                guard let amount = amounts[currency] else { continue }
+                writer.draw(writer.tableRow(name(id), Money.text(amount.paid, currency), Money.text(amount.share, currency)))
+            }
+        }
+    }
+
+    private static func renderHistory(_ rows: [(recorded: LedgerEntry, preferred: LedgerEntry?)], layout: Layout,
+                                      home: String, writer: PDFWriter, name: (String) -> String) {
         if layout == .summary, !rows.isEmpty {
             writer.section("Expense and payment history")
             for (entry, projected) in rows {
@@ -101,7 +196,7 @@ enum GroupSummaryPDF {
                 writer.row("\(displayDay(entry.day))  /  \(entry.title)\(status)", amount: converted ?? original,
                            detail: entry.currency != home && converted != nil ? "Recorded \(original)" : nil)
             }
-            return writer.finish(showRateNote: showsConversion)
+            return
         }
         if rows.isEmpty {
             writer.section("Expense and payment history")
@@ -182,7 +277,6 @@ enum GroupSummaryPDF {
             writer.draw(notes)
             writer.rule()
         }
-        return writer.finish(showRateNote: showsConversion)
     }
 
     private static func displayDay(_ day: String) -> String {

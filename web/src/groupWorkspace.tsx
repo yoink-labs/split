@@ -32,11 +32,11 @@ import { transferID } from "./moneyFlowLayout";
 import { ReceiptsHub } from "./receiptsHub";
 import { Avatar, AvatarStack, CategoryIcon } from "./ui";
 
-import { GroupLedger, type LedgerView } from "./groupLedger";
+import { GroupLedger } from "./groupLedger";
 import { GroupSettings } from "./groupSettings";
 import "./groupWorkspace.css";
 
-const tabs = ["overview", "ledger", "receipts", "settle", "settings"] as const;
+const tabs = ["overview", "ledger", "transactions", "receipts", "settle", "settings"] as const;
 type Tab = typeof tabs[number];
 
 function ExpenseDrawer({
@@ -450,10 +450,10 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
   const [query, setQuery] = useSearchParams();
 
   const selectedTab = query.get("tab") ?? "";
-  const tab = expenseID ? "ledger" : selectedTab === "people" || selectedTab === "rates"
+  const legacyTransactions = selectedTab === "ledger"
+    && (query.get("view") === "transactions" || (!query.has("view") && query.has("cat")));
+  const tab = expenseID || legacyTransactions ? "transactions" : selectedTab === "people" || selectedTab === "rates"
     ? "settings" : tabs.find((item) => item === selectedTab) ?? "overview";
-  const ledgerView: LedgerView = expenseID || query.get("view") === "transactions" || (!query.has("view") && query.has("cat"))
-    ? "transactions" : "summary";
   const homeMoney = useHomeMoney();
 
   const [inspectID, setInspectID] = useState<string | null>(null);
@@ -506,7 +506,7 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
     else setQuery(params, { replace: true });
   }
 
-  if (expenseID && !inspected) return <p>Expense unavailable. <Link to={`/g/${g.id}?tab=ledger`}>Return to the ledger</Link></p>;
+  if (expenseID && !inspected) return <p>Expense unavailable. <Link to={`/g/${g.id}?tab=transactions`}>Return to transactions</Link></p>;
 
   function exportCSV() {
     const csv = buildGroupCSV(g, entries);
@@ -544,8 +544,8 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
           <button type="button" className="btn btn-sm" onClick={exportCSV}>
             Export CSV
           </button>
-          <Link className="btn btn-sm" to={`/g/${g.id}/summary`} title="Printable summary you can save as PDF">
-            Summary PDF
+          <Link className="btn btn-sm" to={`/g/${g.id}/summary`}>
+            Export PDF
           </Link>
           <button type="button" className="btn btn-sm" onClick={() => setTab("settle")}>
             Settle up
@@ -563,7 +563,10 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
             Overview
           </button>
           <button className="ws-tab" role="tab" aria-selected={tab === "ledger"} onClick={() => setTab("ledger")}>
-            Ledger <span className="ws-tab-badge">{entries.length}</span>
+            Ledger
+          </button>
+          <button className="ws-tab" role="tab" aria-selected={tab === "transactions"} onClick={() => setTab("transactions")}>
+            Transactions <span className="ws-tab-badge">{entries.length}</span>
           </button>
           <button className="ws-tab" role="tab" aria-selected={tab === "receipts"} onClick={() => setTab("receipts")}>
             Receipts
@@ -662,12 +665,12 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
         </div>
       )}
 
-      {tab === "ledger" && (
+      {(tab === "ledger" || tab === "transactions") && (
         <GroupLedger
           g={g} entries={entries} memberID={me?.id}
-          view={ledgerView}
+          view={tab === "ledger" ? "summary" : "transactions"}
           category={query.get("cat") ?? ""}
-          onView={(view, cat) => setTab("ledger", { view, ...(cat ? { cat } : {}) })}
+          onSelectCategory={(cat) => setTab("transactions", cat ? { cat } : undefined)}
           inspectedID={inspected?.id}
           onInspect={setInspectID}
         />
@@ -798,7 +801,7 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
           entry={inspected}
           onClose={() => {
             setInspectID(null);
-            if (expenseID) setTab("ledger", { view: "transactions" });
+            if (expenseID) setTab("transactions");
           }}
           onOpenReceipt={(id) => {
             setInspectID(null);

@@ -14,7 +14,6 @@ struct GroupTools: View {
     var group: ExpenseGroup
     @EnvironmentObject var store: ExpenseStore
     @EnvironmentObject var session: SessionStore
-    @EnvironmentObject private var fx: FXStore
     @Environment(\.dismiss) var dismiss
     @State private var name = ""
     @State private var currency = ""
@@ -174,24 +173,13 @@ struct GroupTools: View {
                 }
 
                 Section {
-                    Menu {
-                        ForEach(GroupSummaryPDF.Layout.allCases, id: \.self) { layout in
-                            Button(layout.rawValue) {
-                                run {
-                                    let group = current
-                                    let data = try GroupSummaryPDF.render(group: group, entries: entries, fx: fx, layout: layout)
-                                    export = (LedgerExportFile(data: data), .pdf, "\(group.name) – \(layout.rawValue)")
-                                    exporting = true
-                                }
-                            }
-                        }
+                    NavigationLink {
+                        GroupPDFExportView(groupID: current.id)
                     } label: {
                         Label("Export PDF", systemImage: "doc.richtext")
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .contentShape(Rectangle())
                     }
                 } footer: {
-                    Text("Choose a balance summary, a full expense breakdown, or a report with itemized receipts.")
+                    Text("Choose which sections and spending breakdowns to include.")
                 }
 
                 Section {

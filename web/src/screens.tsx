@@ -1,3 +1,4 @@
+import { DiscoverySetting } from "./people";
 import { PaymentEditor, PaymentOptions, personPaymentMethods } from "./paymentMethods";
 import { PendingPayments } from "./settlements";
 import { useEffect, useState } from "react";
@@ -694,6 +695,8 @@ export function Account() {
         <PaymentEditor initial={data.paymentMethods ?? []}
           save={(methods) => save("/v1/profile/payment-methods", { methods })} />
       </div>
+
+      <DiscoverySetting />
 
       <AppearanceSettings />
 

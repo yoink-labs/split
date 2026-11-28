@@ -16,7 +16,9 @@ import {
   itemSplit,
   MAX_RECEIPTS,
   type ActiveInvite,
+  type DirectoryProfile,
   type Expense,
+  type Invitation,
   type ExpenseComment,
   type Group,
   type InboxReceipt,
@@ -38,6 +40,7 @@ import {
   NewGroup,
 } from "./screens";
 import { AppShell } from "./shell";
+import { InvitationsScreen, PeopleScreen, PersonScreen } from "./people";
 import { SplitwiseImport } from "./splitwise";
 import { importGroupID, type ImportRow } from "../../worker/src/splitwiseCsv";
 import "./style.css";
@@ -55,6 +58,9 @@ function RoutesBody() {
         <Route path="/join" element={<Join />} />
         <Route path="/invite/:code" element={<Join />} />
         <Route path="/you" element={<Account />} />
+        <Route path="/people" element={<PeopleScreen />} />
+        <Route path="/people/:uid" element={<PersonScreen />} />
+        <Route path="/invitations" element={<InvitationsScreen />} />
         <Route path="/ai" element={<LocalAIScreen />} />
         <Route path="/import/splitwise" element={<SplitwiseImport />} />
         <Route path="/convert" element={<ConverterScreen />} />
@@ -88,6 +94,7 @@ function DemoLedger({ onExit }: { onExit: () => void }) {
   const commentsRef = useRef<Record<string, ExpenseComment[]>>(initial.comments);
   const claimEmails = useRef<Record<string, Record<string, string>>>({});
   const invitesRef = useRef<Record<string, ActiveInvite[]>>(initial.invites);
+  const inboxRef = useRef<Invitation[]>(initial.invitations);
   const photosRef = useRef<Record<string, Blob>>(initial.photos);
   const inboxRef = useRef<InboxReceipt[]>(initial.inbox);
   const connections = useRef<Connection[]>([{
@@ -417,16 +424,63 @@ function DemoLedger({ onExit }: { onExit: () => void }) {
         return { ok: true } as T;
       }
 
-      // Add member
+      // People search mirrors the Worker: full email or a 3+ letter name prefix, names and avatars only.
       if (path === "/v1/people/search" && body) {
         const query = (body as { query: string }).query.trim().toLowerCase();
-        const matches = new Map(
-          data.groups.flatMap((g) => g.members)
-            .filter((m) => m.userID && m.userID !== DEMO_USER && m.name.toLowerCase().includes(query))
-            .map((m) => [m.userID, { userID: m.userID, name: m.name }]),
-        );
-        return [...matches.values()] as T;
+        if (query.includes("@")) {
+          if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(query)) throw new Error("Enter a full email address, like name@example.com.");
+          return initial.directory.filter((person) => query === person.name.split(" ")[0].toLowerCase() + "@example.com") as T;
+        }
+        if (query.length < 3) throw new Error("Enter at least 3 letters of a name.");
+        return initial.directory.filter((person) => person.name.toLowerCase().split(" ").some((word) => word.startsWith(query))
+          || person.name.toLowerCase().startsWith(query)).slice(0, 10) as T;
       }
+      const personMatch = path.match(/^\/v1\/people\/([\w-]+)$/);
+      if (personMatch && body === undefined) {
+        const person = initial.directory.find((item) => item.userID === personMatch[1]);
+        if (!person) throw new Error("Person not found.");
+        const sharedGroups = data.groups.filter((group) => group.members.some((member) => member.userID === person.userID))
+          .map((group) => ({ id: group.id, name: group.name }));
+        return { ...person, sharedGroups } as DirectoryProfile as T;
+      }
+      const directInvite = path.match(/^\/v1\/groups\/([\w-]+)\/invites\/direct$/);
+      if (directInvite && body) {
+        const { userID } = body as { userID: string };
+        const person = initial.directory.find((item) => item.userID === userID);
+        const list = invitesRef.current[directInvite[1]] ?? [];
+        const id = Array.from(crypto.getRandomValues(new Uint8Array(32)), (b) => b.toString(16).padStart(2, "0")).join("");
+        invitesRef.current[directInvite[1]] = [
+          { id, kind: "person", memberID: null, memberName: null, recipientName: person?.name ?? "Split user", expiresAt: Date.now() + 14 * 86_400_000 },
+          ...list,
+        ];
+        return { id } as T;
+      }
+      if (path === "/v1/invitations" && body === undefined) return { invitations: inboxRef.current } as T;
+      const answer = path.match(/^\/v1\/invitations\/([a-f0-9]{64})\/(accept|decline)$/);
+      if (answer) {
+        const invite = inboxRef.current.find((item) => item.id === answer[1]);
+        if (!invite) throw new Error("Invitation not found.");
+        inboxRef.current = inboxRef.current.filter((item) => item.id !== invite.id);
+        setData((prev) => ({
+          ...prev,
+          invitationCount: inboxRef.current.length,
+          groups: answer[2] === "decline" ? prev.groups : [{
+            id: invite.groupID, name: invite.groupName, kind: invite.groupKind, currency: "EUR", simplify: true,
+            members: [
+              { id: invite.groupID + "-me", name: "Harris", userID: DEMO_USER, avatarURL: "preset:cobalt" },
+              { id: invite.groupID + "-host", name: invite.inviterName ?? "Organizer", userID: "user-host", avatarURL: "preset:rose" },
+            ],
+          }, ...prev.groups],
+        }));
+        return { ok: true, groupID: invite.groupID } as T;
+      }
+      if (path === "/v1/profile/discoverable" && body) {
+        const { discoverable } = body as { discoverable: boolean };
+        setData((prev) => ({ ...prev, discoverable }));
+        return { discoverable } as T;
+      }
+
+      // Add member
       const addMem = path.match(/^\/v1\/groups\/([\w-]+)\/members$/);
       if (addMem && body === undefined) {
         const group = data.groups.find((item) => item.id === addMem[1]);

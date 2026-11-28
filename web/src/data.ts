@@ -73,6 +73,33 @@ export interface Snapshot {
   entries: Expense[];
   settlementRequests?: Expense[];
   paymentMethods?: PaymentMethod[];
+  /** Pending invitations to groups this account has not joined yet. */
+  invitationCount?: number;
+  /** Whether other people can find this account in people search. Defaults to true. */
+  discoverable?: boolean;
+}
+
+/** A people search result. The Worker never returns contact details. */
+export interface DirectoryPerson {
+  userID: string;
+  name: string;
+  avatarURL?: string;
+}
+
+export interface DirectoryProfile extends DirectoryPerson {
+  sharedGroups: { id: string; name: string }[];
+}
+
+export interface Invitation {
+  id: string;
+  kind: "email" | "direct";
+  groupID: string;
+  groupName: string;
+  groupKind: string;
+  memberCount: number;
+  inviterName?: string;
+  memberName?: string;
+  expiresAt: number;
 }
 
 /** A receipt photo in a group's inbox, not yet paired with an expense. */
@@ -100,9 +127,10 @@ export interface ExpenseComment {
 
 export interface ActiveInvite {
   id: string;
-  kind: "group" | "member";
+  kind: "group" | "member" | "person";
   memberID: string | null;
   memberName: string | null;
+  recipientName?: string;
   recipientEmail?: string;
   expiresAt: number;
   url?: string;

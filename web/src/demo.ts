@@ -2,10 +2,12 @@ import type { Bill } from "../../worker/src/items";
 import {
   itemSplit,
   type ActiveInvite,
+  type DirectoryPerson,
   type Expense,
   type ExpenseComment,
   type Group,
   type InboxReceipt,
+  type Invitation,
   type Snapshot,
 } from "./data";
 
@@ -571,6 +573,26 @@ export function createDemoState() {
   return {
     inbox,
     snapshot: { userID: DEMO_USER, avatarURL: "preset:cobalt", paymentMethods: [{ platform: "venmo", handle: "harris-k", preferred: true }],
+  const now = Date.now();
+  const directory: DirectoryPerson[] = [
+    { userID: "user-maya", name: "Maya Lin", avatarURL: "preset:emerald" },
+    { userID: "user-alex", name: "Alex Rivera", avatarURL: "preset:indigo" },
+    { userID: "user-priya", name: "Priya Shah", avatarURL: "preset:rose" },
+    { userID: "user-priyanka", name: "Priyanka Rao", avatarURL: "preset:teal" },
+    { userID: "user-carmen", name: "Carmen Ortiz", avatarURL: "preset:violet" },
+    { userID: "user-noah", name: "Noah Brooks" },
+  ];
+  const invitations: Invitation[] = [
+    { id: "a".repeat(64), kind: "direct", groupID: "demo-lisbon", groupName: "Lisbon Long Weekend", groupKind: "trip",
+      memberCount: 4, inviterName: "Priya Shah", expiresAt: now + 13 * 86_400_000 },
+    { id: "b".repeat(64), kind: "email", groupID: "demo-climbing", groupName: "Climbing Club Dues", groupKind: "home",
+      memberCount: 7, memberName: "Harris K.", expiresAt: now + 6 * 86_400_000 },
+  ];
+
+  return {
+    directory,
+    invitations,
+    snapshot: { userID: DEMO_USER, avatarURL: "preset:cobalt", invitationCount: invitations.length, discoverable: true, paymentMethods: [{ platform: "venmo", handle: "harris-k", preferred: true }],
       groups: [gBA, gHome, gTokyo].map((group) => ({ ...group, canDelete: true, members: group.members.map((person) =>
         person.userID === DEMO_USER ? { ...person, paymentMethods: [{ platform: "venmo", handle: "harris-k", preferred: true }] } : person
       ) })), entries: [...entries, ...householdHistory(gHome.id, gHome.members.map((m) => m.id))] } as Snapshot,

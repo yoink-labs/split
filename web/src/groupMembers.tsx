@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { Form, useLedger, value } from "./context";
-import { breakdown, memberPath, type ActiveInvite, type Expense, type Group, type Person } from "./data";
+import { breakdown, memberPath, type ActiveInvite, type DirectoryPerson, type Expense, type Group, type Person } from "./data";
 import { SettingsCard } from "./groupSettings";
 import { memberBalances, useHomeMoney } from "./homeMoney";
 import { Avatar, BalanceBadge } from "./ui";
@@ -9,7 +9,7 @@ import { Avatar, BalanceBadge } from "./ui";
 type ClaimEmail = { memberID: string; email: string };
 
 export function GroupMembers({ group, entries }: { group: Group; entries: Expense[] }) {
-  const { request, save, user, demo } = useLedger();
+  const { request, save, user, demo, data } = useLedger();
   const homeMoney = useHomeMoney();
   const path = `/v1/groups/${group.id}`;
   const canManage = group.members.some((person) => person.userID === user && !person.removed);
@@ -17,7 +17,7 @@ export function GroupMembers({ group, entries }: { group: Group; entries: Expens
   const [newLink, setNewLink] = useState<{ id: string; url: string }>();
   const [selectedID, setSelectedID] = useState<string>();
   const selected = group.members.find((person) => person.id === selectedID);
-  const [matches, setMatches] = useState<{ userID: string; name: string }[]>();
+  const [matches, setMatches] = useState<DirectoryPerson[]>();
   const [loadError, setLoadError] = useState("");
   const [actionError, setActionError] = useState("");
   const [notice, setNotice] = useState("");
@@ -160,21 +160,41 @@ export function GroupMembers({ group, entries }: { group: Group; entries: Expens
             </Form>
             <Form label="Search Split" submit={async (form) => {
               setMatches(undefined);
-              setMatches(await request("/v1/people/search", { query: value(form, "query") }));
+              setMatches(await request<DirectoryPerson[]>("/v1/people/search", { query: value(form, "query") }));
             }}>
-              <label className="field">Exact email, username, or shared contact<input type="text" name="query" required maxLength={254} /></label>
+              <label className="field">Find someone on Split<input type="search" name="query" required minLength={3} maxLength={254}
+                placeholder="Full email, or the first 3 letters of a name" />
+                <small>They get an invitation in Split and can accept or decline it. Only names and avatars are shown.</small>
+              </label>
             </Form>
             {matches?.length === 0 && <p className="muted">No matches.</p>}
-            {matches?.map((person) => (
-              <button className="btn" type="button" key={person.userID}
-                disabled={working || group.members.some((member) => member.userID === person.userID)}
-                onClick={() => void act(async () => {
-                  await save(`${path}/members`, { id: crypto.randomUUID(), ...person });
-                  setMatches(undefined);
-                  setNotice(`${person.name} added.`);
-                })}
-              >Add {person.name}</button>
-            ))}
+            {matches?.map((person) => {
+              const joined = group.members.some((member) => member.userID === person.userID && !member.removed);
+              const invited = directory?.invites.some((invite) => invite.kind === "person" && invite.recipientName === person.name);
+              // People you already share a group with can be added directly, as before.
+              const known = data.groups.some((other) => other.members.some((member) => member.userID === person.userID));
+              return (
+                <div className="people-row-main" key={person.userID}>
+                  <Avatar name={person.name} avatarURL={person.avatarURL} size={32} />
+                  <strong>{person.name}</strong>
+                  <div className="people-row-actions">
+                    {known && !joined && (
+                      <button className="btn btn-sm" type="button" disabled={working} onClick={() => void act(async () => {
+                        await save(`${path}/members`, { id: crypto.randomUUID(), userID: person.userID, name: person.name });
+                        setMatches(undefined);
+                        setNotice(`${person.name} added.`);
+                      })}>Add now</button>
+                    )}
+                    <button className="btn btn-sm btn-primary" type="button" disabled={working || joined} onClick={() => void act(async () => {
+                      await request(`${path}/invites/direct`, { userID: person.userID });
+                      setMatches(undefined);
+                      setNotice(`Invitation sent to ${person.name}.`);
+                      await load();
+                    })}>{joined ? "In group" : invited ? "Invite again" : "Invite"}</button>
+                  </div>
+                </div>
+              );
+            })}
           </SettingsCard>
           <SettingsCard id="group-invites" title="Invitations" description="Share a link or send a personal email from a placeholder’s member row.">
             <Form label="Create invite link" submit={async (form) => {
@@ -207,7 +227,8 @@ export function GroupMembers({ group, entries }: { group: Group; entries: Expens
                 {directory.invites.map((invite) => (
                   <div className="settings-member member-invite" key={invite.id}>
                     <div className="member-identity">
-                      <strong>{invite.memberName ? `For ${invite.memberName}` : "General group invite"}</strong>
+                      <strong>{invite.kind === "person" ? `${invite.recipientName} (in-app)` : invite.memberName ? `For ${invite.memberName}` : "General group invite"}</strong>
+                      {invite.kind === "person" && invite.memberName && <small>Claims {invite.memberName}’s place</small>}
                       {invite.recipientEmail && <small>{invite.recipientEmail}</small>}
                       <small className="muted">Expires {new Date(invite.expiresAt).toLocaleDateString()}</small>
                     </div>

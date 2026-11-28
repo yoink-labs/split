@@ -74,6 +74,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const homeMoney = useHomeMoney();
   const loc = useLocation();
   const [navOpen, setNavOpen] = useState(false);
+  const invitationCount = data.invitationCount ?? 0;
 
   const activeGroups = data.groups.filter((g) => !g.archived);
   const trips = activeGroups.filter((g) => g.kind === "trip");
@@ -151,6 +152,22 @@ export function AppShell({ children }: { children: ReactNode }) {
         >
           <span>Overview</span>
         </Link>
+        <Link
+          to="/invitations"
+          className={"nav-item" + (loc.pathname === "/invitations" ? " active" : "")}
+          onClick={() => setNavOpen(false)}
+          aria-label={invitationCount ? `Invitations, ${invitationCount} pending` : "Invitations"}
+        >
+          <span className="nav-item-main">Invitations</span>
+          {invitationCount > 0 && <span className="nav-badge">{invitationCount}</span>}
+        </Link>
+        <Link
+          to="/people"
+          className={"nav-item" + (loc.pathname.startsWith("/people") ? " active" : "")}
+          onClick={() => setNavOpen(false)}
+        >
+          <span>Find people</span>
+        </Link>
 
         <div className="nav-section">
           <div className="nav-section-title">
@@ -200,8 +217,9 @@ export function AppShell({ children }: { children: ReactNode }) {
 
       <div className="workspace-col">
         <header className="mobile-topbar">
-          <button className="btn btn-sm" onClick={() => setNavOpen(true)}>
-            ☰ Menu
+          <button className="btn btn-sm" onClick={() => setNavOpen(true)}
+            aria-label={invitationCount ? `Menu, ${invitationCount} pending invitations` : "Menu"}>
+            ☰ Menu{invitationCount > 0 && <span className="nav-badge">{invitationCount}</span>}
           </button>
           <Link to="/" className="brand-link" style={{ fontSize: 15 }}>
             <SplitLogo size={22} />

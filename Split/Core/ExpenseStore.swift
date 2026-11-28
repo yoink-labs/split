@@ -738,7 +738,11 @@ private struct ActiveInviteResponse: Decodable {
             var next = state
             next.snapshot.entries.removeAll { $0.id == original.id }
             if var replacement {
-                if let bill = replacement.bill { replacement.bill?.closed = bill.openCount == 0 }
+                if let bill = replacement.bill {
+                    let previous = original.bill
+                    let unchanged = bill.items == previous?.items && bill.tax == previous?.tax && bill.tip == previous?.tip
+                    replacement.bill?.closed = bill.openCount == 0 && (!unchanged || previous?.closed == true)
+                }
                 next.snapshot.entries.append(replacement)
             }
             try persist(next)
@@ -894,6 +898,69 @@ private struct ActiveInviteResponse: Decodable {
         try persist(next)
     }
 
+    func reopenReceipt(_ entry: LedgerEntry) async throws {
+        if demo {
+            var updated = entry
+            updated.bill?.closed = false
+            try updateDemoReceipt(updated)
+        } else {
+            try await sendReceiptChange(entry, action: "reopen", data: [:])
+        }
+    }
+
+    func editReceiptPeople(_ entry: LedgerEntry, add: [String], remove: [String]) async throws {
+        guard demo else {
+            try await sendReceiptChange(entry, action: "receipt-people", data: ["add": add, "remove": remove])
+            return
+        }
+
+        func applyChanges(_ current: [String]) -> [String] {
+            current.filter { !remove.contains($0) } + add.filter { !current.contains($0) }
+        }
+        var updated = entry
+        if var bill = entry.bill {
+            for index in bill.items.indices {
+                var item = bill.items[index]
+                let people = applyChanges(item.memberIDs)
+                guard people != item.memberIDs else { continue }
+                item.memberIDs = people
+                item.shares = item.shares?.filter { people.contains($0.key) }
+                item.roundingSeats = nil
+                item.roundingWeights = nil
+                bill.items[index] = item
+            }
+            guard bill.items != entry.bill?.items else { return }
+            bill.closed = bill.openCount == 0
+            updated.bill = bill
+            updated.splits = try bill.split(payer: entry.paidBy)
+        } else {
+            let current = entry.splits.map(\.memberID)
+            let people = applyChanges(current)
+            guard people != current else { return }
+            guard !people.isEmpty else { throw LedgerError.invalid("Choose at least one person.") }
+            let amounts = try Ledger.allocate(total: entry.amount, weights: people.map { _ in 1 })
+            updated.splits = zip(people, amounts).map { Portion(memberID: $0, amount: $1) }
+            updated.splitMode = .equal
+        }
+        try updateDemoReceipt(updated)
+    }
+
+    private func updateDemoReceipt(_ entry: LedgerEntry) throws {
+        var next = state
+        guard let index = next.snapshot.entries.firstIndex(where: { $0.id == entry.id }) else {
+            throw LedgerError.invalid("This receipt is unavailable.")
+        }
+        next.snapshot.entries[index] = entry
+        try persist(next)
+    }
+
+    private func sendReceiptChange(_ entry: LedgerEntry, action: String, data: [String: Any]) async throws {
+        do { _ = try await post("/v1/entries/\(entry.id)/\(action)", JSONSerialization.data(withJSONObject: data)) }
+        catch { await sync(); throw error }
+        try await waitForSync()
+        await sync()
+    }
+
     func claim(_ entry: LedgerEntry, item: Purchase?, people: [String], shares: [String: Int64] = [:]) async throws {
         guard var bill=entry.bill else { throw LedgerError.invalid("This receipt has no items.") }
         if demo {
@@ -918,8 +985,10 @@ private struct ActiveInviteResponse: Decodable {
                     bill.items[index].memberIDs = people
                 }
             }
-            updated.bill=bill; updated.splits=try bill.split(payer:entry.paidBy)
-            try await change(entry,to:updated)
+            if item == nil || bill.items != entry.bill?.items { bill.closed = bill.openCount == 0 }
+            updated.bill = bill
+            updated.splits = try bill.split(payer: entry.paidBy)
+            try updateDemoReceipt(updated)
         } else {
             var data:[String:Any]=["memberIDs":people]
             if let item {
@@ -929,10 +998,7 @@ private struct ActiveInviteResponse: Decodable {
                 if !shares.isEmpty { data["shares"] = shares }
             }
             let action=item == nil ? "close" : "claim"
-            do { _ = try await post("/v1/entries/\(entry.id)/\(action)",JSONSerialization.data(withJSONObject:data)) }
-            catch { await sync(); throw error }
-            try await waitForSync()
-            await sync()
+            try await sendReceiptChange(entry, action: action, data: data)
         }
     }
 

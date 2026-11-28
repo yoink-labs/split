@@ -13,6 +13,7 @@ import { LedgerContext } from "./context";
 import { LocalAIScreen, type Connection } from "./ai";
 import {
   api,
+  allocate,
   itemSplit,
   MAX_RECEIPTS,
   type ActiveInvite,
@@ -725,20 +726,47 @@ function DemoLedger({ onExit }: { onExit: () => void }) {
       }
 
       // Fractional claim or close receipt
-      const claimMatch = path.match(/^\/v1\/entries\/([\w-]+)\/(claim|close)$/);
+      const claimMatch = path.match(/^\/v1\/entries\/([\w-]+)\/(claim|close|reopen|receipt-people)$/);
       if (claimMatch && body) {
         const [, eid, action] = claimMatch;
+        if (action === "receipt-people") {
+          const current = data.entries.find((e) => e.id === eid);
+          const { add, remove } = body as { add: string[]; remove: string[] };
+          if (current && !current.bill && !add.length && current.splits.every((s) => remove.includes(s.memberID))) {
+            throw new Error("Choose at least one person.");
+          }
+        }
         setData((prev) => ({
           ...prev,
           entries: prev.entries.map((e) => {
-            if (e.id !== eid || !e.bill) return e;
+            if (e.id !== eid) return e;
             const bill = structuredClone(e.bill);
+            if (action === "reopen") return bill ? { ...e, bill: { ...bill, closed: false } } : e;
+            if (action === "receipt-people") {
+              const { add, remove } = body as { add: string[]; remove: string[] };
+              const change = (ids: string[]) => [...new Set([...ids.filter((id) => !remove.includes(id)), ...add])];
+              if (!bill) {
+                const ids = change(e.splits.map((split) => split.memberID));
+                if (!ids.length || ids.every((id, i) => id === e.splits[i]?.memberID) && ids.length === e.splits.length) return e;
+                const amounts = allocate(e.amount, ids.map(() => 1));
+                return { ...e, splitMode: "equal" as const, splits: ids.map((memberID, i) => ({ memberID, amount: amounts[i] })) };
+              }
+              for (const item of bill.items) {
+                const ids = change(item.memberIDs);
+                if (JSON.stringify(ids) === JSON.stringify(item.memberIDs)) continue;
+                item.memberIDs = ids;
+                if (item.shares) item.shares = Object.fromEntries(Object.entries(item.shares).filter(([id]) => ids.includes(id)));
+                delete item.roundingSeats;
+                delete item.roundingWeights;
+              }
+            }
+            if (!bill) return e;
             if (action === "close") {
               const { memberIDs } = body as { memberIDs: string[] };
               for (const item of bill.items) {
                 if (!item.memberIDs.length) item.memberIDs = memberIDs;
               }
-            } else {
+            } else if (action === "claim") {
               const { itemID, memberIDs, shares } = body as {
                 itemID: string;
                 memberIDs: string[];
@@ -758,6 +786,7 @@ function DemoLedger({ onExit }: { onExit: () => void }) {
                 else delete item.shares;
               }
             }
+            if (action !== "close" && JSON.stringify(bill.items) === JSON.stringify(e.bill?.items)) return e;
             bill.closed = bill.items.every((item) => item.memberIDs.length > 0);
             return { ...e, bill, splits: itemSplit(bill, e.paidBy) };
           }),

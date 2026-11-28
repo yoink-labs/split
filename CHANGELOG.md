@@ -13,6 +13,7 @@ is noted next to each release. The CLI is versioned separately with
 ### Added
 
 - See how expenses, payments, and linked refunds add up in a group member’s balance breakdown on web and iOS, or with `split balances --group ID --member ID`.
+- Reopen closed itemized receipts and edit people across the receipt on web, iOS, and the CLI. The web and iOS Receipts pages group bills by assignment status and show who is sharing each receipt.
 
 - Open the Analytics tab on the web for spending over time, by category, by person (paid against share) and by currency in your home currency. Filter by date range and member, and select any bar or row to see its transactions.
 - Record refunds and credits on web, iOS and the CLI/MCP. Refund part or all of an expense to some or all of the people who shared it, or give a standalone credit. Refunds lower the right shares and balances to the cent, and can never exceed the original expense or one person's share. Splitwise rows with a negative cost import as refunds.

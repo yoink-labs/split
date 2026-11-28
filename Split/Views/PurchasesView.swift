@@ -31,7 +31,7 @@ struct PurchasesSection:View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(bill.closed ? "Purchases · closed" : "Purchases").font(.headline).foregroundStyle(Palette.ink)
+                    Text(bill.closed ? "Purchases · closed" : "Purchases · open").font(.headline).foregroundStyle(Palette.ink)
                     Text(canClaim ? "Tap an item to change who had it" : "Claims can be changed by active group members")
                         .font(.caption).foregroundStyle(.secondary)
                 }

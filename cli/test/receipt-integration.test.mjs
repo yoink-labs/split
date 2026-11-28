@@ -81,6 +81,13 @@ test('CLI receipts close automatically and accept large HEIC and PNG uploads', {
   assert.equal(after.closed, true);
   assert.equal(after.items[0].portions[0].amount, 1701);
   t.diagnostic('split items list after assignment → closed: true, claimant share: 1701 cents');
+  const explicit = await cli('receipts', 'reopen', ...receiptArgs);
+  assert.deepEqual(explicit, { ok: true, closed: false });
+  assert.deepEqual((await cli('items', 'list', ...receiptArgs)).items, after.items);
+  const remove = await cli('receipts', 'people', ...receiptArgs, '--remove', JSON.stringify([payer.id]));
+  assert.deepEqual(remove, { ok: true, closed: false });
+  const add = await cli('receipts', 'people', ...receiptArgs, '--add', JSON.stringify([payer.id]));
+  assert.deepEqual(add, { ok: true, closed: true });
   const reopened = await cli('items', 'claim', ...receiptArgs, '--item', item, '--action', 'remove');
   assert.equal(reopened.closed, false);
   assert.equal((await cli('items', 'close', ...receiptArgs)).closed, true);

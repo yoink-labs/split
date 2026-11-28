@@ -190,3 +190,66 @@ it('exposes only the viewer’s expenses and photos to a revocable Finance conne
   expect((await send('/v1/device/logout',{},token)).status).toBe(200);
   expect((await send(list,undefined,token)).status).toBe(401);
 });
+
+it('lets an active non-payer explicitly reopen without changing cents or closing on a no-op', async () => {
+  const full = {...bill,items:[bill.items[0],{...bill.items[1],memberIDs:[other]}]};
+  await call('alex','/v1/entries',{...e,bill:full,splits:itemSplit(full,payer)});
+  const closed = await snapshot();
+  await expect(call('outsider',base+'/reopen',{})).rejects.toThrow('not found');
+  await env.DB.prepare('UPDATE members SET removed_at=? WHERE id=?').bind('2026-11-28T00:00:00Z',other).run();
+  await expect(call('maya',base+'/reopen',{})).rejects.toThrow('not found');
+  await env.DB.prepare('UPDATE members SET removed_at=NULL WHERE id=?').bind(other).run();
+
+  expect(await operate('receipts_reopen',{group,expense:e.id},env,'maya',handle)).toEqual({ok:true,closed:false});
+  const reopened = await snapshot();
+  expect(reopened.bill).toEqual({...closed.bill,closed:false});
+  expect(reopened.splits).toEqual(closed.splits);
+  await call('maya',base+'/reopen',{});
+  await call('maya',base+'/claim',{itemID:'line-toast',original:[other],memberIDs:[other],shares:{[other]:100}});
+  await call('alex',base+'/edit',{original:reopened,entry:{...reopened,title:'Late brunch'}});
+  expect((await snapshot()).bill?.closed).toBe(false);
+  const activity = await env.DB.prepare("SELECT data FROM email_activity WHERE kind='receiptStatus' AND user_id='alex' ORDER BY rowid").all<{data:string}>();
+  expect(activity.results.map(r=>JSON.parse(r.data).variant)).toEqual(['reopened']);
+
+  await call('maya',base+'/claim',{itemID:'line-toast',original:[other],memberIDs:[other,guest]});
+  expect((await snapshot()).bill?.closed).toBe(true);
+});
+
+it('applies receipt-wide changes atomically and conserves cents at each status transition', async () => {
+  await call('alex','/v1/entries',e);
+  const path=base+'/receipt-people';
+  await expect(call('outsider',path,{add:[guest],remove:[]})).rejects.toThrow('not found');
+  await expect(call('maya',path,{add:['foreign-seat'],remove:[]})).rejects.toThrow('group members');
+  await expect(call('maya',path,{add:[guest],remove:[guest]})).rejects.toThrow('group members');
+  await env.DB.prepare('UPDATE members SET removed_at=? WHERE id=?').bind('2026-11-28T00:00:00Z',guest).run();
+  await expect(call('maya',path,{add:[guest],remove:[]})).rejects.toThrow('group members');
+  await env.DB.prepare('UPDATE members SET removed_at=NULL WHERE id=?').bind(guest).run();
+
+  expect(await operate('receipts_people',{group,expense:e.id,add:[other],remove:[payer]},env,'maya',handle))
+    .toEqual({ok:true,closed:true});
+  const closed = await snapshot();
+  expect(closed.bill?.items.map(i=>i.memberIDs)).toEqual([[other],[other]]);
+  expect(closed.splits).toEqual([{memberID:other,amount:1801}]);
+
+  await call('maya',path,{add:[],remove:[other]});
+  const reopened = await snapshot();
+  expect(reopened.bill?.closed).toBe(false);
+  expect(reopened.splits).toEqual([{memberID:payer,amount:1801}]);
+
+  await call('maya',path,{add:[payer,other,guest],remove:[]});
+  expect((await snapshot()).splits).toEqual([
+    {memberID:payer,amount:601},{memberID:other,amount:601},{memberID:guest,amount:599},
+  ]);
+});
+
+it('allows only the author to edit people on a photo-only receipt', async () => {
+  const {bill: _, ...standard}=e;
+  await call('alex','/v1/entries',{...standard,photos:[photo]});
+  await expect(call('maya',base+'/receipt-people',{add:[guest],remove:[]})).rejects.toThrow('recorded');
+  await expect(call('alex',base+'/reopen',{})).rejects.toThrow('no items');
+  await expect(call('alex',base+'/receipt-people',{add:[],remove:[payer,other]})).rejects.toThrow('one and fifty');
+  await call('alex',base+'/receipt-people',{add:[guest],remove:[]});
+  expect(await snapshot()).toMatchObject({splitMode:'equal',splits:[
+    {memberID:payer,amount:601},{memberID:other,amount:600},{memberID:guest,amount:600},
+  ]});
+});

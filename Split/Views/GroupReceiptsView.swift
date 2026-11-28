@@ -8,6 +8,11 @@ struct GroupReceiptsView: View {
     var continueDraft: (ReceiptDraft) -> Void
 
     @EnvironmentObject private var store: ExpenseStore
+    @EnvironmentObject private var fx: FXStore
+    @EnvironmentObject private var session: SessionStore
+    @State private var editingPeople: LedgerEntry?
+    @State private var reopening: String?
+    @State private var actionError: String?
     @State private var editingDraft: ReceiptDraft?
     @State private var pendingDraft: ReceiptDraft?
     @State private var query = ""
@@ -27,11 +32,6 @@ struct GroupReceiptsView: View {
                 }
                 SplitActionButton(title: "Save for later", symbol: "tray.and.arrow.down") { uploading = true }
             }
-            Text("Scan a receipt to split it item by item, or save the photo to the group inbox and turn it into an expense later.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-
             ReceiptInboxSection(group: group, entries: entries, reload: inboxReload, search: search) { inboxCount = $0 }
 
             if receipts.isEmpty && drafts.isEmpty {
@@ -75,13 +75,25 @@ struct GroupReceiptsView: View {
                     }
                 }
 
-                receiptSection("Open receipts", matchingReceipts.filter { $0.bill?.closed == false })
-                receiptSection("Closed receipts and photos", matchingReceipts.filter { $0.bill?.closed != false })
+                receiptSection("Needs assignment", matchingReceipts.filter { $0.openPurchaseCount > 0 })
+                receiptSection("Open", matchingReceipts.filter { $0.bill?.closed == false && $0.openPurchaseCount == 0 })
+                receiptSection("Closed", matchingReceipts.filter { $0.bill?.closed == true })
+                receiptSection("Paired photos", matchingReceipts.filter { $0.bill == nil })
 
                 if matchingDrafts.isEmpty && matchingReceipts.isEmpty && !search.isEmpty {
                     ContentUnavailableView.search(text: search)
                 }
             }
+        }
+        .sheet(item: $editingPeople) { entry in
+            ReceiptPeopleSheet(entry: entry, group: group)
+        }
+        .alert("Could not reopen receipt", isPresented: Binding(
+            get: { actionError != nil }, set: { if !$0 { actionError = nil } }
+        )) {
+            Button("OK", role: .cancel) { actionError = nil }
+        } message: {
+            Text(actionError ?? "")
         }
         .sheet(isPresented: $uploading) {
             InboxUploadView(group: group) { inboxReload += 1 }
@@ -108,15 +120,55 @@ struct GroupReceiptsView: View {
             SectionHeader(title: title)
             Card(padding: 0) {
                 ForEach(items) { entry in
-                    Button { openExpense(entry) } label: {
-                        EntryRow(entry: entry, group: group, currentUserID: store.currentUserID, showDate: true)
-                            .padding(12)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Button { openExpense(entry) } label: {
+                            LedgerRow(title: entry.title, detail: receiptDetail(entry),
+                                      value: fx.entryText(entry, amount: entry.amount)) {
+                                Image(systemName: entry.openPurchaseCount > 0 ? "circle.dashed" : "receipt")
+                                    .foregroundStyle(entry.openPurchaseCount > 0 ? Palette.amber : Palette.evergreen)
+                                    .frame(width: 34)
+                                    .accessibilityHidden(true)
+                            }
                             .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        if canManage && (entry.bill != nil || (entry.combinedCount == nil && (store.isDemo || entry.editable == true))) {
+                            FlowLayout(spacing: 8) {
+                                if entry.bill?.closed == true {
+                                    Button("Reopen", systemImage: "lock.open") {
+                                        Task { await reopen(entry) }
+                                    }
+                                    .accessibilityLabel("Reopen receipt")
+                                    .disabled(reopening != nil)
+                                }
+                                Button("Edit people", systemImage: "person.2") { editingPeople = entry }
+                            }
+                            .font(.subheadline.weight(.semibold))
+                            .buttonStyle(GhostButton())
+                        }
                     }
-                    .buttonStyle(.plain)
+                    .padding(12)
                     if entry.id != items.last?.id { RowDivider() }
                 }
             }
         }
     }
+
+    private var canManage: Bool {
+        store.isDemo || group.members.contains { $0.userID != nil && $0.userID == session.userID && $0.removed != true }
+    }
+
+    private func receiptDetail(_ entry: LedgerEntry) -> String {
+        let people = entry.splits.compactMap { split in group.members.first { $0.id == split.memberID }?.name }
+        let status = entry.openPurchaseCount > 0 ? "\(entry.openPurchaseCount) unassigned" : nil
+        return ([status].compactMap { $0 } + people).joined(separator: ", ")
+    }
+
+    private func reopen(_ entry: LedgerEntry) async {
+        reopening = entry.id
+        defer { reopening = nil }
+        do { try await store.reopenReceipt(entry) }
+        catch { actionError = error.localizedDescription }
+    }
+
 }

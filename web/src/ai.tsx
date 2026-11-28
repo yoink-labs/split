@@ -10,7 +10,10 @@ export interface Connection {
   last_used: number | null;
   scope: "cli" | "finance";
   is_remote: 0 | 1;
+  capabilities?: string[];
 }
+
+const updatesCharges = (capabilities?: string[]) => Boolean(capabilities?.includes("charges:write"));
 
 interface NewToken {
   connection: Connection;
@@ -211,7 +214,7 @@ function Access({ initialAction }: { initialAction: AccessAction | null }) {
   const { request, demo } = useLedger();
   const [connections, setConnections] = useState<Connection[] | null>(null);
   const [action, setAction] = useState<AccessAction | null>(initialAction);
-  const [review, setReview] = useState<{ name: string; scope?: "finance"; code: string } | null>(null);
+  const [review, setReview] = useState<{ name: string; scope?: "finance"; capabilities?: string[]; code: string } | null>(null);
   const [revoke, setRevoke] = useState<Connection | null>(null);
   const [issued, setIssued] = useState<NewToken | null>(null);
   const [busy, setBusy] = useState(false);
@@ -273,7 +276,7 @@ function Access({ initialAction }: { initialAction: AccessAction | null }) {
     event.preventDefault();
     if (normalizedCode.length !== 8) return;
     void run(async () => {
-      const result = await request<{ name: string; scope?: "finance" }>("/v1/device/review", { code: normalizedCode });
+      const result = await request<{ name: string; scope?: "finance"; capabilities?: string[] }>("/v1/device/review", { code: normalizedCode });
       setReview({ ...result, code: normalizedCode });
     });
   }
@@ -327,7 +330,9 @@ function Access({ initialAction }: { initialAction: AccessAction | null }) {
           {review ? (
             <>
               <p>{review.scope === "finance"
-                ? <>Allow <strong>{review.name}</strong> to view your shares, payments, and receipts?</>
+                ? updatesCharges(review.capabilities)
+                  ? <>Allow <strong>Finance</strong> to view your shares, payments, and receipts, and to set the amount your card actually charged on foreign expenses you recorded and paid? Everyone’s converted shares follow that amount, and each change is kept in the expense’s charged amount history.</>
+                  : <>Allow <strong>{review.name}</strong> to view your shares, payments, and receipts?</>
                 : <>Allow <strong>{review.name}</strong> to read and change your Split groups and expenses?</>}</p>
               <div className="ai-actions">
                 <button className="btn btn-primary btn-sm" type="button" disabled={busy} onClick={approve}>Approve</button>
@@ -382,7 +387,7 @@ function Access({ initialAction }: { initialAction: AccessAction | null }) {
               <div className="ai-connection-row">
                 <div>
                   <strong>{connection.name}</strong>
-                  <p className="muted">{connection.scope === "finance" ? "Finance (read-only)" : connection.is_remote ? "Remote MCP token" : "CLI & local MCP"}</p>
+                  <p className="muted">{connection.scope === "finance" ? (updatesCharges(connection.capabilities) ? "Finance (reads expenses, updates card charges)" : "Finance (read-only)") : connection.is_remote ? "Remote MCP token" : "CLI & local MCP"}</p>
                   <p className="muted">Created {formatDate(connection.created_at)} · {connection.last_used ? `Last used ${formatDate(connection.last_used)}` : "Never used"}</p>
                 </div>
                 {revoke?.id !== connection.id && (

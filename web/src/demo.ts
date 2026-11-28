@@ -5,6 +5,7 @@ import {
   type Expense,
   type ExpenseComment,
   type Group,
+  type InboxReceipt,
   type Snapshot,
 } from "./data";
 
@@ -538,7 +539,37 @@ export function createDemoState() {
     ),
   };
 
+  photos["photo-inbox-cabrera"] = makeReceiptBlob(
+    "LA CABRERA",
+    "José A. Cabrera 5099 · Palermo Soho",
+    [
+      ["1x Ojo de Bife 400g", "$38.00"],
+      ["1x Parrillada para 2", "$46.00"],
+      ["2x Quilmes Cerveza", "$12.00"],
+    ],
+    "$9.60",
+    "$14.40",
+    "$120.00",
+  );
+  photos["photo-inbox-kiosco"] = makeReceiptBlob(
+    "KIOSCO 24HS",
+    "Av. Santa Fe 3253 · Buenos Aires",
+    [
+      ["2x Agua Mineral", "$3.00"],
+      ["1x Alfajores Havanna (6)", "$9.00"],
+    ],
+    "$1.20",
+    "$0.00",
+    "$13.20",
+  );
+  // Receipts uploaded to the group inbox, waiting to be paired with an expense.
+  const inbox: InboxReceipt[] = [
+    { id: "photo-inbox-cabrera", groupID: gBA.id, uploadedBy: "m-harris", createdAt: "2026-11-19T23:10:00Z", note: "La Cabrera dinner", bytes: 48211 },
+    { id: "photo-inbox-kiosco", groupID: gBA.id, uploadedBy: "m-maya", createdAt: "2026-11-18T13:40:00Z", note: "Snacks for the ferry", bytes: 30120 },
+  ];
+
   return {
+    inbox,
     snapshot: { userID: DEMO_USER, avatarURL: "preset:cobalt", paymentMethods: [{ platform: "venmo", handle: "harris-k", preferred: true }],
       groups: [gBA, gHome, gTokyo].map((group) => ({ ...group, canDelete: true, members: group.members.map((person) =>
         person.userID === DEMO_USER ? { ...person, paymentMethods: [{ platform: "venmo", handle: "harris-k", preferred: true }] } : person

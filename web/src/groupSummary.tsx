@@ -9,11 +9,11 @@ import { useLedger } from "./context";
 import {
   allocate,
   balances,
+  billConsumption,
   breakdown,
+  consumptionReport,
   entryPayers,
-  grossItems,
   groupTransfers,
-  itemPortions,
   money,
   settlementEntry,
   tripRangeText,
@@ -34,6 +34,7 @@ const REPORT_SECTIONS = [
   { id: "totals", label: "Expense totals" },
   { id: "balances", label: "Balances and suggested payments" },
   { id: "history", label: "Transaction history" },
+  { id: "consumption", label: "Consumption by person" },
 ] as const;
 const BREAKDOWNS = [
   { id: "categories", label: "By category" },
@@ -45,6 +46,7 @@ type ReportSection = (typeof REPORT_SECTIONS | typeof BREAKDOWNS)[number]["id"];
 function sectionEnabled(query: URLSearchParams, mode: Mode, id: ReportSection) {
   const value = query.get(id);
   if (value === "on" || value === "off") return value === "on";
+  if (id === "consumption") return mode === "receipts";
   return id === "history" || (mode !== "receipts" && (id === "totals" || id === "balances"));
 }
 
@@ -140,35 +142,43 @@ function entryMoney(e: Expense, projected: Expense | null, home: string, format:
   };
 }
 
+type Breakdown = { amount: number; items: number; tax: number; tip: number };
+
 /**
- * Receipt items with each person's portion, recorded (the same `grossItems`/`itemPortions` math the
- * ledger uses) and converted. Each person's converted share is allocated across their own item
- * portions by largest remainder, so converted items add up exactly to the converted shares.
+ * Converted (preferred-currency) figures for one person's recorded parts of one expense. Their
+ * converted share is allocated across the parts by largest remainder, then each part across its
+ * item price, tax and tip the same way, so converted parts add up exactly to the converted share.
+ * Null when the share cannot be allocated.
  */
-function receiptRows(e: Expense, projected: Expense | null) {
-  if (!e.bill) return null;
-  const rows = grossItems(e.bill).map((item) => ({
-    item,
-    portions: itemPortions(item, e.paidBy).map((p) => ({ ...p, converted: null as number | null })),
-  }));
-  if (projected) {
-    const ids = new Set(rows.flatMap((r) => r.portions.map((p) => p.memberID)));
-    for (const id of ids) {
-      const mine = rows.flatMap((r) => r.portions.filter((p) => p.memberID === id));
-      const target = sumBy(projected.splits, id);
-      try {
-        const amounts =
-          target === 0 || mine.every((p) => p.amount === 0)
-            ? mine.map(() => 0)
-            : allocate(target, mine.map((p) => p.amount), Number.MAX_SAFE_INTEGER);
-        mine.forEach((p, index) => (p.converted = amounts[index]));
-      } catch {
-        mine.forEach((p) => (p.converted = null));
-      }
-    }
+function convertParts(parts: Breakdown[], target: number): (Breakdown | null)[] {
+  const spread = (total: number, weights: number[]) =>
+    total === 0 || weights.every((w) => w === 0) ? weights.map(() => 0) : allocate(total, weights, Number.MAX_SAFE_INTEGER);
+  try {
+    const totals = spread(target, parts.map((p) => p.amount));
+    return parts.map((p, index) => {
+      const [items, tax, tip] = spread(totals[index], [p.items, p.tax, p.tip]);
+      return { amount: totals[index], items, tax, tip };
+    });
+  } catch {
+    return parts.map(() => null);
   }
-  return rows;
 }
+
+/** Column sums of converted parts, or null when any part has no converted figure. */
+function sumConverted(parts: (Breakdown | null | undefined)[]): Breakdown | null {
+  if (parts.some((p) => !p)) return null;
+  return parts.reduce<Breakdown>(
+    (sum, p) => ({ amount: sum.amount + p!.amount, items: sum.items + p!.items, tax: sum.tax + p!.tax, tip: sum.tip + p!.tip }),
+    { amount: 0, items: 0, tax: 0, tip: 0 },
+  );
+}
+
+const PART_COLUMNS = [
+  { key: "items", label: "Items" },
+  { key: "tax", label: "Tax" },
+  { key: "tip", label: "Tip" },
+  { key: "amount", label: "Total" },
+] as const;
 
 type PersonLabel = (id: string) => ReactNode;
 
@@ -525,7 +535,7 @@ export function GroupSummary() {
             {range && <Meta label="Dates">{range}</Meta>}
             <Meta label="People">{people.length}</Meta>
             <Meta label="Group currency">{g.currency}</Meta>
-            {(included("totals") || included("balances") || included("history")) && <Meta label="Preferred currency">{home}</Meta>}
+            {(included("totals") || included("balances") || included("history") || included("consumption")) && <Meta label="Preferred currency">{home}</Meta>}
             <Meta label="Generated">{generated}</Meta>
           </dl>
         </header>
@@ -547,6 +557,9 @@ export function GroupSummary() {
             groupBy={(entry) => entry.createdAt.slice(0, 7)} />
         )}
         {included("people") && <PeopleSpending expenses={expenses} person={person} />}
+        {included("consumption") && (
+          <ConsumptionSection g={g} expenses={expenses} projected={projected} home={home} format={format} person={person} only={personal?.id} />
+        )}
 
         {included("history") && mode === "summary" && (
           <section className="sum-section">
@@ -619,7 +632,7 @@ export function GroupSummary() {
         )}
 
         <footer className="sum-foot">
-          {(foreign || ((included("totals") || included("balances")) && foreignSpend)) && (
+          {(foreign || ((included("totals") || included("balances") || included("consumption")) && foreignSpend)) && (
             <p className="sum-fine">≈ marks amounts converted using available exchange rates.</p>
           )}
           <div className="sum-foot-row">
@@ -856,86 +869,191 @@ function ReceiptEntry(props: EntryProps) {
 }
 
 function ReceiptItems({ person, e, home, projected, format }: EntryProps) {
-  const rows = receiptRows(e, projected);
-  if (!rows || !e.bill) return null;
+  if (!e.bill) return null;
+  const { items, people } = billConsumption(e.bill, e.paidBy);
   const m = entryMoney(e, projected, home, format);
-  const extra = e.bill.tax + e.bill.tip;
-  const convertedOf = (parts: { converted: number | null }[]) =>
-    parts.some((p) => p.converted === null) ? null : parts.reduce((s, p) => s + (p.converted ?? 0), 0);
-  const cell = (recorded: number, converted: number | null) => (
-    <Amount converted={projected && converted !== null ? format(converted, m.foreign) : null} recorded={m.recorded(recorded)} label="Recorded" quiet={!projected} />
+  const converted = new Map<string, Breakdown | null>();
+  if (projected) {
+    for (const { memberID } of people) {
+      const mine = items.flatMap((item) => item.portions.filter((p) => p.memberID === memberID).map((p) => ({ item: item.id, p })));
+      convertParts(mine.map(({ p }) => p), sumBy(projected.splits, memberID)).forEach((c, index) =>
+        converted.set(mine[index].item + ":" + memberID, c),
+      );
+    }
+  }
+  const columns = PART_COLUMNS.filter(({ key }) => (key !== "tax" || e.bill!.tax > 0) && (key !== "tip" || e.bill!.tip > 0));
+  const cells = (recorded: Breakdown, value: Breakdown | null) =>
+    columns.map(({ key }) => (
+      <td className="r" key={key}>
+        {recorded[key] === 0 ? <span className="sum-dim">—</span> : <Amount converted={projected && value ? format(value[key], m.foreign) : null} recorded={m.recorded(recorded[key])} label="Recorded" quiet={!projected} />}
+      </td>
+    ));
+  const cols = (
+    <colgroup>
+      <col className="c-wide" />
+      {columns.map(({ key }) => <col key={key} />)}
+    </colgroup>
   );
-  const people = [...new Set(rows.flatMap((r) => r.portions.map((p) => p.memberID)))];
+  const head = (first: string) => (
+    <thead>
+      <tr>
+        <th>{first}</th>
+        {columns.map(({ key, label }) => <th className="r" key={key}>{label}</th>)}
+      </tr>
+    </thead>
+  );
+  const totalConverted = sumConverted(people.map((p) => sumConverted(items.flatMap((i) => i.portions.filter((x) => x.memberID === p.memberID).map((x) => converted.get(i.id + ":" + x.memberID))))));
   return (
     <div className="sum-receipt">
       <table className="sum-parts sum-items">
-        <colgroup>
-          <col className="c-wide" />
-          <col />
-          <col />
-        </colgroup>
-        <thead>
-          <tr>
-            <th>Item</th>
-            <th>Who had it · each share</th>
-            <th className="r">Item total</th>
-          </tr>
-        </thead>
+        {cols}
+        {head("Item · who had it")}
         <tbody>
-          {rows.map(({ item, portions }) => (
-            <tr key={item.id}>
-              <td>
-                {item.title}
-                {item.gross !== item.amount && (
-                  <span className="sum-orig">
-                    {money(item.amount, e.currency)} + {money(item.gross - item.amount, e.currency)} tax/tip
-                  </span>
-                )}
-                {!item.memberIDs.length && <span className="sum-orig">Unclaimed · charged to the payer</span>}
-              </td>
-              <td>
-                <ul className="sum-claims">
-                  {portions.map((p) => (
-                    <li key={p.memberID}>
-                      <span>{person(p.memberID)}</span>
-                      {cell(p.amount, p.converted)}
-                    </li>
-                  ))}
-                </ul>
-              </td>
-              <td className="r">{cell(item.gross, convertedOf(portions))}</td>
-            </tr>
+          {items.map((item) => (
+            <Fragment key={item.id}>
+              <tr className="sum-subhead">
+                <td>
+                  {item.title}
+                  {item.open && <span className="sum-orig">Unclaimed · charged to the payer</span>}
+                </td>
+                {cells({ amount: item.gross, items: item.amount, tax: item.tax, tip: item.tip },
+                  sumConverted(item.portions.map((p) => converted.get(item.id + ":" + p.memberID))))}
+              </tr>
+              {item.portions.map((p) => (
+                <tr key={p.memberID} className="sum-portion">
+                  <td><span className="sum-indent">{person(p.memberID)}</span></td>
+                  {cells(p, converted.get(item.id + ":" + p.memberID) ?? null)}
+                </tr>
+              ))}
+            </Fragment>
           ))}
         </tbody>
       </table>
-      {extra > 0 && (
+      {e.bill.tax + e.bill.tip > 0 && (
         <p className="sum-small">
-          Item totals include tax {money(e.bill.tax, e.currency)} and tip {money(e.bill.tip, e.currency)}, spread by item price.
+          Tax {money(e.bill.tax, e.currency)} and tip {money(e.bill.tip, e.currency)} are spread by item price, then by each person’s share of the item.
         </p>
       )}
       <table className="sum-parts sum-receipt-totals">
-        <colgroup>
-          <col />
-          <col />
-        </colgroup>
-        <thead>
-          <tr>
-            <th>Person</th>
-            <th className="r">Receipt share</th>
-          </tr>
-        </thead>
+        {cols}
+        {head("Person")}
         <tbody>
-          {people.map((id) => {
-            const mine = rows.flatMap((r) => r.portions.filter((p) => p.memberID === id));
-            return (
-              <tr key={id}>
-                <td>{person(id)}</td>
-                <td className="r">{cell(sumBy(mine, id), convertedOf(mine))}</td>
-              </tr>
-            );
-          })}
+          {people.map((p) => (
+            <tr key={p.memberID}>
+              <td>{person(p.memberID)}</td>
+              {cells(p, sumConverted(items.flatMap((i) => i.portions.filter((x) => x.memberID === p.memberID).map((x) => converted.get(i.id + ":" + x.memberID)))))}
+            </tr>
+          ))}
+          <tr className="sum-subhead">
+            <td>Receipt total</td>
+            {cells({ amount: e.amount, items: e.bill.items.reduce((sum, i) => sum + i.amount, 0), tax: e.bill.tax, tip: e.bill.tip }, totalConverted)}
+          </tr>
         </tbody>
       </table>
     </div>
+  );
+}
+
+/**
+ * Who consumed what across the group's expenses: each person's receipt items (or their share of an
+ * expense without items) with item price, tax and tip, exact to the cent in the recorded currency.
+ */
+function ConsumptionSection({ g, expenses, projected, home, format, person, only }: {
+  g: Group;
+  expenses: Expense[];
+  projected: Map<string, Expense | null>;
+  home: string;
+  format: Format;
+  person: PersonLabel;
+  only?: string;
+}) {
+  const byID = new Map(expenses.map((e) => [e.id, e]));
+  const codes = [...new Set(expenses.map((e) => e.currency))].sort();
+  const lines = codes.flatMap((c) => consumptionReport(expenses, c).people.flatMap((p) => p.lines));
+  // Converted figures per person and expense, so each person's converted lines add up to their converted share.
+  const converted = new Map<(typeof lines)[number], Breakdown | null>();
+  const groups = new Map<string, typeof lines>();
+  for (const line of lines) {
+    const key = line.entryID + ":" + line.memberID;
+    groups.set(key, [...(groups.get(key) ?? []), line]);
+  }
+  for (const group of groups.values()) {
+    const target = projected.get(group[0].entryID);
+    const values = target ? convertParts(group, sumBy(target.splits, group[0].memberID)) : group.map(() => null);
+    group.forEach((line, index) => converted.set(line, values[index]));
+  }
+  const order = g.members.map((m) => m.id);
+  const ids = [...new Set(lines.map((l) => l.memberID))]
+    .filter((id) => !only || id === only)
+    .sort((a, b) => (order.indexOf(a) + 1 || 1e9) - (order.indexOf(b) + 1 || 1e9));
+
+  const amount = (list: typeof lines, key: keyof Breakdown) => {
+    const recorded: Record<string, number> = {};
+    for (const l of list) {
+      const c = byID.get(l.entryID)!.currency;
+      recorded[c] = (recorded[c] ?? 0) + l[key];
+    }
+    if (Object.values(recorded).every((v) => v === 0)) return <span className="sum-dim">—</span>;
+    const foreign = list.some((l) => byID.get(l.entryID)!.currency !== home);
+    const total = sumConverted(list.map((l) => converted.get(l)));
+    return (
+      <Amount converted={total ? format(total[key], foreign) : null}
+        recorded={foreign ? perCurrency(recorded) || money(0, home) : undefined} label="Recorded" quiet={!foreign} />
+    );
+  };
+
+  return (
+    <section className="sum-section">
+      <h2 className="sum-h2">Consumption by person</h2>
+      {ids.length ? (
+        <table className="sum-table sum-consumption">
+          <colgroup>
+            <col className="c-wide" />
+            <col />
+            <col />
+            <col />
+            <col />
+          </colgroup>
+          <thead>
+            <tr>
+              <th>Person · expense › item</th>
+              {PART_COLUMNS.map(({ key, label }) => <th className="r" key={key}>{label}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {ids.map((id) => {
+              const mine = lines.filter((l) => l.memberID === id);
+              return (
+                <Fragment key={id}>
+                  <tr className="sum-subhead">
+                    <td>{person(id)}</td>
+                    {PART_COLUMNS.map(({ key }) => <td className="r" key={key}>{amount(mine, key)}</td>)}
+                  </tr>
+                  {mine.map((l) => {
+                    const e = byID.get(l.entryID)!;
+                    return (
+                      <tr key={l.entryID + ":" + (l.itemID ?? "")} className={"sum-portion" + (e.handled ? " handled" : "")}>
+                        <td>
+                          <span className="sum-indent">
+                            {l.itemID ? <>{e.title} › {l.title}</> : e.title}
+                            <span className="sum-orig">{recordedDay(e.createdAt)}{e.bill ? " · Itemized" : " · Share of expense"}{e.handled && " · Already handled"}</span>
+                          </span>
+                        </td>
+                        {PART_COLUMNS.map(({ key }) => <td className="r" key={key}>{amount([l], key)}</td>)}
+                      </tr>
+                    );
+                  })}
+                </Fragment>
+              );
+            })}
+          </tbody>
+        </table>
+      ) : (
+        <p className="sum-small">No expenses yet.</p>
+      )}
+      <p className="sum-small">
+        Itemized expenses list each item a person had, with tax and tip spread by item price. Other expenses show the person’s share as one line.
+      </p>
+    </section>
   );
 }

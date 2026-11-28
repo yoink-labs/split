@@ -104,7 +104,8 @@ private struct InvitationCard: View {
                         .font(.caption).foregroundStyle(.secondary)
                     Spacer()
                     Button("Decline") { respond(false) }
-                        .buttonStyle(.splitSecondary)
+                        .buttonStyle(.bordered)
+                        .tint(Palette.ink)
                         .accessibilityLabel("Decline invitation to \(invitation.groupName)")
                     Button(working == invitation.id ? "Joining…" : "Accept") { respond(true) }
                         .buttonStyle(.borderedProminent)

@@ -1198,9 +1198,10 @@ enum Fixtures {
         let stay = LedgerEntry(
             id: "demo-stay", groupID: trip, title: "Palermo Airbnb", amount: 109_460, currency: "USD",
             paidBy: people[2].id, splits: zip(people, stayNights).map { person, nights in
-                Portion(memberID: person.id, amount: Int64(nights) * 8_420, nights: nights)
+                Portion(memberID: person.id, amount: Int64(nights) * 8_420, nights: nights,
+                        stay: person.id == people[0].id ? ExpenseSpread(start: "2026-11-13", end: "2026-11-16") : nil)
             }, category: "Lodging", splitMode: .shares, createdAt: "2026-11-12T12:00:00Z",
-            notes: "Sam’s flight moved, so he stayed one extra night.",
+            notes: "Alex arrived a day late. Sam stayed all four nights.",
             spread: ExpenseSpread(start: "2026-11-12", end: "2026-11-16")
         )
         e.append(stay)

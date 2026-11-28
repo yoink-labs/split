@@ -58,6 +58,8 @@ is noted next to each release. The CLI is versioned separately with
 
 ### Fixed
 
+- Personal PDF reports use a thin outline around transactions you’re involved in and lightly shade only your own rows.
+
 - Confirmed CLI expense edits report the saved category.
 - Preview and confirm expense combinations in the CLI and MCP. The CLI supports `--dry-run` and `--yes`, and the saved result includes the full expense.
 

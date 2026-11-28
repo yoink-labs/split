@@ -248,7 +248,7 @@ function ExpenseDrawer({
               <p style={{ marginTop: 8, fontSize: 12.5, color: "var(--ink-2)" }}>
                 {entry.exchange.statementAmount !== undefined ? "Actually charged (override)" : "Settles as"} <b className="num">{money(settlementEntry(entry).amount, entry.exchange.target)}</b>{" "}
                 <span className="muted">
-                  at 1 {entry.currency} ≈ {rateText(entry.exchange.rateE8)} {entry.exchange.target} (
+                  {entry.exchange.statementAmount === undefined ? "at" : "· Saved rate"} 1 {entry.currency} ≈ {rateText(entry.exchange.rateE8)} {entry.exchange.target} (
                   {sourceLabel(entry.exchange)}
                   {entry.exchange.date > entry.createdAt.slice(0, 10) ? " · latest available" : ""}
                   )

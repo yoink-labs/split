@@ -31,6 +31,7 @@ is noted next to each release. The CLI is versioned separately with
 - Redesigned Splitwise import on the web with drag-and-drop CSV selection, clearer balance checks, and a mobile layout for matching people and reviewing entries.
 - On web and iOS, claim your Splitwise history, match people to Split accounts or prepare email invites, and preview and import expenses and payments in your Home currency using historical exchange rates.
 - The CLI previews Splitwise imports, including how each person maps to a Split member, and asks for confirmation in an interactive terminal.
+- The CLI lists supported expense categories, shows retained receipts and recurrence in edit previews, and returns one JSON result for confirmed edits.
 - CLI changes on main publish a new Homebrew release automatically.
 - The web AI & CLI page shows copyable setup for the selected client.
 

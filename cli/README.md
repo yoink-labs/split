@@ -56,7 +56,7 @@ Replace sample IDs with the IDs in your group. Enter money as decimal major unit
 
 The expense list includes the date, payer names and a `shortID` accepted by `expenses show`. Foreign expenses use a saved trip rate when available. To override it, pass the group currency per unit of expense currency, for example `--currency BRL --rate 0.18` in a USD group. Without either rate, the result warns that the expense uses a separate balance. The `exchange` object records the rate, source and rate date. Imported expenses keep their original transaction date. A rate provider can return an earlier published date on weekends or holidays.
 
-Only the author can edit or delete an expense. Preview first. Pass the returned revision to commit that exact change. A stale revision fails. A confirmed edit prints just the result. A confirmed deletion prints the preview to stderr.
+Only the author can edit or delete an expense. Preview first. Pass the returned revision to commit that exact change. A stale revision fails. Edit previews show both expense states, including attached receipt photos and the recurrence schedule. Use `--json` for machine-readable output. A confirmed edit prints just the result. A confirmed deletion prints the preview to stderr. The `expenses add` and `expenses edit` help lists the case-sensitive category names.
 
 ```sh
 split expenses edit --group "$GROUP" --expense "$EXPENSE" --title "Dinner for two"

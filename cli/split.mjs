@@ -73,6 +73,40 @@ export function describeGroupDelete(raw) {
     'Export a copy first with: split groups export --group ' + p.group + ' --format json --out backup.json',
     'To delete without a prompt: split groups delete --group ' + p.group + ' --yes --revision ' + p.revision].join('\n');
 }
+function describeExpense(entry) {
+  const money = cents => {
+    const digits = String(cents).padStart(3, '0');
+    return `${entry.currency} ${digits.slice(0, -2)}.${digits.slice(-2)}`;
+  };
+  const portions = people => people.map(p => `${p.memberID} (${money(p.amount)})`).join(', ');
+  const lines = [
+    `  ${entry.title} — ${money(entry.amount)}`,
+    `  Date: ${entry.createdAt.slice(0, 10)}`,
+    `  Category: ${entry.category ?? 'General'}`,
+    `  Paid by: ${portions(entry.payers ?? [{ memberID: entry.paidBy, amount: entry.amount }])}`,
+    `  Split (${entry.splitMode}): ${portions(entry.splits)}`,
+    `  Receipt photos: ${entry.receiptIDs?.join(', ') || 'none'}`,
+    `  Recurrence: ${entry.recurrence ?? 'off'}`
+  ];
+  if (entry.notes) lines.push(`  Notes: ${entry.notes}`);
+  if (entry.handled) lines.push('  Handled outside Split');
+  if (entry.exchange) {
+    const { target, rateE8, source, date } = entry.exchange;
+    lines.push(`  Exchange: 1 ${entry.currency} = ${rateE8 / 100_000_000} ${target} (${source}, ${date})`);
+  }
+  if (entry.bill) {
+    const { items, closed, tax, tip } = entry.bill;
+    lines.push(`  Itemized receipt: ${items.length} line items (${closed ? 'closed' : 'open'}), tax ${money(tax)}, tip ${money(tip)}`);
+  }
+  return lines;
+}
+function describeExpenseEdit(raw) {
+  const { before, after, revision } = clean(raw);
+  // Older Workers omit the unchanged receipt photos and recurrence from the after state.
+  const updated = { receiptIDs: before.receiptIDs, recurrence: before.recurrence, ...after };
+  return ['Expense edit preview', 'Before', ...describeExpense(before), 'After', ...describeExpense(updated),
+    'To apply, rerun this command with --yes --revision ' + revision].join('\n');
+}
 const print = (value, compact) => console.log(JSON.stringify(value, null, compact ? undefined : 2));
 
 async function csvFile(path) {
@@ -155,7 +189,10 @@ export async function main(argv = process.argv.slice(2), io = terminal()) {
     if (tool.name === 'import_splitwise') delete values.yes;
     const guided = io.interactive && !compact;
     for (const [key,value] of Object.entries(values)) {
-      const type = tool.inputSchema.properties[key].type;
+      const { type, enum: allowed } = tool.inputSchema.properties[key];
+      if (key === 'category' && !allowed.includes(value)) {
+        throw new Error('--category must be one of: ' + allowed.join(', ') + '.');
+      }
       if (type === 'array' || type === 'object') {
         const expected = '--' + key + ' requires a JSON ' + type + '.';
         try { values[key] = JSON.parse(value); } catch { throw new Error(expected); }
@@ -230,6 +267,9 @@ export async function main(argv = process.argv.slice(2), io = terminal()) {
     }
     if (tool.name === 'import_splitwise' && result?.preview && guided) return console.log(describeImport(result));
     if (tool.name === 'groups_delete' && result?.preview && guided) return console.log(describeGroupDelete(result));
+    if (tool.name === 'expenses_edit' && !compact) {
+      return console.log(result.preview ? describeExpenseEdit(result) : 'Updated expense ' + clean(result.id ?? values.expense) + '.');
+    }
     if (tool.name === 'groups_export' && out) {
       await writeFile(out, result.content);
       return compact ? print({ saved: out }, true) : console.log('Wrote ' + out);

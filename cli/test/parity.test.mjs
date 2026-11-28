@@ -108,6 +108,48 @@ test('group deletion needs a typed name or an explicit revision, never an auto-f
   assert.match(preview.out, /--yes --revision f{64}/);
 });
 
+test('expense add and edit list and validate category choices', async t => {
+  const run = await session(t, () => ({ id: 'expense-0001' }));
+  for (const command of ['add', 'edit']) {
+    const help = await run(['expenses', command, '--help']);
+    assert.match(help.out, /--category .*General, Dining, Groceries.*Fees, Other/);
+    const invalid = await run(['expenses', command, '--category', 'food']);
+    assert.equal(invalid.code, 1);
+    assert.match(invalid.err, /--category must be one of: General, Dining, Groceries.*Fees, Other/);
+    assert.deepEqual(invalid.calls, []);
+  }
+});
+
+test('expense edits show readable previews and emit one JSON result when confirmed', async t => {
+  const before = { id: 'expense-0001', title: 'Dinner', amount: 450, currency: 'USD', category: 'Dining',
+    createdAt: '2026-11-12T12:00:00Z', paidBy: 'member-0001', splitMode: 'equal', splits: [{ memberID: 'member-0001', amount: 450 }],
+    receiptIDs: ['receipt-0001'], recurrence: 'weekly' };
+  const preview = { preview: true, before, after: { ...before, title: 'Supper' }, revision: 'f'.repeat(64) };
+  const applied = { applied: true, id: before.id };
+  let reply = preview;
+  const run = await session(t, ({ arguments: args }) => args.yes ? applied : reply);
+  const base = ['expenses', 'edit', '--group', 'group-0001', '--expense', before.id, '--title', 'Supper'];
+
+  const human = await run(base, { interactive: false });
+  assert.match(human.out, /Before\n  Dinner — USD 4\.50[\s\S]+After\n  Supper — USD 4\.50/);
+  assert.match(human.out.split('\nAfter\n')[1], /Receipt photos: receipt-0001\n  Recurrence: weekly/);
+  assert.match(human.out, /--yes --revision f{64}/);
+  assert.deepEqual(JSON.parse((await run([...base, '--json'])).out), preview);
+
+  for (const revisionArgs of [[], ['--revision', preview.revision]]) {
+    const confirmed = await run([...base, '--yes', ...revisionArgs, '--json']);
+    assert.deepEqual(JSON.parse(confirmed.out), applied);
+    assert.equal(confirmed.err, '');
+    assert.deepEqual(confirmed.calls.map(call => call.arguments.yes), revisionArgs.length ? [true] : [false, true]);
+    assert.equal(confirmed.calls.at(-1).arguments.revision, preview.revision);
+  }
+  assert.equal((await run([...base, '--yes'])).out, 'Updated expense expense-0001.');
+
+  const { receiptIDs, recurrence, ...oldAfter } = preview.after;
+  reply = { ...preview, after: oldAfter };
+  assert.equal((await run(base)).out, human.out);
+});
+
 test('previews strip terminal control sequences from imported and group names', () => {
   const hostile = { ...plan, group: 'trip\u001b]0;pwned\u0007', people: [{ name: 'Ma\u001b[2Jya‮', becomes: 'new placeholder' }],
     skipped: ['row\r\u009b31m'], suggestedMapping: { 'Ev\u001bil': 'member-0001' } };

@@ -78,10 +78,15 @@ export function checkItemRefund(original: Entry, refund: Entry, others: Entry[])
 export async function refundedExpenseGuard(db: D1Database, expense: Entry, aliases: Map<string,string>): Promise<Guard | undefined> {
   if (expense.kind !== 'expense') return undefined;
   const refunds = await linkedRefunds(db, expense.groupID, expense.id, expense.id);
-  if (!refunds.length) return undefined;
   if (refunds.some(r => r.refundItems?.some(id => !expense.bill?.items.some(i => i.id === id))))
     throw new InputError('This expense has item refunds. Keep the refunded items, or delete those refunds first.');
-  try { checkRefundsFit(expense, refunds, aliases); }
+  try {
+    checkRefundsFit(expense, refunds, aliases);
+    const canonical = resolveEntry(expense, aliases);
+    for (const refund of refunds) {
+      if (refund.refundItems) checkItemRefund(canonical, resolveEntry(refund, aliases), []);
+    }
+  }
   catch (error) {
     if (error instanceof InputError) throw new InputError('This expense has refunds. ' + error.message + ' Edit or delete the refunds first.');
     throw error;

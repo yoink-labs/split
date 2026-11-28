@@ -638,6 +638,7 @@ function DemoLedger({ onExit }: { onExit: () => void }) {
         const receiptIDs = storePhotos(b.photos);
         const { photos: _p, ...rest } = b;
         const next: Expense = { ...rest, editable: true, ...(receiptIDs.length ? { receiptIDs } : {}) };
+        if (next.bill) next.bill = { ...next.bill, closed: next.bill.items.every((item) => item.memberIDs.length > 0) };
         setData((prev) => ({ ...prev, entries: [next, ...prev.entries] }));
         return { ok: true } as T;
       }
@@ -686,6 +687,7 @@ function DemoLedger({ onExit }: { onExit: () => void }) {
             ...prev,
             entries: prev.entries.map((e) => e.id === eid ? {
               ...entry,
+              ...(entry.bill ? { bill: { ...entry.bill, closed: entry.bill.items.every((item) => item.memberIDs.length > 0) } } : {}),
               editable: e.editable,
               recurrence: e.recurrence,
               commentCount: e.commentCount,
@@ -725,7 +727,6 @@ function DemoLedger({ onExit }: { onExit: () => void }) {
               for (const item of bill.items) {
                 if (!item.memberIDs.length) item.memberIDs = memberIDs;
               }
-              bill.closed = true;
             } else {
               const { itemID, memberIDs, shares } = body as {
                 itemID: string;
@@ -746,6 +747,7 @@ function DemoLedger({ onExit }: { onExit: () => void }) {
                 else delete item.shares;
               }
             }
+            bill.closed = bill.items.every((item) => item.memberIDs.length > 0);
             return { ...e, bill, splits: itemSplit(bill, e.paidBy) };
           }),
         }));

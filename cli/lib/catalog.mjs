@@ -38,7 +38,7 @@ const receiptBill = {
 };
 const receiptPhotos = {
   type: 'array',
-  description: 'Up to four JPEG receipt photos (240 KiB each), encoded as base64. Pass --photo PATH on the command line or absolute paths to local split mcp. On macOS these paths also support HEIC/PNG and image resizing. Convert PDFs to an image first.',
+  description: 'Up to four JPEG receipt photos (240 KiB each), encoded as base64. Pass --photo PATH on the command line or absolute paths to local split mcp. Local files support JPEG, HEIC and PNG with automatic resizing. Convert PDFs to an image first.',
   items: { type: 'string', minLength: 16, maxLength: 327680 },
   minItems: 1,
   maxItems: 4
@@ -105,8 +105,8 @@ export const tools = [
   op('items_open','List open purchases with tax and tip included in each gross amount.',{group},['group'],true),
   op('items_list','List a transaction’s items, including the whole-amount item for transactions without a receipt bill, with exact portions and any share multipliers.',{group,expense},['group','expense'],true),
   op('items_claim','Add or remove a claimant on a purchase. Defaults to yourself. Use share for a partial claim, e.g. 0.5 or 2.',{group,expense,item:id('Receipt item ID.'),member,share,action:enumeration('Defaults to add.',['add','remove'])},['group','expense','item']),
-  op('items_assign','Replace the claimants of one purchase in a single call. Supply shares in participant order for uneven splits. An empty participants array leaves the item open.',{group,expense,item:id('Receipt item ID.'),participants:{type:'array',description:'Member IDs who share this item.',items:member,maxItems:50,uniqueItems:true},shares:{type:'array',description:'Share multipliers in participant order. Defaults to 1 each.',items:shareNumber,maxItems:50}},['group','expense','item','participants']),
-  op('items_close','As payer, close a receipt and split remaining purchases across the selected members or everyone.',{group,expense,participants:list('Members for remaining items.',member)},['group','expense']),
+  op('items_assign','Replace the claimants of one purchase in a single call. Supply shares in participant order for uneven splits. An empty participants array reopens the receipt. The receipt closes automatically when all items are assigned.',{group,expense,item:id('Receipt item ID.'),participants:{type:'array',description:'Member IDs who share this item.',items:member,maxItems:50,uniqueItems:true},shares:{type:'array',description:'Share multipliers in participant order. Defaults to 1 each.',items:shareNumber,maxItems:50}},['group','expense','item','participants']),
+  op('items_close','As payer, assign remaining purchases to the selected members or everyone and close the receipt.',{group,expense,participants:list('Members for remaining items.',member)},['group','expense']),
   op('receipts_list','List receipt photo IDs on an expense.',{group,expense},['group','expense'],true),
   op('receipts_get','Read one private receipt photo as base64 JPEG. Omit expense to read a receipt from the group inbox.',{group,expense,photo:{...text('Receipt photo ID.',321),pattern:'^[a-zA-Z0-9_-]{8,321}$'}},['group','photo'],true),
   op('receipts_inbox','List receipts uploaded to the group inbox that are not paired with an expense yet.',{group},['group'],true),

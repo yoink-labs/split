@@ -2,7 +2,7 @@
 // that reads well in light and dark mail clients and a plain-text twin.
 // This module is pure (no Env, no I/O) so the preview script can run it in Node.
 
-export const activityKinds = ['expenses', 'payments', 'settleRequests', 'credits', 'pendingResolved'] as const;
+export const activityKinds = ['expenses', 'payments', 'settleRequests', 'credits', 'pendingResolved', 'receiptStatus'] as const;
 export type ActivityKind = typeof activityKinds[number];
 export const emailKinds = ['invites', ...activityKinds] as const;
 export type EmailKind = typeof emailKinds[number];
@@ -13,6 +13,7 @@ export const kindLabels: Record<EmailKind, string> = {
   settleRequests: 'Settle-up requests',
   credits: 'Refunds and credits to you',
   pendingResolved: 'Pending expenses being resolved',
+  receiptStatus: 'Receipts closing or reopening',
 };
 
 export interface ActivityItem {
@@ -77,6 +78,8 @@ export function describe(item: ActivityItem): { line: string; detail?: string } 
       return { line: `${item.actor} recorded a ${amount ? amount + ' ' : ''}${label} to you`,
         detail: item.title ? `For ${quote(item.title)}` : undefined };
     }
+    case 'receiptStatus':
+      return { line: `${quote(item.title)} ${item.variant === 'reopened' ? 'reopened' : 'closed'} after ${item.actor} updated the receipt` };
     case 'pendingResolved':
       return { line: `${item.actor} resolved the pending expense ${quote(item.title)}`,
         detail: share ? `Your share: ${share}` : amount ? `Total: ${amount}` : undefined };

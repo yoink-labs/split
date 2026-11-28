@@ -1,7 +1,9 @@
 import { body, HTTPError, json } from './http';
 import { Entry, entryPayers, InputError, validID } from './ledger';
-import { itemSplit } from './items';
+import { itemSplit, reconcileBill } from './items';
 import { resolveEntry } from './people';
+import { notifyActivity } from './notifications';
+import { refundedExpenseGuard } from './refunds';
 
 export function attachments(db:D1Database,entry:Entry,user:string,payload:string,photos:unknown) {
   if(photos===undefined) return [];
@@ -31,12 +33,21 @@ export function viewerAmounts(entry:Entry, viewer:string) {
   return { paid, share };
 }
 
+export async function receiptActivity(env:Env,entry:Entry,user:string,wasClosed:boolean,previous?:Entry) {
+  if (!entry.bill || entry.bill.closed===wasClosed) return;
+  const variant=entry.bill.closed ? 'closed' : 'reopened';
+  console.info(JSON.stringify({event:'receipt_'+variant,groupID:entry.groupID,entryID:entry.id}));
+  const recipients=new Set([entry.paidBy,...entry.splits.map(s=>s.memberID),...(previous?.splits.map(s=>s.memberID)??[])]);
+  await notifyActivity(env,{groupID:entry.groupID,kind:'receiptStatus',refID:entry.id+':'+crypto.randomUUID(),
+    actorUserID:user,title:entry.title,recipients:[...recipients].map(memberID=>({memberID,variant}))});
+}
+
 export async function purchaseRoute(req:Request,env:Env,user:string,ownExpensesOnly=false):Promise<Response|undefined> {
   const match=new URL(req.url).pathname.match(/^\/v1\/entries\/([\w-]+)\/(claim|close|receipts)(?:\/([\w-]+))?$/);
   if(!match) return;
   const [,id,action,photo]=match;
   const row=await env.DB.prepare(`SELECT e.payload,m.id AS viewer,e.author FROM entries e JOIN members m ON m.group_id=e.group_id
-    WHERE e.id=? AND m.user_id=? AND e.id NOT IN (SELECT entry_id FROM deleted_entries)`).bind(id,user).first<{payload:string;viewer:string;author:string}>();
+    WHERE e.id=? AND m.user_id=? AND (?='receipts' OR m.removed_at IS NULL) AND e.id NOT IN (SELECT entry_id FROM deleted_entries)`).bind(id,user,action).first<{payload:string;viewer:string;author:string}>();
   if(!row) throw new HTTPError(404,'Expense not found.');
   if(action==='receipts' && req.method==='GET' && photo) {
     if (ownExpensesOnly) {
@@ -53,10 +64,12 @@ export async function purchaseRoute(req:Request,env:Env,user:string,ownExpensesO
   }
   if(req.method!=='POST' || photo || action==='receipts') throw new HTTPError(404,'Unknown receipt action.');
   const raw:Entry=JSON.parse(row.payload);
-  const seats=(await env.DB.prepare('SELECT m.id,m.user_id,a.canonical_id FROM members m LEFT JOIN member_aliases a ON a.member_id=m.id WHERE m.group_id=? ORDER BY m.rowid').bind(raw.groupID).all<{id:string;user_id:string|null;canonical_id:string|null}>()).results;
-  const entry=resolveEntry(raw,new Map(seats.filter(s=>s.canonical_id).map(s=>[s.id,s.canonical_id!])));
+  const seats=(await env.DB.prepare('SELECT m.id,m.user_id,m.removed_at,a.canonical_id FROM members m LEFT JOIN member_aliases a ON a.member_id=m.id WHERE m.group_id=? ORDER BY m.rowid').bind(raw.groupID).all<{id:string;user_id:string|null;removed_at:string|null;canonical_id:string|null}>()).results;
+  const aliases=new Map(seats.filter(s=>s.canonical_id).map(s=>[s.id,s.canonical_id!]));
+  const entry=resolveEntry(raw,aliases);
   const bill=entry.bill;
-  if(!bill || bill.closed) throw new HTTPError(409,'This receipt is closed or has no items.');
+  if(!bill) throw new HTTPError(409,'This receipt has no items.');
+  const wasClosed=bill.closed;
   const refunded=new Set((await env.DB.prepare(`SELECT j.value FROM entries r, json_each(json_extract(r.payload,'$.refundItems')) j
     WHERE r.group_id=? AND json_extract(r.payload,'$.refundOf')=? AND r.id NOT IN (SELECT entry_id FROM deleted_entries)`)
     .bind(raw.groupID,id).all<{value:string}>()).results.map(r=>r.value));
@@ -66,10 +79,11 @@ export async function purchaseRoute(req:Request,env:Env,user:string,ownExpensesO
   if(action==='close') {
     const payer=seats.find(s=>s.id===entry.paidBy);
     if(row.viewer!==entry.paidBy && !(payer?.user_id===null && row.author===user)) throw new HTTPError(403,'Only the payer can close this receipt.');
+    if(wasClosed) return json({ok:true,closed:true});
+    if(ids.some(id=>seats.some(s=>s.id===id && s.removed_at!==null))) throw new InputError('Choose active group members.');
     if(!ids.length && bill.items.some(i=>!i.memberIDs.length)) throw new InputError('Choose who will cover the open items.');
     if(bill.items.some(i=>!i.memberIDs.length && refunded.has(i.id))) throw new HTTPError(409,'An open item was refunded. Delete its refund before closing this receipt.');
     for(const i of bill.items) if(!i.memberIDs.length) i.memberIDs=ids;
-    bill.closed=true;
   } else {
     const item=bill.items.find(i=>i.id===b.itemID);
     if(!item) throw new HTTPError(404,'Item not found.');
@@ -83,6 +97,7 @@ export async function purchaseRoute(req:Request,env:Env,user:string,ownExpensesO
       const removed=new Set(original.filter(id=>!ids.includes(id)));
       next=[...new Set([...item.memberIDs.filter(id=>!removed.has(id)),...ids.filter(id=>!original.includes(id))])];
     } else if(JSON.stringify(item.memberIDs)!==JSON.stringify(b.original)) throw new HTTPError(409,'The claims changed. Refresh and try again.');
+    if(next.some(id=>!item.memberIDs.includes(id) && seats.some(s=>s.id===id && s.removed_at!==null))) throw new InputError('Choose active group members.');
     if(next.length>50) throw new InputError('Choose up to fifty claimants.');
     const changed=JSON.stringify(item.memberIDs)!==JSON.stringify(next);
     item.memberIDs=next;
@@ -107,7 +122,13 @@ export async function purchaseRoute(req:Request,env:Env,user:string,ownExpensesO
     }
   }
   entry.splits=itemSplit(bill,entry.paidBy);
-  const saved=await env.DB.prepare('UPDATE entries SET payload=? WHERE id=? AND payload=? AND id NOT IN (SELECT entry_id FROM deleted_entries)').bind(JSON.stringify(entry),id,row.payload).run();
+  reconcileBill(entry);
+  if(action==='close' && !bill.closed) throw new InputError('Receipt items, tax and tip must match the expense total.');
+  const guard=await refundedExpenseGuard(env.DB,entry,aliases);
+  const saved=await env.DB.prepare(`UPDATE entries SET payload=? WHERE id=? AND payload=? AND id NOT IN (SELECT entry_id FROM deleted_entries)
+    AND EXISTS (SELECT 1 FROM members WHERE group_id=entries.group_id AND user_id=? AND removed_at IS NULL)${guard?' AND '+guard.sql:''}`)
+    .bind(JSON.stringify(entry),id,row.payload,user,...(guard?.binds??[])).run();
   if(!saved.meta.changes) throw new HTTPError(409,'This receipt changed. Refresh and try again.');
-  return json({ok:true});
+  await receiptActivity(env,entry,user,wasClosed,raw);
+  return json({ok:true,closed:bill.closed});
 }

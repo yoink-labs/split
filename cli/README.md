@@ -177,7 +177,9 @@ Claim defaults to adding yourself. Pass a group member ID to add a second claima
 
 ### Upload a receipt from an assistant
 
-An assistant that can read the photo can record the whole receipt in one command. Items with `memberIDs` are assigned on upload; items without them stay open for the group to claim. `shares` are multipliers in `memberIDs` order, so `[2,1]` means the first person had two of three. `--photo` accepts JPEG, HEIC or PNG (up to four) and, on macOS, converts and shrinks each to the 240 KiB receipt limit.
+An assistant that can read the photo can record the whole receipt in one command. Items with `memberIDs` are assigned on upload; items without them stay open for the group to claim. `shares` are multipliers in `memberIDs` order, so `[2,1]` means the first person had two of three. `--photo` accepts JPEG, HEIC or PNG (up to four) and converts and shrinks each to the 240 KiB JPEG limit. A receipt closes automatically once every item is assigned. Unassigning an item reopens it, and the payer can still run `items close` to assign the remaining items.
+
+Homebrew installs ImageMagick with Split. If you installed the CLI another way, install [ImageMagick with HEIC support](https://imagemagick.org/download/) and make sure `magick` is on PATH. Linux also supports the ImageMagick 6 `convert` command, and macOS can fall back to the built-in `sips` command. On Windows, run `node bin/split` from the extracted CLI directory.
 
 ```sh
 split expenses add --group GROUP_ID --payer MEMBER_ID --title "Don Julio" --date 2026-11-14 \

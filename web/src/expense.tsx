@@ -165,8 +165,7 @@ function Composer({ g, existing }: { g: Group; existing?: Expense }) {
   let chargeAmount = typed;
   if (mode === "items") {
     try {
-      chargeAmount = existing?.bill?.closed ? existing.amount
-        : rows.reduce((sum, row) => sum + minor(row.price || "0"), minor(tax || "0") + minor(tip || "0"));
+      chargeAmount = rows.reduce((sum, row) => sum + minor(row.price || "0"), minor(tax || "0") + minor(tip || "0"));
     } catch {
       chargeAmount = null;
     }
@@ -230,11 +229,9 @@ function Composer({ g, existing }: { g: Group; existing?: Expense }) {
             );
 
             let bill: Bill | undefined;
-            if (existing?.bill?.closed) {
-              bill = existing.bill;
-            } else if (mode === "items") {
+            if (mode === "items") {
               bill = {
-                closed: existing?.bill?.closed ?? false,
+                closed: false,
                 tax: minor(value(f, "tax") || "0"),
                 tip: minor(value(f, "tip") || "0"),
                 items: rows.map((r) => {
@@ -422,7 +419,6 @@ function Composer({ g, existing }: { g: Group; existing?: Expense }) {
               <div className="field">
                 <span>Paid by</span>
                 <Picker label="Paid by" value={multiPayer ? ":multiple" : singlePayer} search={pickerMembers.length > 8}
-                  disabled={Boolean(existing?.bill?.closed)}
                   onChange={(next) => {
                     setMultiPayer(next === ":multiple");
                     if (next !== ":multiple") setSinglePayer(next);
@@ -462,9 +458,7 @@ function Composer({ g, existing }: { g: Group; existing?: Expense }) {
                   ]} />
               </div>
 
-              {existing?.bill?.closed ? (
-                <p className="muted">The item allocations are locked because this receipt is closed.</p>
-              ) : mode === "items" ? (
+              {mode === "items" ? (
                 <fieldset className="card" disabled={scanning} style={{ padding: 14, background: "var(--bg)", minWidth: 0 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
                     <strong style={{ fontSize: 13 }}>Receipt line items</strong>

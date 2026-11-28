@@ -1,7 +1,7 @@
 import { legacyPayment, paymentMethods, saveAccountPayments } from './paymentProfiles';
 import { preserveStatementAmount } from './exchange';
 import {groupTools,generateRecurring} from './groupTools';
-import { purchaseRoute, attachments } from './receipts';
+import { purchaseRoute, attachments, receiptActivity } from './receipts';
 import { receiptInboxRoute } from './receiptInbox';
 import { optionalDescription, socialRoute } from './social';
 import { claimSeat, fetchVerifiedProfile, refreshIdentity, resolveEntry } from './people';
@@ -231,9 +231,10 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
   if((path==='/v1/entries' || path==='/v1/settlements') && request.method==='POST') {
     const b=await body(request,1_650_000); if(!validID(b.groupID)) throw new InputError('Invalid group.');
     await member(env,b.groupID,userID);
-    const e=validateEntry(b,(await members(env,b.groupID)).map(m=>m.id)), payload=JSON.stringify(e);
+    const e=validateEntry(b,(await members(env,b.groupID)).map(m=>m.id),undefined,{reconcileBill:true});
+    if (e.bill) await requireActiveMember(env,b.groupID,userID);
     if(path==='/v1/settlements' && e.kind!=='settlement') throw new InputError('Choose a payment to confirm.');
-    if(e.bill?.closed) throw new InputError('New receipts start open.');
+    const payload=JSON.stringify(e);
     if(e.exchange && e.exchange.target!==await env.DB.prepare('SELECT currency FROM groups WHERE id=?').bind(e.groupID).first('currency')) throw new InputError('Use the group settlement currency.');
     if(e.kind==='settlement') {
       if(b.photos!==undefined) throw new InputError('Attach receipt photos to an expense.');
@@ -256,7 +257,10 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
     const saved=await env.DB.prepare('SELECT author,payload FROM entries WHERE id=?').bind(e.id).first<{author:string;payload:string}>();
     if(!saved && guard) throw new HTTPError(409,'The original expense or its refunds changed. Refresh and try again.');
     if(saved?.author!==userID||saved.payload!==payload)throw new HTTPError(409,'An entry already uses this ID.');
-    if(inserted.meta.changes && !e.handled) await notifyActivity(env,entryActivity(e,userID));
+    if(inserted.meta.changes) {
+      if (!e.handled) await notifyActivity(env,entryActivity(e,userID));
+      await receiptActivity(env,e,userID,false);
+    }
     return json({ok:true});
   }
   const handled=path.match(/^\/v1\/entries\/([\w-]+)\/handled$/);
@@ -304,13 +308,16 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
       const aliases=new Map((await env.DB.prepare('SELECT member_id,canonical_id FROM member_aliases JOIN members ON members.id=member_id WHERE group_id=?')
         .bind(saved.group_id).all<{member_id:string;canonical_id:string}>()).results.map(a=>[a.member_id,a.canonical_id]));
     const canonical=resolveEntry(old,aliases);
+    let replacement: Entry | undefined;
     let payload: string | undefined;
     let guard: {sql:string;binds:unknown[]} | undefined;
     if (deleting && old.kind==='expense' && await hasRefunds(env.DB,saved.group_id,revise[1]))
       throw new InputError('This expense has refunds. Delete its refunds first.');
     if (!deleting) {
       if (old.kind==='settlement') throw new InputError('Payments cannot be edited.');
-      const updated=validateEntry(preserveStatementAmount(b.entry,canonical),ids,canonical.bill);
+      const updated=validateEntry(preserveStatementAmount(b.entry,canonical),ids,canonical.bill,{reconcileBill:true});
+      if (updated.bill || old.bill) await requireActiveMember(env,saved.group_id,userID);
+      replacement=updated;
       if(updated.id!==revise[1] || updated.groupID!==saved.group_id || updated.createdAt!==old.createdAt || updated.kind!==old.kind || updated.refundOf!==old.refundOf)
         throw new InputError('Invalid edit.');
       guard=updated.kind==='refund' ? await refundGuard(env.DB,updated,aliases) : await refundedExpenseGuard(env.DB,updated,aliases);
@@ -324,10 +331,7 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
         updated.exchange.target!==await env.DB.prepare('SELECT currency FROM groups WHERE id=?').bind(saved.group_id).first('currency')) throw new InputError('Use the group settlement currency.');
       if((updated.exchange || updated.bill) && await env.DB.prepare('SELECT 1 FROM recurring WHERE entry_id=?').bind(updated.id).first()) throw new InputError('Stop the recurring schedule before itemizing or converting this expense.');
       payload=JSON.stringify(updated);
-      if(updated.bill?.closed && !old.bill?.closed) throw new InputError('Use the payer close action.');
-      if(old.bill?.closed && (updated.paidBy!==canonical.paidBy || JSON.stringify(updated.bill)!==JSON.stringify(canonical.bill))) throw new InputError('This receipt is closed.');
       if (old.bill && !updated.bill) throw new InputError('Keep the receipt items when editing this expense.');
-      if(old.bill && old.bill.closed!==updated.bill?.closed) throw new InputError('Use the payer close action.');
       if (saved.payload===payload && !b.photos) return json({ok:true});
     }
     const conditional=!deleting || b.original!==undefined;
@@ -345,6 +349,7 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
     const [result]=await env.DB.batch([statement,...(deleting?[]:attachments(env.DB,JSON.parse(payload!),userID,payload!,b.photos))]);
     if (!result.meta.changes && !(deleting && await env.DB.prepare('SELECT entry_id FROM deleted_entries WHERE entry_id=? AND entry_id NOT IN (SELECT source_id FROM active_expense_combination_sources)').bind(revise[1]).first()))
       throw new HTTPError(409,'This entry changed. Refresh and try again.');
+    if (replacement) await receiptActivity(env,replacement,userID,Boolean(canonical.bill?.closed),canonical);
     return json({ok:true});
   }
   const addMember=path.match(/^\/v1\/groups\/([\w-]+)\/members$/);

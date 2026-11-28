@@ -5,11 +5,11 @@ export interface Item { id:string; title:string; amount:number; memberIDs:string
 export interface Bill { items:Item[]; tax:number; tip:number; closed:boolean }
 const cents=(n:number)=>Number.isSafeInteger(n) && n>=0 && n<=100_000_000_000;
 const validWeight=(n:unknown)=>typeof n==='number' && Number.isSafeInteger(n) && n>=1 && n<=100_000;
-export function readBill(b:Bill, members:string[], total:number, previous?:Bill):Bill {
+export function readBill(b:Bill, members:string[], total:number, previous?:Bill, reconcile=false):Bill {
   if (!b || !Array.isArray(b.items) || !b.items.length || b.items.length>50 || !cents(b.tax) || !cents(b.tip) || typeof b.closed!=='boolean') throw new InputError('Check items, tax and tip.');
   const items=b.items.map(i=>{
     if(!i || !validID(i.id) || typeof i.title!=='string' || !i.title.trim() || i.title.length>100 || !cents(i.amount) || !i.amount ||
-       !Array.isArray(i.memberIDs) || i.memberIDs.length>50 || new Set(i.memberIDs).size!==i.memberIDs.length || i.memberIDs.some(id=>!members.includes(id)) || (b.closed && !i.memberIDs.length))
+       !Array.isArray(i.memberIDs) || i.memberIDs.length>50 || new Set(i.memberIDs).size!==i.memberIDs.length || i.memberIDs.some(id=>!members.includes(id)) || (!reconcile && b.closed && !i.memberIDs.length))
       throw new InputError('Check the item price, name and claimants.');
     let shares:Record<string,number>|undefined;
     if(i.shares!==undefined) {
@@ -48,6 +48,14 @@ export function itemSplit(b:Bill,payer:string) {
     for(const {memberID,amount} of itemPortions(i,payer)) totals.set(memberID,(totals.get(memberID)??0)+amount);
   }
   return Array.from(totals,([memberID,amount])=>({memberID,amount}));
+}
+/** An open item's provisional payer share does not count as an assignment. */
+export function reconcileBill(entry: Entry) {
+  const bill=entry.bill;
+  if (!bill) return;
+  bill.closed=bill.items.length>0 && bill.items.every(i=>i.memberIDs.length>0) &&
+    bill.items.reduce((sum,i)=>sum+i.amount,bill.tax+bill.tip)===entry.amount &&
+    entry.splits.reduce((sum,split)=>sum+split.amount,0)===entry.amount;
 }
 export function breakdown(entries:Entry[],members:{id:string;name:string}[],currency:string) {
   // Refunds count against spending: they lower the total, the receiver's paid and each credited share.

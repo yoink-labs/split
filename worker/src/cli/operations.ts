@@ -124,7 +124,7 @@ function makeExpense(a: Args, group: Group, old?: Entry): Entry {
     amount, currency, paidBy: a.payers && !a.payer ? a.payers[0].member : payer,
     exchange, bill, category:a.category??old?.category, splits, kind: 'expense', splitMode: mode, createdAt,
     payers, notes: a.notes ?? old?.notes, handled: old?.handled,
-    ...pendingFields(a, old) }, ids,old?.bill);
+    ...pendingFields(a, old) }, ids,old?.bill,{reconcileBill:true});
 }
 function pendingFields(a: Args, old?: Entry) {
   const pending = a.pending ?? old?.pending;

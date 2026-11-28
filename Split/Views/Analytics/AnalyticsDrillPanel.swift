@@ -185,12 +185,12 @@ struct AnalyticsEntryRow: View {
             }
             Spacer(minLength: Spacing.xs)
             VStack(alignment: .trailing, spacing: 2) {
-                Text(row.home.map { format.money($0.amount, estimated: foreign) } ?? Money.text(entry.amount, entry.currency))
+                Text(row.home.map { format.money(entry.sign * $0.amount, estimated: foreign) } ?? Money.text(entry.signedAmount, entry.currency))
                     .font(.splitAmount(14))
                     .foregroundStyle(Palette.ink)
                     .lineLimit(1)
                 if foreign {
-                    Text(row.home == nil ? "Rate unavailable" : Money.text(entry.amount, entry.currency))
+                    Text(row.home == nil ? "Rate unavailable" : Money.text(entry.signedAmount, entry.currency))
                         .font(.caption2)
                         .foregroundStyle(row.home == nil ? Palette.amber : Color.secondary)
                         .lineLimit(1)

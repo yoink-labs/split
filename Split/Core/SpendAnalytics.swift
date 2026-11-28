@@ -258,11 +258,12 @@ enum SpendAnalytics {
 
     // MARK: - Report
 
-    /// The rows an analytics view covers: expenses only, inside the date range, involving the person.
+    /// The rows an analytics view covers: expenses and refunds (negative, so spending is net of
+    /// refunds), inside the date range, involving the person.
     static func rows(_ entries: [LedgerEntry], project: (LedgerEntry) -> LedgerEntry?, home: String,
                      filter: Filter, key: PersonKey = memberKey) -> [Row] {
         var rows: [Row] = []
-        for entry in entries where entry.kind == "expense" {
+        for entry in entries where entry.isSpending {
             let day = entry.day
             if !filter.from.isEmpty && day < filter.from { continue }
             if !filter.to.isEmpty && day > filter.to { continue }
@@ -271,10 +272,11 @@ enum SpendAnalytics {
                !entry.splits.contains(where: { key(entry.groupID, $0.memberID) == person && $0.amount > 0 }),
                !entry.allPayers.contains(where: { key(entry.groupID, $0.memberID) == person && $0.amount > 0 }) { continue }
             let projected = project(entry)
-            let amount = projected.map { projected in person.map { share(projected, of: $0, key: key) } ?? projected.amount }
+            let direction = entry.sign
+            let amount = projected.map { projected in direction * (person.map { share(projected, of: $0, key: key) } ?? projected.amount) }
             rows.append(Row(
                 entry: entry, home: projected, day: day, category: categoryID(entry.category),
-                amount: amount, original: person.map { share(entry, of: $0, key: key) } ?? entry.amount,
+                amount: amount, original: direction * (person.map { share(entry, of: $0, key: key) } ?? entry.amount),
                 estimated: entry.currency != home
             ))
         }
@@ -310,14 +312,14 @@ enum SpendAnalytics {
         }
         let categoryList = byCategory.map { (id: $0.key, amount: $0.value.amount, count: $0.value.count) }
             .sorted { $0.amount != $1.amount ? $0.amount > $1.amount : $0.id.localizedCompare($1.id) == .orderedAscending }
-        let categoryPercents = percents(categoryList.map(\.amount))
+        let categoryPercents = percents(categoryList.map { Swift.max(0, $0.amount) })
 
         let personTotals = people.map { person -> PersonTotal in
             var paid: Int64 = 0, share: Int64 = 0, count = 0
             for row in priced {
                 guard let home = row.home else { continue }
-                let p = Self.paid(home, by: person, key: key)
-                let s = Self.share(home, of: person, key: key)
+                let p = row.entry.sign * Self.paid(home, by: person, key: key)
+                let s = row.entry.sign * Self.share(home, of: person, key: key)
                 paid += p
                 share += s
                 if p != 0 || s != 0 { count += 1 }
@@ -335,7 +337,7 @@ enum SpendAnalytics {
         }
         let currencyList = byCurrency.map { (currency: $0.key, original: $0.value.original, home: $0.value.home, count: $0.value.count) }
             .sorted { ($0.home ?? -1) != ($1.home ?? -1) ? ($0.home ?? -1) > ($1.home ?? -1) : $0.currency.localizedCompare($1.currency) == .orderedAscending }
-        let currencyPercents = percents(currencyList.map { $0.home ?? 0 })
+        let currencyPercents = percents(currencyList.map { Swift.max(0, $0.home ?? 0) })
 
         return Report(
             rows: rows, priced: priced, excluded: rows.count - priced.count, total: total,

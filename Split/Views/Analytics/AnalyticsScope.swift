@@ -68,7 +68,7 @@ struct AnalyticsScope {
         members.first { $0.key == key }?.name ?? "Former member"
     }
 
-    var hasExpenses: Bool { entries.contains { $0.kind == "expense" } }
+    var hasExpenses: Bool { entries.contains(where: \.isSpending) }
     var tripRange: Bool { group?.startDate != nil || group?.endDate != nil }
     var title: String { group?.name ?? "All groups" }
 }

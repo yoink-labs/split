@@ -130,6 +130,30 @@ final class SpendAnalyticsTests: XCTestCase {
         XCTAssertEqual(swapped.to, "2026-05-01")
     }
 
+    /// Refunds count negative, like the web: spending is net of refunds.
+    func testRefundsReduceSpendingAndShares() {
+        let ledger = [
+            expense("dinner", "2026-03-02", 9000, [("a", 3000), ("b", 3000), ("c", 3000)], category: "Dining"),
+            expense("refund", "2026-03-03", 3000, [("a", 3000)], category: "Dining", kind: "refund"),
+        ].map { entry -> LedgerEntry in
+            var entry = entry
+            if entry.kind == "refund" { entry.splits = [Portion(memberID: "b", amount: 3000)] }
+            return entry
+        }
+        let result = SpendAnalytics.analyze(ledger, project: { $0 }, home: "USD", filter: .init(), people: ["a", "b", "c"])
+        XCTAssertEqual(result.rows.count, 2)
+        XCTAssertEqual(result.total, 6000)
+        XCTAssertEqual(result.categories.first?.amount, 6000)
+        XCTAssertEqual(result.categories.first?.percent, 100)
+        let people = Dictionary(uniqueKeysWithValues: result.people.map { ($0.key, $0) })
+        XCTAssertEqual(people["a"]?.paid, 6000)
+        XCTAssertEqual(people["b"]?.share, 0)
+        XCTAssertEqual(result.people.reduce(0) { $0 + $1.net }, 0)
+        XCTAssertEqual(LedgerPosition(ledger[1], memberID: "b").net, 3000)
+        let b = SpendAnalytics.analyze(ledger, project: { $0 }, home: "USD", filter: .init(person: "b"), people: ["a", "b", "c"])
+        XCTAssertEqual(b.total, 0)
+    }
+
     /// Across groups, one person's seats merge into one row and one filter.
     func testMergesOnePersonAcrossGroups() {
         let trip = ExpenseGroup(id: "t", name: "Trip", kind: "trip", currency: "USD", members: [

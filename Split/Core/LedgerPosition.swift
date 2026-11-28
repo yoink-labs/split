@@ -1,7 +1,7 @@
 import Foundation
 
 /// Where one member stands on one ledger entry: the web ledger's `position()`.
-/// Handled expenses and payments count as involvement but not as money owed.
+/// Refunds count the other way. Handled expenses and payments count as involvement but not as money owed.
 struct LedgerPosition: Equatable {
     var involved: Bool
     /// Paid minus share, in the settlement currency. Negative means they owe.
@@ -11,12 +11,13 @@ struct LedgerPosition: Equatable {
     init(_ entry: LedgerEntry, memberID: String?) {
         let involved = memberID.map { id in entry.allPayers.contains { $0.memberID == id } || entry.splits.contains { $0.memberID == id } } ?? false
         self.involved = involved
-        guard involved, let memberID, !entry.isHandled, entry.kind == "expense" else {
+        guard involved, let memberID, !entry.isHandled, !entry.isSettlement else {
             net = 0
             currency = entry.currency
             return
         }
         let settled = entry.settling
+        // Ledger.paid and Ledger.share already flip refunds, like the web's sign(entry).
         net = Ledger.paid(settled, by: memberID) - Ledger.share(settled, of: memberID)
         currency = settled.currency
     }

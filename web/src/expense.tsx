@@ -1,4 +1,4 @@
-import { spreadLength, type Portion } from "../../worker/src/ledger";
+import { readStay, spreadLength, type Portion, type StayDates } from "../../worker/src/ledger";
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { Form, useLedger, value } from "./context";
@@ -38,6 +38,8 @@ function Composer({ g, existing }: { g: Group; existing?: Expense }) {
     [id] = useState(() => existing?.id ?? crypto.randomUUID()),
     [date, setDate] = useState(() => existing?.createdAt.slice(0, 10) ?? today());
 
+  const [stays, setStays] = useState<Record<string, StayDates | undefined>>(() =>
+    Object.fromEntries(existing?.splits.map(s => [s.memberID, s.stay]) ?? []));
   const [spreadEnabled, setSpreadEnabled] = useState(Boolean(existing?.spread));
   const [spreadStart, setSpreadStart] = useState(existing?.spread?.start ?? "");
   const [spreadEnd, setSpreadEnd] = useState(existing?.spread?.end ?? "");
@@ -286,6 +288,7 @@ function Composer({ g, existing }: { g: Group; existing?: Expense }) {
 
             // Resolve splits
             if (!bill && (!selected.length || selected.length > 50)) throw new Error("Select between one and fifty people to split with.");
+            const spread = spreadEnabled ? { start: spreadStart, end: spreadEnd } : undefined;
             let splits: Portion[];
             if (bill) {
               splits = itemSplit(bill, paidBy);
@@ -306,7 +309,8 @@ function Composer({ g, existing }: { g: Group; existing?: Expense }) {
               if (splits.some((s) => s.amount < 0))
                 throw new Error("Each person’s final share must be at least 0.");
             } else {
-              const raw = selected.map((mid) => value(f, "weight-" + mid));
+              const dated = selected.map(mid => mode === "nights" && spreadEnabled && stays[mid] ? readStay(stays[mid]!, spread) : undefined);
+              const raw = selected.map((mid, i) => dated[i] ? String(spreadLength(dated[i]!)) : value(f, "weight-" + mid));
               if (mode === "nights" && raw.some((night) => !/^\d+$/.test(night) || Number(night) < 1 || Number(night) > 366))
                 throw new Error("Enter a whole number from 1 to 366 for each person’s nights.");
               const inputs = raw.map((input) => mode === "nights" ? Number(input) : minor(input || "0"));
@@ -319,10 +323,9 @@ function Composer({ g, existing }: { g: Group; existing?: Expense }) {
                 && selected.every((id, i) => id === existing.splits[i].memberID && inputs[i] === storedWeights[i]);
               const portions = samePercent ? existing.splits.map((s) => s.amount)
                 : mode === "exact" ? inputs : allocate(amount, inputs);
-              splits = selected.map((memberID, i): Portion => ({ memberID, amount: portions[i], ...(mode === "nights" ? { nights: inputs[i] } : {}) }));
+              splits = selected.map((memberID, i): Portion => ({ memberID, amount: portions[i], ...(mode === "nights" ? { nights: inputs[i] } : {}), ...(dated[i] ? { stay: dated[i] } : {}) }));
             }
 
-            const spread = spreadEnabled ? { start: spreadStart, end: spreadEnd } : undefined;
             const days = spread ? spreadLength(spread) : 0;
             if (spread && (days < 1 || days > 366 || splits.some((s: Portion) => (s.nights ?? 0) > days)))
               throw new Error("Choose a date range up to 366 days that covers everyone’s nights.");
@@ -482,7 +485,7 @@ function Composer({ g, existing }: { g: Group; existing?: Expense }) {
                 {spreadEnabled && <>
                   <label className="field">First day<input type="date" value={spreadStart} required onChange={(event) => setSpreadStart(event.target.value)} /></label>
                   <label className="field">End date (excluded)<input type="date" value={spreadEnd} required onChange={(event) => setSpreadEnd(event.target.value)} /></label>
-                  {mode === "nights" && <small className="muted">Each person’s nights start on the first day.</small>}
+                  {mode === "nights" && <small className="muted">Plain night counts start on the first day. Use stay dates for a different check-in or check-out.</small>}
                 </>}
               </div>
 
@@ -593,7 +596,7 @@ function Composer({ g, existing }: { g: Group; existing?: Expense }) {
                               {moneyCompact(eqShare, currency)}
                             </span>
                           )}
-                          {mode !== "equal" && isOn && (
+                          {mode !== "equal" && isOn && !(mode === "nights" && spreadEnabled && stays[p.id]) && (
                             <input
                               key={mode}
                               type="text"
@@ -609,6 +612,23 @@ function Composer({ g, existing }: { g: Group; existing?: Expense }) {
                               }}
                               required
                             />
+                          )}
+                          {mode === "nights" && isOn && spreadEnabled && (
+                            <div className="field">
+                              <label className="check">
+                                <input type="checkbox" checked={Boolean(stays[p.id])} onChange={event => setStays({
+                                  ...stays, [p.id]: event.target.checked ? { start: spreadStart, end: spreadEnd } : undefined
+                                })} />
+                                Use stay dates
+                              </label>
+                              {stays[p.id] && <>
+                                <label>Check-in<input type="date" required value={stays[p.id]?.start} onChange={event =>
+                                  setStays({...stays, [p.id]: {...stays[p.id]!, start: event.target.value}})} /></label>
+                                <label>Check-out<input type="date" required value={stays[p.id]?.end} onChange={event =>
+                                  setStays({...stays, [p.id]: {...stays[p.id]!, end: event.target.value}})} /></label>
+                                <small>{spreadLength(stays[p.id]!)} nights</small>
+                              </>}
+                            </div>
                           )}
                         </div>
                       );

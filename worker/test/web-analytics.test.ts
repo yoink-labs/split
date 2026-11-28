@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { analyze, autoGranularity, bucketKey, bucketRange, drillRows, percents } from "../../web/src/analytics";
-import type { Expense } from "../../web/src/data";
+import { personalLedger } from "../../web/src/homeDashboardData";
+import { settlementEntry, type Expense, type Group } from "../../web/src/data";
 
 const expense = (id: string, day: string, amount: number, splits: [string, number][], extra: Partial<Expense> = {}): Expense => ({
   id, groupID: "g", title: id, amount, currency: "USD", paidBy: splits[0][0],
@@ -12,10 +13,13 @@ const expense = (id: string, day: string, amount: number, splits: [string, numbe
 const project = (entry: Expense): Expense | null => {
   if (entry.currency === "USD") return entry;
   if (entry.currency !== "EUR") return null;
-  const amount = Math.round(entry.amount * 1.1);
-  const shares = entry.splits.map((s) => Math.floor((s.amount * amount) / entry.amount));
-  shares[0] += amount - shares.reduce((a, b) => a + b, 0);
-  return { ...entry, amount, currency: "USD", splits: entry.splits.map((s, i) => ({ ...s, amount: shares[i] })) };
+  return {
+    ...entry,
+    ...settlementEntry({
+      ...entry,
+      exchange: { target: "USD", rateE8: 110_000_000, date: entry.createdAt.slice(0, 10), source: "Manual" },
+    }),
+  };
 };
 
 const entries = [
@@ -27,6 +31,32 @@ const entries = [
 ];
 
 describe("web analytics", () => {
+  it("reconciles personal balances and spending across active viewer seats", () => {
+    const groups: Group[] = ["home", "trip", "removed"].map((id) => ({
+      id, name: id, currency: "USD", kind: "trip",
+      members: [
+        { id: id + "-me", name: "Me", userID: "viewer", removed: id === "removed" },
+        { id: id + "-other", name: "Jordan", userID: "friend" },
+      ],
+    }));
+    const ledger = personalLedger(groups, [
+      expense("paid", "2026-04-01", 401, [["home-me", 200], ["home-other", 201]], { groupID: "home" }),
+      expense("shared", "2026-04-02", 301, [["trip-other", 151], ["trip-me", 150]], { groupID: "trip", currency: "EUR" }),
+      expense("unrelated", "2026-04-03", 100, [["trip-other", 100]], { groupID: "trip", currency: "EUR" }),
+      expense("inaccessible", "2026-04-04", 175, [["removed-me", 75], ["removed-other", 100]], { groupID: "removed" }),
+    ], "viewer");
+
+    expect(ledger.summaries.map(({ group }) => group.id)).toEqual(["home", "trip"]);
+    expect([...ledger.totals]).toEqual([["USD", { owed: 201, owe: 0 }], ["EUR", { owed: 0, owe: 150 }]]);
+    expect([...ledger.people.get("account:friend")!.net]).toEqual([["USD", 201], ["EUR", -150]]);
+    expect(ledger.transactions.map(({ entry }) => entry.id)).toEqual(["shared", "paid"]);
+
+    const report = analyze(ledger.transactions.map(({ entry }) => entry), project, "USD", { memberByGroup: ledger.seats }, [], "week");
+    expect(report.total).toBe(365);
+    expect(report.people[0]).toMatchObject({ paid: 401, share: 365, net: 36 });
+    expect(report.buckets.reduce((sum, bucket) => sum + bucket.amount, 0)).toBe(365);
+  });
+
   it("rounds percentages to whole numbers that add up to exactly 100", () => {
     expect(percents([1, 1, 1])).toEqual([34, 33, 33]);
     expect(percents([9001, 300000, 22000]).reduce((a, b) => a + b, 0)).toBe(100);

@@ -651,6 +651,11 @@ struct EntryDetails: View {
                                 Text(displayName(portion.memberID))
                                     .font(.subheadline.weight(.medium))
                                     .foregroundStyle(Palette.ink)
+                                if let stay = portion.stay {
+                                    Text("\(stay.start) to \(stay.end)")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
                                 if let nights = portion.nights {
                                     Text("\(nights) × \(Money.text(entry.nightRate, entry.currency))/night")
                                         .font(.caption)

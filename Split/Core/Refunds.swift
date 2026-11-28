@@ -40,7 +40,7 @@ enum Refunds {
             throw LedgerError.invalid("The refund can’t be more than \(Money.text(available, original.currency)) for these people.")
         }
         let amounts = try Ledger.allocate(total: amount, weights: left.map(\.amount))
-        return zip(left, amounts).map { Portion(memberID: $0.memberID, amount: $1, nights: $0.nights) }.filter { $0.amount > 0 }
+        return zip(left, amounts).map { Portion(memberID: $0.memberID, amount: $1, nights: $0.nights, stay: $0.stay) }.filter { $0.amount > 0 }
     }
 
     /// Mirrors the Worker's checks so the composer can explain a problem before saving.

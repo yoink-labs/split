@@ -14,6 +14,8 @@ is noted next to each release. The CLI is versioned separately with
 
 ### Added
 
+- Set different check-in and check-out dates for each person on a nights split, and view daily costs in your home currency.
+
 - The Friends page on web and iOS puts accepted friends and balances first. Manage sent and received requests, and share profile payment methods with accepted friends from your payment settings.
 - Web dropdowns use a shared picker with keyboard controls, search for long lists, and a touch-friendly sheet on phones.
 - Split stays by nights and spread expenses over a date range. See each person’s daily costs on web and iOS or with the CLI and MCP.
@@ -47,6 +49,8 @@ is noted next to each release. The CLI is versioned separately with
 - Create remote MCP tokens and revoke AI, CLI, and Finance access from the Split web app.
 
 ### Changed
+
+- Home on web and iOS shows your balances by person and currency, your share of spending, and a filterable feed of your transactions across groups.
 
 - The totals at the top of web Analytics now show every figure in full at any width or zoom, moving to two columns on narrower screens.
 - Long transaction lists on iOS load in pages: analytics drill-downs show 25 at a time, and friend history and member statements show 50 with Show more.

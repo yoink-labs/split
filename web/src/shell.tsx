@@ -111,7 +111,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           className={"nav-item" + (loc.pathname === "/" ? " active" : "")}
           onClick={() => setNavOpen(false)}
         >
-          <span>Overview</span>
+          <span>Home</span>
         </Link>
         <Link
           to="/invitations"

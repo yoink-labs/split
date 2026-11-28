@@ -59,7 +59,14 @@ const allocation = {
   payers: payerSplit,
   mode: enumeration('How to allocate the expense.', ['equal','exact','percent','shares','nights']),
   spreadStart: day('First day of the spread, inclusive.'),
-  spreadEnd: day('Last day of the spread, exclusive. For nights, each person starts on the first day.'),
+  spreadEnd: day('Last day of the spread, exclusive. Plain night counts start on the first day.'),
+  stays: {
+    type: 'array', description: 'Per-person dates for a nights split. Supply [{ "member": "ID", "start": "YYYY-MM-DD", "end": "YYYY-MM-DD" }]. Use only the member ID to clear their dates on edit.',
+    minItems: 1, maxItems: 50,
+    items: { type: 'object', additionalProperties: false, required: ['member'], properties: {
+      member, start: day('Inclusive check-in.'), end: day('Exclusive check-out.')
+    } }
+  },
   participants: list('Member IDs, in rounding order. Equal split defaults to all members.', member),
   values: listValues()
 };
@@ -109,7 +116,7 @@ export const tools = [
     date:{ ...text('Optional date YYYY-MM-DD.', 10), pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
     pending:{type:'boolean',description:'Mark the refund pending until it arrives.'}, pendingNote:text('Optional reason it is pending.',500)},['group']),
   op('expenses_repeat','Set or cancel the schedule for your fixed-currency expense.',{group,expense,cadence:enumeration('Repeat cadence: off, daily, weekly, monthly, or yearly.',['off','daily','weekly','monthly','yearly'])},['group','expense','cadence']),
-  op('groups_daily','Daily costs per person in original currencies, with each expense and refund itemized.',{group,member},['group'],true),
+  op('groups_daily','Daily costs per person with each expense and refund itemized. Set currency to your home currency to convert, or omit it for original currencies.',{group,member,currency},['group'],true),
   op('groups_breakdown','Spending, categories, months, paid, shares, ledger net and suggested transfers by currency. Ledger net includes handled expenses. Suggested transfers use outstanding balances. Provide a member ID for their expense detail.',{group,member},['group'],true),
   op('items_open','List open purchases with tax and tip included in each gross amount.',{group},['group'],true),
   op('items_list','List a transaction’s items, including the whole-amount item for transactions without a receipt bill, with exact portions and any share multipliers.',{group,expense},['group','expense'],true),

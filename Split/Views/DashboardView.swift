@@ -15,23 +15,17 @@ struct DashboardView: View {
     @State private var showConverter = false
     @State private var showTipJar = TipJarStore.opensOnLaunch
 
-    private var dashboard: DashboardModel { store.dashboard }
-    private var visibleGroups: [GroupSummary] { Array(dashboard.groups.prefix(4)) }
-    private var visiblePeople: [PersonBalance] { Array(dashboard.people.prefix(5)) }
-
     var body: some View {
+        let dashboard = store.dashboard
+        let reminderPeople = dashboard.people.filter(\.hasBalance)
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: Spacing.section) {
-                    BalanceHero(
-                        owed: dashboard.owed,
-                        owe: dashboard.owe,
-                        subtitle: "Your balance across \(dashboard.groups.count) \(dashboard.groups.count == 1 ? "group" : "groups")"
-                    )
-                    quickActions
+                    DashboardPosition(model: dashboard)
+                    quickActions(canSettle: !dashboard.owe.isEmpty)
                     DisputesToResolve()
                     PendingSettlementsView()
-                    if balanceReminders, !dashboard.people.isEmpty { reminderCard }
+                    if balanceReminders, !reminderPeople.isEmpty { reminderCard(people: reminderPeople) }
                     if store.isDemo {
                         Label("Sample data · changes stay in this preview", systemImage: "sparkles")
                             .font(.caption)
@@ -48,8 +42,7 @@ struct DashboardView: View {
                             Button("Retry sync") { Task { await store.sync() } }.font(.caption.bold())
                         }
                     }
-                    adaptiveGrid
-                    footer
+                    DashboardSections(model: dashboard, inspect: { inspecting = $0 }, create: { showCreateGroup = true }, loadComplete: store.hasLoaded)
                 }
                 .padding(.horizontal, Spacing.page)
                 .padding(.vertical, Spacing.m)
@@ -67,7 +60,7 @@ struct DashboardView: View {
                     Menu {
                         Button { showNewExpense = true } label: { Label("Add expense", systemImage: "plus") }
                         Button { showNewPayment = true } label: { Label("Settle up", systemImage: "arrow.left.arrow.right") }
-                            .disabled(dashboard.people.isEmpty)
+                            .disabled(dashboard.owe.isEmpty)
                         Divider()
                         Button { showCreateGroup = true } label: { Label("New group", systemImage: "person.3") }
                         Button { showJoin = true } label: { Label("Join with code or link", systemImage: "link") }
@@ -94,7 +87,7 @@ struct DashboardView: View {
         }
     }
 
-    private var quickActions: some View {
+    private func quickActions(canSettle: Bool) -> some View {
         ActionBar {
             SplitActionButton(title: "Add expense", symbol: "plus", prominent: true) {
                 showNewExpense = true
@@ -102,11 +95,11 @@ struct DashboardView: View {
             SplitActionButton(title: "Settle up", symbol: "arrow.left.arrow.right") {
                 showNewPayment = true
             }
-            .disabled(dashboard.people.isEmpty)
+            .disabled(!canSettle)
         }
     }
 
-    private var reminderCard: some View {
+    private func reminderCard(people: [PersonBalance]) -> some View {
         Card(padding: 14) {
             HStack(alignment: .center, spacing: 12) {
                 Image(systemName: "bell.badge")
@@ -116,7 +109,7 @@ struct DashboardView: View {
                     .foregroundStyle(Palette.amber)
                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("\(dashboard.people.count) \(dashboard.people.count == 1 ? "balance" : "balances") still open")
+                    Text("\(people.count) \(people.count == 1 ? "balance" : "balances") still open")
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(Palette.ink)
                         .lineLimit(1)
@@ -127,7 +120,7 @@ struct DashboardView: View {
                         .lineLimit(2)
                 }
                 Spacer(minLength: 4)
-                ShareLink(item: reminderText) {
+                ShareLink(item: reminderText(people: people)) {
                     if size == .regular {
                         Label("Send", systemImage: "square.and.arrow.up")
                             .font(.subheadline.weight(.semibold))
@@ -148,9 +141,9 @@ struct DashboardView: View {
         }
     }
 
-    private var reminderText: String {
-        let lines = dashboard.people.prefix(6).map { person -> String in
-            let amounts = person.currencies.map { currency in
+    private func reminderText(people: [PersonBalance]) -> String {
+        let lines = people.prefix(6).map { person -> String in
+            let amounts = person.currencies.filter { person.amount($0) != 0 }.map { currency in
                 let value = person.amount(currency)
                 return (value < 0 ? "you owe them " : "they owe you ") + Money.text(abs(value), currency)
             }.joined(separator: ", ")
@@ -159,157 +152,6 @@ struct DashboardView: View {
         return "Split balance check\n\n" + lines.joined(separator: "\n") + "\n\nOpen Split to settle up."
     }
 
-    /// Two independent columns on a wide display so a long list on one side
-    /// never leaves a hole on the other; one column on a phone.
-    @ViewBuilder private var adaptiveGrid: some View {
-        if size == .regular {
-            HStack(alignment: .top, spacing: Spacing.l) {
-                VStack(alignment: .leading, spacing: Spacing.section) {
-                    peopleSection
-                    activitySection
-                }
-                .frame(maxWidth: .infinity, alignment: .top)
-                VStack(alignment: .leading, spacing: Spacing.section) {
-                    groupsSection
-                    insightsCard
-                }
-                .frame(maxWidth: .infinity, alignment: .top)
-            }
-        } else {
-            VStack(alignment: .leading, spacing: Spacing.section) {
-                peopleSection
-                groupsSection
-                activitySection
-                insightsCard
-            }
-        }
-    }
-
-    @ViewBuilder private var peopleSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            SectionHeader(title: "People", subtitle: dashboard.people.isEmpty ? "No open balances" : "Who owes whom, across every group")
-            Card(padding: 0) {
-                if visiblePeople.isEmpty {
-                    EmptyPanel(title: "Everyone’s square", message: "When you share an expense, the balance lands here.", symbol: "checkmark.seal")
-                } else {
-                    VStack(spacing: 0) {
-                        ForEach(Array(visiblePeople.enumerated()), id: \.element.id) { index, person in
-                            NavigationLink {
-                                FriendDetail(balance: person)
-                            } label: {
-                                PersonBalanceRow(person: person)
-                                    .padding(.horizontal, 14)
-                                    .padding(.vertical, 12)
-                            }
-                            .buttonStyle(.plain)
-                            if index < visiblePeople.count - 1 {
-                                Divider().overlay(Palette.line).padding(.leading, 68)
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    @ViewBuilder private var groupsSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            SectionHeader(title: "Groups", subtitle: "Trips, homes and shared tabs")
-            if visibleGroups.isEmpty {
-                Card {
-                    VStack(alignment: .leading, spacing: Spacing.s) {
-                        EmptyPanel(title: "Start a group", message: "A trip, a home, or a running tab with a friend. Coming from Splitwise? Bring your groups with you.", symbol: "person.3", actionTitle: "New group") { showCreateGroup = true }
-                        Button { showImport = true } label: { Label("Import from Splitwise", systemImage: "arrow.down.doc") }
-                            .buttonStyle(.splitSecondary)
-                            .frame(maxWidth: .infinity)
-                    }
-                }
-            } else {
-                ForEach(visibleGroups) { summary in
-                    NavigationLink {
-                        GroupDetail(groupID: summary.group.id)
-                    } label: {
-                        GroupCard(summary: summary, currentUserID: store.currentUserID)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-        }
-    }
-
-    @ViewBuilder private var activitySection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline) {
-                SectionHeader(title: "Recent activity", subtitle: "Everything you and your people changed")
-                // On compact widths the Activity tab gives its place to Analytics.
-                if size == .compact {
-                    NavigationLink("See all") { ActivityFeedView(embedded: true) }
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(Palette.evergreen)
-                        .accessibilityIdentifier("home-see-all-activity")
-                }
-            }
-            Card(padding: 0) {
-                if dashboard.recent.isEmpty {
-                    EmptyPanel(title: "Nothing to catch up on", message: "Expenses and payments appear here as you add them.", symbol: "clock")
-                } else {
-                    VStack(spacing: 0) {
-                        ForEach(Array(dashboard.recent.prefix(5).enumerated()), id: \.element.id) { index, entry in
-                            if let group = store.group(entry.groupID) {
-                                Button { inspecting = entry } label: {
-                                    EntryRow(entry: entry, group: group, currentUserID: store.currentUserID, showGroup: true, showDate: true)
-                                        .padding(.horizontal, 14)
-                                        .padding(.vertical, 11)
-                                }
-                                .buttonStyle(.plain)
-                                if index < min(5, dashboard.recent.count) - 1 {
-                                    Divider().overlay(Palette.line).padding(.leading, 66)
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private var insightsCard: some View {
-        NavigationLink {
-            AnalyticsView(groupID: nil)
-        } label: {
-            Card {
-                HStack(spacing: 14) {
-                    Image(systemName: "chart.bar.xaxis")
-                        .font(.system(size: 20, weight: .semibold))
-                        .frame(width: 46, height: 46)
-                        .background(Palette.lime.opacity(0.45))
-                        .foregroundStyle(Palette.ink)
-                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("Analytics").font(.headline).foregroundStyle(Palette.ink)
-                        Text("Where the money went, by category, person and month.").font(.caption).foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    Image(systemName: "chevron.right").font(.caption2.weight(.bold)).foregroundStyle(.tertiary)
-                }
-            }
-        }
-        .buttonStyle(.plain)
-    }
-
-    private var footer: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Split is free. No ads, no Pro tier, no subscription.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            if !dashboard.settled {
-                Text("Balances are simplified within each group, separately for every currency.")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-            }
-        }
-        .padding(.top, 4)
-    }
 }
 
 struct EntrySheet: View {
@@ -367,12 +209,13 @@ struct GroupPickerList: View {
     @EnvironmentObject private var store: ExpenseStore
 
     var body: some View {
-        ScrollView {
+        let summaries = Analytics.groupSummaries(groups: store.groups, entries: store.entries, userID: store.currentUserID)
+        return ScrollView {
             LazyVStack(spacing: 10) {
-                if store.dashboard.groups.isEmpty {
+                if summaries.isEmpty {
                     EmptyPanel(title: "No groups yet", message: "Create a group before adding an expense.", symbol: "person.3")
                 }
-                ForEach(store.dashboard.groups) { summary in
+                ForEach(summaries) { summary in
                     Button { selection = summary.group.id } label: {
                         GroupCard(summary: summary, currentUserID: store.currentUserID)
                     }

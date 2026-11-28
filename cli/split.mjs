@@ -98,6 +98,9 @@ function describeExpense(entry, names = {}, receipts = entry.receiptIDs?.join(',
     const rate = entry.nightRate ?? Math.floor((entry.amount + Math.floor(count / 2)) / count);
     lines.push(...entry.splits.map(part => `    ${names[part.memberID] ?? part.memberID}: ${part.nights} × ${money(rate)}/night → ${money(part.amount)}`));
   }
+  for (const part of entry.splits.filter(part => part.stay)) {
+    lines.push('    ' + (names[part.memberID] ?? part.memberID) + ': ' + part.stay.start + ' to ' + part.stay.end + ' (check-out)');
+  }
   if (entry.spread) lines.push(`  Spread: ${entry.spread.start} to ${entry.spread.end} (end excluded)`);
   if (entry.notes) lines.push(`  Notes: ${entry.notes}`);
   if (entry.handled) lines.push('  Handled outside Split');
@@ -383,7 +386,7 @@ export async function main(argv = process.argv.slice(2), io = terminal()) {
         const digits = String(Math.abs(amount)).padStart(3, '0');
         return `${currency} ${amount < 0 ? '-' : ''}${digits.slice(0, -2)}.${digits.slice(-2)}`;
       };
-      return console.log(clean(result).map(person => [person.name, ...person.days.map(day =>
+      return console.log(clean(result).map(person => [person.name + (person.convertedTo ? " · Home currency (" + person.convertedTo + ")" : ""), ...person.days.map(day =>
         `  ${day.day}: ${day.items.map(item => item.title + ' ' + format(item.amount, day.currency)).join(' + ')} = ${format(day.amount, day.currency)}`
       )].join('\n')).join('\n\n'));
     }

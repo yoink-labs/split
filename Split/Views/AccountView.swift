@@ -244,7 +244,7 @@ struct AccountView: View {
                         Toggle("Remind me about balances", isOn: $balanceReminders)
                             .labelsHidden()
                     }
-                    if balanceReminders, !store.dashboard.people.isEmpty {
+                    if balanceReminders, !Analytics.personBalances(groups: store.groups, entries: store.entries, userID: store.currentUserID).isEmpty {
                         reminderNote
                     }
                     rowDivider
@@ -307,7 +307,7 @@ struct AccountView: View {
 
     @ViewBuilder
     private var reminderNote: some View {
-        let count = store.dashboard.people.count
+        let count = Analytics.personBalances(groups: store.groups, entries: store.entries, userID: store.currentUserID).count
         HStack(spacing: 8) {
             Image(systemName: "bell.badge.fill")
                 .font(.caption)

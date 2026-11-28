@@ -4,11 +4,11 @@
 set -euo pipefail
 cd "${CI_PRIMARY_REPOSITORY_PATH:?Run this on Xcode Cloud}"
 
-# Build numbers come from Xcode Cloud. Builds up to 16 were uploaded by hand,
-# so Xcode Cloud's Next Build Number starts at 17 (App Store Connect → Split →
+# Build numbers come from Xcode Cloud. Builds up to 17 were uploaded by hand,
+# so Xcode Cloud's Next Build Number starts at 18 (App Store Connect → Split →
 # Xcode Cloud → Settings → Build Number). Xcode Cloud stamps CFBundleVersion
 # with CI_BUILD_NUMBER on export; mirror it in the project so the archive agrees.
-LAST_MANUAL_BUILD=16
+LAST_MANUAL_BUILD=17
 number="${CI_BUILD_NUMBER:-}"
 if [[ ! "$number" =~ ^[1-9][0-9]*$ ]]; then
   echo "error: CI_BUILD_NUMBER must be a positive integer (got '$number')." >&2

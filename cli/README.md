@@ -244,3 +244,21 @@ npm run typecheck --prefix worker
 ## Source and contributing
 
 The CLI is part of the open-source [Split repository](https://github.com/yoink-labs/split) (MIT). Run it from a checkout with `cli/bin/split`, and run its tests with `node --test cli/test/*.test.mjs`. See [CONTRIBUTING.md](../CONTRIBUTING.md).
+
+
+### Combine or restore expenses
+
+Use expense IDs from `split expenses list --group GROUP` or matching rides from
+`split expenses suggestions --group GROUP`. Combine expenses in the same
+currency and preserve every recorded payer and receipt photo.
+
+```sh
+split expenses combine --group GROUP --expenses '["FIRST","SECOND"]'
+split expenses uncombine --group GROUP --expense COMBINED
+split expenses combination activity --group GROUP
+```
+
+The default is an equal split among active group members. Use `--participants`
+to choose who shares and `--mode` and `--values` for a custom allocation.
+MCP exposes the same operations as `expenses_combine`, `expenses_uncombine`,
+`expenses_suggestions`, and `expenses_combination_activity`.

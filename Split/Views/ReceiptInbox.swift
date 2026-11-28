@@ -247,7 +247,7 @@ struct ExpensePickerSheet: View {
 
     private var expenses: [LedgerEntry] {
         let search = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        return entries.filter { $0.kind == "expense" && $0.id != excluding && (search.isEmpty || $0.title.localizedStandardContains(search)) }
+        return entries.filter { $0.kind == "expense" && $0.combinedCount == nil && $0.id != excluding && (search.isEmpty || $0.title.localizedStandardContains(search)) }
     }
 
     var body: some View {

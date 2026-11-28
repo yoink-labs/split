@@ -4,6 +4,8 @@ import { CATEGORIES, categoryMeta } from "./categories";
 import { breakdown, entryPayers, isSpend, memberPath, moneyCompact, settlementEntry, sign, type Expense, type Group } from "./data";
 import { openItems, TransactionTable } from "./transactionTable";
 import { useHomeMoney } from "./homeMoney";
+import { ExpenseCombinations } from "./expenseCombinations";
+import { useLedger } from "./context";
 import { Picker } from "./picker";
 import { Avatar, CategoryIcon } from "./ui";
 
@@ -35,6 +37,8 @@ export function GroupLedger({
   inspectedID?: string;
   onInspect: (id: string) => void;
 }) {
+  const { user } = useLedger();
+  const canCombine = g.members.some((member) => member.userID === user && !member.removed);
   const heading = useRef<HTMLHeadingElement>(null);
   const [search, setSearch] = useState("");
   const [payer, setPayer] = useState("");
@@ -83,6 +87,7 @@ export function GroupLedger({
         }} />
       ) : (
         <>
+          {canCombine && <ExpenseCombinations key={g.id} group={g} entries={entries} onInspect={onInspect} />}
           <section className="card ledger-filters" aria-label="Transaction filters">
             <div className="ledger-filter-top">
               {memberID && (

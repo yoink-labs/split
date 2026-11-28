@@ -54,6 +54,7 @@ export async function refundGuard(db: D1Database, refund: Entry, aliases: Map<st
   const payload = originalPayload ?? row.payload;
   const others = await linkedRefunds(db, refund.groupID, refund.refundOf, refund.id);
   const original: Entry = JSON.parse(payload);
+  if (original.combinedCount) throw new HTTPError(409, 'Split this expense back into its originals first.');
   if (refund.refundItems) checkItemRefund(resolveEntry(original, aliases), resolveEntry(refund, aliases), others);
   checkRefundsFit(original, [...others, refund], aliases);
   const fit = refundsGuard(refund.groupID, refund.refundOf, refund.id, others);
@@ -107,6 +108,7 @@ export async function pendingRoute(request: Request, env: Env, user: string): Pr
     WHERE e.id=? AND e.${live}`).bind(user, id).first<{payload:string;author:string;groupID:string;viewer:string}>();
   if (!row) throw new HTTPError(404, 'Expense unavailable.');
   const entry: Entry = JSON.parse(row.payload);
+  if (entry.combinedCount) throw new HTTPError(409, 'Split this expense back into its originals first.');
   if (entry.kind === 'settlement') throw new InputError('Only expenses and refunds can be pending.');
   const aliases = await groupAliases(env.DB, row.groupID);
   const viewer = aliases.get(row.viewer) ?? row.viewer;

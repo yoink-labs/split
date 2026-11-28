@@ -52,7 +52,7 @@ const receiptCount = (e: Expense) => e.receiptIDs?.length ?? 0;
 /** Expenses in the group that can take one more receipt photo, newest first. */
 function receiptTargets(entries: Expense[], except?: string) {
   return entries
-    .filter((e) => e.kind === "expense" && e.id !== except && receiptCount(e) < MAX_RECEIPTS)
+    .filter((e) => e.kind === "expense" && !e.combinedCount && e.id !== except && receiptCount(e) < MAX_RECEIPTS)
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id));
 }
 
@@ -172,9 +172,9 @@ function ReceiptViewer({
               +
             </button>
           </div>
-          <button type="button" className="btn btn-xs" aria-expanded={moving} disabled={busy} onClick={() => { setMoving(!moving); setError(""); }}>
+          {!entry.combinedCount && <button type="button" className="btn btn-xs" aria-expanded={moving} disabled={busy} onClick={() => { setMoving(!moving); setError(""); }}>
             Move…
-          </button>
+          </button>}
         </div>
       </div>
       {moving && (

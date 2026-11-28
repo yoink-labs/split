@@ -10,6 +10,8 @@ is noted next to each release. The CLI is versioned separately with
 
 ## [Unreleased]
 
+- Participants can dispute an expense on web, iOS, CLI, or MCP. Payers and recorders can review and resolve it, and the expense stays pending until then. Dispute actions appear in the thread, Activity and expense history.
+
 ### Added
 
 - Set different check-in and check-out dates for each person on a nights split, and view daily costs in your home currency.

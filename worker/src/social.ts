@@ -5,7 +5,7 @@ import { requireActiveMember } from './memberEmail';
 import { currencies, InputError } from './ledger';
 
 interface EntryScope { groupID:string }
-interface CommentRow { id:string; entryID:string; authorUserID:string; authorName:string; body:string; createdAt:string }
+interface CommentRow { id:string; entryID:string; authorUserID:string; authorName:string; body:string; createdAt:string; disputeAction?:string|null }
 
 const now=()=>new Date().toISOString();
 
@@ -27,13 +27,15 @@ async function groupSeat(env:Env,groupID:string,userID:string):Promise<string> {
 }
 
 function comment(row:CommentRow,userID:string) {
-  return {...row,mine:row.authorUserID===userID};
+  const {disputeAction,...rest}=row;
+  return {...rest,mine:row.authorUserID===userID,...(disputeAction ? {disputeAction} : {})};
 }
 
 async function comments(env:Env,entryID:string,userID:string) {
   const rows=(await env.DB.prepare(`SELECT c.id,c.entry_id AS entryID,c.author AS authorUserID,
-    COALESCE(NULLIF(trim(m.name),''),c.author_name) AS authorName,c.body,c.created_at AS createdAt
+    COALESCE(NULLIF(trim(m.name),''),c.author_name) AS authorName,c.body,c.created_at AS createdAt,v.action AS disputeAction
     FROM entry_comments c
+    LEFT JOIN expense_dispute_events v ON v.id=c.id
     LEFT JOIN members m ON m.group_id=c.group_id AND m.user_id=c.author
     WHERE c.entry_id=? ORDER BY c.created_at,c.rowid`).bind(entryID).all<CommentRow>()).results;
   return {comments:rows.map(row=>comment(row,userID))};
@@ -262,7 +264,8 @@ export async function socialRoute(request:Request,env:Env,userID:string):Promise
       const saved=await env.DB.prepare('SELECT author FROM entry_comments WHERE id=? AND entry_id=?').bind(commentID,entryID).first<{author:string}>();
       if(!saved) throw new HTTPError(404,'Comment not found.');
       if(saved.author!==userID) throw new HTTPError(403,'Only the author can delete this comment.');
-      await env.DB.prepare('DELETE FROM entry_comments WHERE id=? AND entry_id=?').bind(commentID,entryID).run();
+      const deleted=await env.DB.prepare('DELETE FROM entry_comments WHERE id=? AND entry_id=? AND id NOT IN (SELECT id FROM expense_dispute_events)').bind(commentID,entryID).run();
+      if(!deleted.meta.changes) throw new HTTPError(409,'Dispute comments are part of expense history.');
       return json({ok:true});
     }
     throw new HTTPError(404,'Not found.');

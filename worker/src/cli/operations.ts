@@ -1,4 +1,5 @@
 import { expenseTripPhase, groupKind, tripPhases, type GroupSchedule, type TripPhase } from '../tripPhases';
+import type { openDisputes } from '../disputes';
 import { historyDatabase } from '../history';
 import {settlementEntry} from '../exchange';
 import {convert, FxCache, impliedRate, rateE8 as parseRate, type Exchange} from '../fx';
@@ -29,6 +30,7 @@ interface Args {
   photos?: string[]; items?: string[]; expenses?: string[];
   from: string; to: string; category?:string; item:string; photo:string; action?:string; mode?: 'equal'|'exact'|'percent'|'shares'|'nights'|'adjustment'|'archive'|'restore'|'delete'; participants?: string[]; add?: string[]; remove?: string[]; values?: string[];
   yes?: boolean; revision?: string; preview?: boolean; settlement?: string; state?: 'handled'|'unhandled'|'pending'|'confirmed'; reset?: boolean;
+  disputeReply?: string;
   pending?: boolean; pendingNote?: string; receiver?: string; note?: string;
   methods?: { platform: string; handle: string; preferred?: boolean }[]; paypal?: string; venmo?: string; mercado?: string; alias?: string;
 }
@@ -364,7 +366,11 @@ export async function operate(name: string, input: unknown, env: Env, user: stri
       JOIN members m ON g.id=m.group_id WHERE m.user_id=? ORDER BY g.created_at DESC`).bind(user).all<Group>()).results
       .map(g => ({ ...g, kind: groupKind(g) }));
   }
-  const snapshot = await ledger<{groups: Group[]; entries: SnapshotEntry[]; settlementRequests?: Entry[]; paymentMethods?: unknown[]}>('/v1/snapshot');
+  if (name === 'disputes_list' || name === 'disputes_history') {
+    const path = name === 'disputes_list' ? '/v1/disputes' : '/v1/disputes/activity';
+    return ledger(path + (a.group ? '?group=' + encodeURIComponent(a.group) : ''));
+  }
+  const snapshot = await ledger<{groups: Group[]; entries: SnapshotEntry[]; settlementRequests?: Entry[]; paymentMethods?: unknown[]; disputes?: Awaited<ReturnType<typeof openDisputes>>}>('/v1/snapshot');
   if (name === 'profile_payment') {
     if (a.methods === undefined) return { methods: snapshot.paymentMethods ?? [] };
     await ledger('/v1/profile/payment-methods', { methods: a.methods });
@@ -373,7 +379,10 @@ export async function operate(name: string, input: unknown, env: Env, user: stri
   if (name === 'activity') {
     if (a.group && !snapshot.groups.some(g => g.id === a.group)) throw new HTTPError(404, 'Group not found.');
     const pending = (snapshot.settlementRequests ?? []).map(e => ({...e, status:'pending'}));
-    return [...snapshot.entries, ...pending].filter(e => !a.group || e.groupID === a.group)
+    const {events} = await ledger<{events: {at:string;groupID:string;[key:string]:unknown}[]}>(
+      '/v1/disputes/activity' + (a.group ? '?group=' + encodeURIComponent(a.group) : ''));
+    return [...snapshot.entries, ...pending, ...events.map(event => ({...event, kind:'dispute', createdAt:event.at}))]
+      .filter(e => !a.group || e.groupID === a.group)
       .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
   }
   const group = snapshot.groups.find(g => g.id === a.group);
@@ -403,6 +412,14 @@ export async function operate(name: string, input: unknown, env: Env, user: stri
     }
     await ledger('/v1/groups/'+group.id+'/trip-rate',{currency:a.currency,target:group.currency,rateE8});
     return { group: group.id, currency: a.currency, target: group.currency, rate: rateE8 === null ? null : a.rate };
+  }
+  if (name === 'expenses_dispute' || name === 'disputes_dismiss' || name === 'disputes_withdraw') {
+    const entry = snapshot.entries.find(e => e.groupID === group.id && e.id === a.expense);
+    if (!entry) throw new HTTPError(404,'Expense not found.');
+    return ledger('/v1/entries/' + entry.id + '/dispute', {
+      action: name === 'expenses_dispute' ? 'open' : name === 'disputes_dismiss' ? 'dismiss' : 'withdraw',
+      comment: a.comment,
+    });
   }
   if(name==='expenses_handled') {
     const e = snapshot.entries.find(x => x.groupID === group.id && x.id === a.expense);
@@ -537,11 +554,14 @@ export async function operate(name: string, input: unknown, env: Env, user: stri
       ...(photos ? { receiptIDs: photos.map(p => p.id) } : {}) };
   }
   if (name === 'expenses_edit' || name === 'expenses_delete') {
-    const before = snapshot.entries.find(e => e.groupID === group.id && e.id === a.expense && e.editable);
+    const before = snapshot.entries.find(e => e.groupID === group.id && e.id === a.expense);
+    if (before && !before.editable && !(name === 'expenses_edit' && (await ledger<{canResolve:boolean}>(`/v1/entries/${before.id}/dispute`)).canResolve))
+      throw new HTTPError(404,'Your expense was not found.');
     if (!before) throw new HTTPError(404,'Your expense was not found.');
     if (before.kind === 'settlement' || (before.kind === 'refund' && name === 'expenses_edit')) throw new InputError(before.kind === 'refund' ? 'Delete the refund and record it again to change it.' : 'Select an expense.');
-    const after = name === 'expenses_edit' ? makeExpense(a, group, before) : null;
-    const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify([name,before,after,a.reason ?? null])));
+    const resolving = snapshot.disputes?.some(d => d.entryID === before.id);
+    const after = name === 'expenses_edit' ? makeExpense(resolving ? {...a,pending:false} : a, group, before) : null;
+    const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify([name,before,after,a.reason ?? null,...(a.disputeReply !== undefined ? [a.disputeReply] : [])])));
     const revision = Array.from(new Uint8Array(bytes), b => b.toString(16).padStart(2,'0')).join('');
     if (!a.yes) {
       // These fields are stored outside the editable entry payload.
@@ -551,7 +571,7 @@ export async function operate(name: string, input: unknown, env: Env, user: stri
     }
     if (a.revision !== revision) throw new HTTPError(409,'Review a fresh preview before confirming.');
     const action = after ? 'edit' : 'delete';
-    await ledger(`/v1/entries/${before.id}/${action}`, { original: { ...before, phase: before.phase ?? null }, entry: after && { ...after, phase: a.phase === 'auto' ? null : after.phase }, reason: a.reason });
+    await ledger(`/v1/entries/${before.id}/${action}`, { original: { ...before, phase: before.phase ?? null }, entry: after && { ...after, phase: a.phase === 'auto' ? null : after.phase }, reason: a.reason, disputeReply: a.disputeReply });
     return { applied: true, id: a.expense, category: after?.category, phase: after && expenseTripPhase(group,after) };
   }
   const entries = snapshot.entries.filter(e => e.groupID === group.id);
@@ -695,13 +715,18 @@ export async function operate(name: string, input: unknown, env: Env, user: stri
       net: balances(entries, currency)[a.member] ?? 0, lines: lines.filter(line => line.currency === currency),
     }));
   }
-  if (name === 'balances') return [...new Set([group.currency, ...entries.map(e=>e.exchange?.target??e.currency)])].map(currency => {
-    const net = balances(entries,currency);
-    const pending = entries.filter(e => e.pending && !e.handled && (e.exchange?.target ?? e.currency) === currency);
-    if (!pending.length) return { currency, net, settlements: simplify(net) };
-    const confirmedNet = balances(entries,currency,{includePending:false});
-    return { currency, net, settlements: simplify(net), confirmedNet, confirmedSettlements: simplify(confirmedNet),
-      pending: pending.map(e => ({ id: e.id, title: e.title, kind: e.kind, amount: e.amount, currency: e.currency, ...(e.pendingNote ? { note: e.pendingNote } : {}) })) };
-  });
+  if (name === 'balances') {
+    const disputes = (snapshot.disputes ?? []).filter(d => d.canResolve && d.groupID === group.id);
+    return [...new Set([group.currency, ...entries.map(e=>e.exchange?.target??e.currency)])].map(currency => {
+      const net = balances(entries,currency);
+      const pending = entries.filter(e => e.pending && !e.handled && (e.exchange?.target ?? e.currency) === currency);
+      const needsAttention = disputes.filter(d => entries.some(e => e.id === d.entryID && (e.exchange?.target ?? e.currency) === currency));
+      const attention = needsAttention.length ? {disputesToResolve:needsAttention} : {};
+      if (!pending.length) return { currency, net, settlements: simplify(net), ...attention };
+      const confirmedNet = balances(entries,currency,{includePending:false});
+      return { currency, net, settlements: simplify(net), ...attention, confirmedNet, confirmedSettlements: simplify(confirmedNet),
+        pending: pending.map(e => ({ id: e.id, title: e.title, kind: e.kind, amount: e.amount, currency: e.currency, ...(e.pendingNote ? { note: e.pendingNote } : {}) })) };
+    });
+  }
   throw new HTTPError(404,'Unknown Split command.');
 }

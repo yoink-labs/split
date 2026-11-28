@@ -1,3 +1,4 @@
+import { noOpenDispute } from './disputes';
 // Refunds, credits and pending expenses. See docs/REFUNDS_AND_PENDING.md.
 import { HTTPError, json, body } from './http';
 import { Entry, entryPayers, InputError, validateEntry } from './ledger';
@@ -112,6 +113,8 @@ export async function pendingRoute(request: Request, env: Env, user: string): Pr
     JOIN members m ON m.group_id=e.group_id AND m.user_id=? AND m.removed_at IS NULL
     WHERE e.id=? AND e.${live}`).bind(user, id).first<{payload:string;author:string;groupID:string;viewer:string}>();
   if (!row) throw new HTTPError(404, 'Expense unavailable.');
+  if (await env.DB.prepare('SELECT 1 FROM expense_disputes WHERE entry_id=? AND closed_at IS NULL').bind(id).first())
+    throw new HTTPError(409, 'Resolve the dispute from the expense first.');
   const entry: Entry = JSON.parse(row.payload);
   if (entry.combinedCount) throw new HTTPError(409, 'Split this expense back into its originals first.');
   if (entry.kind === 'settlement') throw new InputError('Only expenses and refunds can be pending.');
@@ -122,7 +125,7 @@ export async function pendingRoute(request: Request, env: Env, user: string): Pr
   const ids = await members(env.DB, row.groupID);
   const save = async (next: Entry, guard?: Guard) => {
     const payload = JSON.stringify(next);
-    const update = env.DB.prepare(`UPDATE entries SET payload=? WHERE id=? AND payload=? AND ${live}${guard ? ' AND ' + guard.sql : ''}`)
+    const update = env.DB.prepare(`UPDATE entries SET payload=? WHERE id=? AND payload=? AND ${live} AND ${noOpenDispute}${guard ? ' AND ' + guard.sql : ''}`)
       .bind(payload, id, row.payload, ...(guard?.binds ?? []));
     const result = await update.run();
     if (!result.meta.changes) throw new HTTPError(409, 'This entry changed. Refresh and try again.');
@@ -175,9 +178,9 @@ export async function pendingRoute(request: Request, env: Env, user: string): Pr
     const guard = (await refundGuard(env.DB, refund, aliases, row.payload))!;
     const payload = JSON.stringify(refund);
     const insert = env.DB.prepare(`INSERT INTO entries(id,group_id,author,payload,created_at) SELECT ?,?,?,?,?
-      WHERE NOT EXISTS (SELECT 1 FROM settlement_requests WHERE id=?) AND ${guard.sql} ON CONFLICT(id) DO NOTHING`)
-      .bind(refund.id, row.groupID, user, payload, new Date().toISOString(), refund.id, ...guard.binds);
-    const update = env.DB.prepare(`UPDATE entries SET payload=? WHERE id=? AND payload=? AND ${live}
+      WHERE NOT EXISTS (SELECT 1 FROM settlement_requests WHERE id=?) AND ${guard.sql} AND NOT EXISTS (SELECT 1 FROM expense_disputes WHERE entry_id=? AND closed_at IS NULL) ON CONFLICT(id) DO NOTHING`)
+      .bind(refund.id, row.groupID, user, payload, new Date().toISOString(), refund.id, ...guard.binds,id);
+    const update = env.DB.prepare(`UPDATE entries SET payload=? WHERE id=? AND payload=? AND ${live} AND ${noOpenDispute}
       AND EXISTS (SELECT 1 FROM entries WHERE id=? AND author=? AND payload=?)`)
       .bind(JSON.stringify(confirmed), id, row.payload, refund.id, user, payload);
     const [inserted, updated] = await env.DB.batch([insert, update]);

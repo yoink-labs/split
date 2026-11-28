@@ -189,3 +189,10 @@ test('Splitwise file batches send each export and report partial failures', asyn
     arguments: { me: 'Alex', file, csv: await readFile(join(fixtures, file), 'utf8') },
   }))));
 });
+
+test('dispute help uses a positional expense ID', () => {
+  const launcher = fileURLToPath(new URL('../bin/split', import.meta.url));
+  const help = spawnSync(launcher, ['expenses', 'dispute', '--help'], { encoding:'utf8' });
+  assert.equal(help.status, 0);
+  assert.match(help.stdout, /split expenses dispute .*<id>.*--comment/);
+});

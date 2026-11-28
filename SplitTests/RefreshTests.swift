@@ -95,6 +95,15 @@ import XCTest
         XCTAssertEqual(merged.paymentMethods, [method])
     }
 
+    func testRefreshCarriesAndClearsOpenDisputes() {
+        let dispute = OpenDispute(id: "d1", entryID: "e1", groupID: "g1", title: "Dinner",
+                                  canResolve: true, canWithdraw: false, actorName: "Maya", comment: "Incorrect amount")
+        let remote = Snapshot(disputes: [dispute])
+        let merged = SnapshotMerge.merge(remote: remote, local: Snapshot(), pendingIDs: [])
+        XCTAssertEqual(merged.disputes, [dispute])
+        XCTAssertNil(SnapshotMerge.merge(remote: Snapshot(), local: merged, pendingIDs: []).disputes)
+    }
+
     func testUnchangedSnapshotCompareEqual() {
         let snapshot = Fixtures.snapshot()
         let merged = SnapshotMerge.merge(remote: snapshot, local: snapshot, pendingIDs: [])

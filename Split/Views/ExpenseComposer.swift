@@ -6,6 +6,8 @@ import Foundation
 struct AddExpenseView: View {
     var group: ExpenseGroup
     var original: LedgerEntry? = nil
+    var resolvingDispute = false
+    @State private var disputeReply = ""
     var draft: ReceiptDraft? = nil
     var onSaved: (() -> Void)? = nil
 
@@ -202,6 +204,7 @@ struct AddExpenseView: View {
                                     receiptCard
                                     categoryCard
                                     notesCard
+                                if resolvingDispute { disputeReplyCard }
                                     if repeatAllowed { repeatCard }
                                 }
                                 .frame(maxWidth: .infinity)
@@ -364,7 +367,7 @@ struct AddExpenseView: View {
         Card {
             VStack(alignment: .leading, spacing: 14) {
                 SectionHeader(title: "Details", subtitle: "What was this for?")
-                if original != nil {
+                if original != nil && !resolvingDispute {
                     TextField("Reason for change (optional)", text: $reason)
                         .textFieldStyle(.roundedBorder)
                 }
@@ -1210,6 +1213,16 @@ struct AddExpenseView: View {
         }
     }
 
+    private var disputeReplyCard: some View {
+        Card {
+            VStack(alignment: .leading, spacing: 8) {
+                SectionHeader(title: "Reply to resolve the dispute")
+                TextField("Write a reply", text: $disputeReply, axis: .vertical)
+                    .lineLimit(3...7)
+            }
+        }
+    }
+
     private func save(another: Bool) async {
         guard !saving, !reading, !repeatWorking else { return }
         saving = true
@@ -1217,7 +1230,9 @@ struct AddExpenseView: View {
         defer { saving = false }
         do {
             let entry = try buildEntry()
-            try await store.saveReceipted(entry, original: original, photos: photos, reason: String(reason.prefix(500)))
+            try await store.saveReceipted(entry, original: original, photos: photos,
+                                          reason: resolvingDispute ? nil : String(reason.prefix(500)),
+                                          disputeReply: resolvingDispute ? disputeReply : nil)
             if let draft {
                 do { try store.removeReceiptDraft(draft.id) }
                 catch { store.error = "Expense saved. The local receipt draft could not be cleared." }

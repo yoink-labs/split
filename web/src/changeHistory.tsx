@@ -23,6 +23,8 @@ const actions: Record<string, string> = {
   decline: "declined", cancel: "canceled", combine: "combined", "undo-combine": "undid the combination of",
   close: "closed", reopen: "reopened", claim: "changed the claims on", unclaim: "unclaimed items on",
   "receipt-people": "updated the people on", pair: "paired", move: "moved", detach: "detached", schedule: "updated the schedule for",
+  dispute: "disputed", "dispute-edit": "resolved the dispute by editing",
+  "dispute-dismiss": "dismissed the dispute on", "dispute-withdraw": "withdrew the dispute on",
   recurring: "recorded", resolve: "resolved", "payment-methods": "updated group payment methods for",
 };
 const labels: Record<string, string> = {

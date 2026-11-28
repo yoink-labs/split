@@ -32,6 +32,10 @@ struct SplitwiseGroup: Identifiable, Equatable {
 
     /// Net per member per currency after import, computed from the rows Split will create.
     var importedBalances: [String: [String: Int64]] {
+        Self.balances(rows)
+    }
+
+    static func balances(_ rows: [CSVExpense]) -> [String: [String: Int64]] {
         var result: [String: [String: Int64]] = [:]
         for row in rows {
             for payer in row.allPayers { result[row.currency, default: [:]][payer.name, default: 0] += payer.amount }
@@ -46,7 +50,7 @@ struct SplitwiseGroup: Identifiable, Equatable {
     var mismatches: [Mismatch] {
         let imported = importedBalances
         var result: [Mismatch] = []
-        for currency in Set(totals.keys).union(imported.keys).sorted() {
+        for currency in totals.keys.sorted() {
             guard Money.currencies.contains(currency) else { continue }
             let expected = totals[currency] ?? [:], actual = imported[currency] ?? [:]
             for member in members {
@@ -56,11 +60,64 @@ struct SplitwiseGroup: Identifiable, Equatable {
         }
         return result
     }
-    var reconciled: Bool { !totals.isEmpty && mismatches.isEmpty }
+    var reconciled: Bool { currencies.allSatisfy { totals[$0] != nil } && mismatches.isEmpty }
 }
 
 extension CSVExpense {
     var allPayers: [CSVShare] { payers?.isEmpty == false ? payers! : [CSVShare(name: payer, amount: amount)] }
+
+    func settledForImport() throws -> CSVExpense {
+        guard let exchange else { return self }
+        var settled = self
+        settled.amount = try exchange.convertedAmount(amount)
+        settled.currency = exchange.target
+        settled.exchange = nil
+        func convert(_ shares: [CSVShare]) throws -> [CSVShare] {
+            let amounts = try Exchange.distribute(settled.amount, weights: shares.map(\.amount))
+            return zip(shares, amounts).map { CSVShare(name: $0.name, amount: $1) }
+        }
+        settled.splits = try convert(splits)
+        settled.payers = try payers.map(convert)
+        return settled
+    }
+}
+
+struct SplitwiseConversion {
+    var currency: String
+    var rows: [CSVExpense]
+    var settled: [CSVExpense]
+    var estimated: Bool { rows.contains { $0.exchange != nil } }
+
+    @MainActor
+    static func prepare(_ rows: [CSVExpense], currency: String, fx: FXStore) async throws -> Self {
+        func key(_ row: CSVExpense) -> String { row.currency + "@" + row.day }
+        let foreign = Dictionary(rows.filter { $0.currency != currency }.map { (key($0), $0) },
+                                 uniquingKeysWith: { first, _ in first }).sorted { $0.key < $1.key }
+        var quotes: [String: Exchange] = [:]
+        for start in stride(from: 0, to: foreign.count, by: 4) {
+            try Task.checkCancellation()
+            try await withThrowingTaskGroup(of: (String, Exchange).self) { group in
+                for (key, row) in foreign[start..<min(start + 4, foreign.count)] {
+                    group.addTask {
+                        do {
+                            let quote = try await fx.historicalQuote(base: row.currency, target: currency, date: row.day)
+                            return (key, quote.exchange)
+                        } catch {
+                            try Task.checkCancellation()
+                            throw LedgerError.invalid("No historical rate from \(row.currency) to \(currency) for \(row.day).")
+                        }
+                    }
+                }
+                for try await (key, exchange) in group { quotes[key] = exchange }
+            }
+        }
+        let priced = rows.map { row in
+            var priced = row
+            priced.exchange = quotes[key(row)]
+            return priced
+        }
+        return try Self(currency: currency, rows: priced, settled: priced.map { try $0.settledForImport() })
+    }
 }
 
 enum SplitwiseCSV {
@@ -220,7 +277,8 @@ enum SplitwiseCSV {
         }
         guard !expenses.isEmpty else { throw LedgerError.invalid("\(fileName) has no expenses to import.") }
         guard expenses.count <= maxRows else { throw LedgerError.invalid("\(fileName) has \(expenses.count) entries. Split imports up to \(maxRows) per group.") }
-        return SplitwiseGroup(name: groupName(fromFile: fileName), members: memberColumns.map(\.1), rows: expenses, totals: totals, skipped: skipped, fingerprint: fingerprint(normalized(raw)))
+        return SplitwiseGroup(name: groupName(fromFile: fileName), members: memberColumns.map(\.1), rows: expenses,
+                              totals: totals, skipped: skipped, fingerprint: fingerprint(normalized(raw)))
     }
 }
 
@@ -228,38 +286,53 @@ enum SplitwiseCSV {
 enum MemberMapping: Hashable {
     case me
     case member(String)
+    case account(SplitUser)
     case placeholder
 }
 
 struct SplitwiseImportRequest: Encodable {
     struct NewGroup: Encodable { var id: String; var name: String; var kind: String; var currency: String }
-    struct PersonMap: Encodable { var name: String; var memberID: String?; var me: Bool? }
+    struct PersonMap: Encodable {
+        var name: String
+        var memberID: String?
+        var me: Bool?
+        var displayName: String?
+        var userID: String?
+    }
     var group: NewGroup?
     var groupID: String?
     var people: [PersonMap]
     var rows: [CSVExpense]
+    var settlementCurrency: String?
 
     /// A stable group id for this file and account, so importing the same export twice is detected.
     static func groupID(fingerprint: String, userID: String) -> String {
         "sw-" + String(SplitwiseCSV.fingerprint(userID + ":" + fingerprint).prefix(40))
     }
 
-    static func make(_ parsed: SplitwiseGroup, name: String, currency: String, kind: String, target: ExpenseGroup?, mapping: [String: MemberMapping], userID: String) throws -> SplitwiseImportRequest {
+    static func make(_ parsed: SplitwiseGroup, name: String, currency: String, kind: String, target: ExpenseGroup?, mapping: [String: MemberMapping],
+                     displayNames: [String: String] = [:], conversion: SplitwiseConversion? = nil, userID: String) throws -> SplitwiseImportRequest {
         guard mapping.values.filter({ $0 == .me }).count <= 1 else { throw LedgerError.invalid("Choose yourself once.") }
         if target == nil, !mapping.values.contains(.me) { throw LedgerError.invalid("Choose which Splitwise name is you.") }
         let people = parsed.members.map { name -> PersonMap in
+            let displayName = displayNames[name]?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let rename = displayName == "" ? nil : displayName
             switch mapping[name] ?? .placeholder {
-            case .me: return PersonMap(name: name, memberID: nil, me: true)
-            case .member(let id): return PersonMap(name: name, memberID: id, me: nil)
-            case .placeholder: return PersonMap(name: name, memberID: nil, me: nil)
+            case .me: return PersonMap(name: name, me: true, displayName: target == nil ? rename : nil)
+            case .member(let id):
+                let member = target?.members.first { $0.id == id }
+                return PersonMap(name: name, memberID: id, displayName: member?.userID == nil ? rename : nil)
+            case .account(let account): return PersonMap(name: name, userID: account.userID)
+            case .placeholder: return PersonMap(name: name, displayName: rename)
             }
         }
         let cleanName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let rows = conversion?.rows ?? parsed.rows
         if let target {
-            return SplitwiseImportRequest(group: nil, groupID: target.id, people: people, rows: parsed.rows)
+            return SplitwiseImportRequest(group: nil, groupID: target.id, people: people, rows: rows, settlementCurrency: conversion?.currency)
         }
         guard !cleanName.isEmpty, cleanName.count <= 80 else { throw LedgerError.invalid("Name the group.") }
         return SplitwiseImportRequest(group: NewGroup(id: groupID(fingerprint: parsed.fingerprint, userID: userID), name: cleanName, kind: kind, currency: currency),
-                                      groupID: nil, people: people, rows: parsed.rows)
+                                      groupID: nil, people: people, rows: rows, settlementCurrency: conversion?.currency)
     }
 }

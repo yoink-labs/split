@@ -8,6 +8,10 @@ export type Source = 'Frankfurter' | 'Frankfurter blended' | 'BCRA' | 'Manual' |
 export interface Quote { base: string; quote: string; rateE8: number; date: string; source: Source; fetchedAt: number; fallback?: boolean; saved?: boolean }
 export interface Exchange { target: string; rateE8: number; date: string; source: Source; statementAmount?: number }
 
+export function isPublishedSource(source: Source) {
+  return source === 'Frankfurter' || source === 'Frankfurter blended' || source === 'BCRA';
+}
+
 /** minor × rateE8 / 1e8, rounded half away from zero. BigInt, so large amounts never lose a cent. */
 export function convert(minor: number, rateE8: number, fromDigits = 2, toDigits = 2): number {
   if (!Number.isSafeInteger(minor) || !Number.isSafeInteger(rateE8) || rateE8 <= 0) throw new Error('Invalid conversion.');

@@ -36,6 +36,7 @@ import {
 } from "./screens";
 import { AppShell } from "./shell";
 import { SplitwiseImport } from "./splitwise";
+import { importGroupID, type ImportRow } from "../../worker/src/splitwiseCsv";
 import "./style.css";
 
 function RoutesBody() {
@@ -79,6 +80,8 @@ function RoutesBody() {
 function DemoLedger({ onExit }: { onExit: () => void }) {
   const initial = useMemo(() => createDemoState(), []);
   const [data, setData] = useState<Snapshot>(initial.snapshot);
+  const latestImportData = useRef(data);
+  useEffect(() => { latestImportData.current = data; }, [data]);
   const commentsRef = useRef<Record<string, ExpenseComment[]>>(initial.comments);
   const invitesRef = useRef<Record<string, ActiveInvite[]>>(initial.invites);
   const photosRef = useRef<Record<string, Blob>>(initial.photos);
@@ -163,6 +166,63 @@ function DemoLedger({ onExit }: { onExit: () => void }) {
         const [, gid, id] = revMatch;
         invitesRef.current[gid] = (invitesRef.current[gid] ?? []).filter((x) => x.id !== id);
         return { ok: true } as T;
+      }
+
+      if (path === "/v1/import/splitwise" && body) {
+        const { group, groupID, people, rows } = body as {
+          group?: Omit<Group, "members">;
+          groupID?: string;
+          people: { name: string; displayName?: string; memberID?: string; userID?: string; me?: boolean }[];
+          rows: ImportRow[];
+        };
+        const current = latestImportData.current;
+        const id = group?.id ?? groupID ?? "";
+        const existing = current.groups.find((g) => g.id === id);
+        const target = existing ?? (group && { ...group, members: [] });
+        if (!target) throw new Error("Group unavailable.");
+        const members = [...target.members];
+        const resolved = await Promise.all(people.map(async (person) => {
+          const userID = person.me ? DEMO_USER : person.userID;
+          const memberID = person.memberID ?? await importGroupID(person.me ? "me" : person.name.toLowerCase(), id);
+          return { ...person, userID, memberID };
+        }));
+        const imported = resolved.map((person) => {
+          const { userID, memberID } = person;
+          const match = members.findIndex((member) => member.id === memberID || (userID && member.userID === userID));
+          if (match === -1) {
+            const account = userID && current.groups.flatMap((g) => g.members).find((member) => member.userID === userID);
+            members.push({ id: memberID, userID: userID ?? null, name: person.displayName ?? (account ? account.name : person.name) });
+          } else if (!members[match].userID) {
+            members[match] = { ...members[match], name: person.displayName ?? members[match].name, userID: userID ?? null };
+          }
+          return { name: person.name, memberID: match < 0 ? memberID : members[match].id };
+        });
+        const memberIDs = new Map(imported.map((person) => [person.name, person.memberID]));
+        const existingEntries = new Set(current.entries.map((entry) => entry.id));
+        const copies = new Map<string, number>();
+        const entries = await Promise.all(rows.map(async (row): Promise<Expense> => {
+          const fingerprint = JSON.stringify({ ...row, exchange: undefined });
+          const ordinal = copies.get(fingerprint) ?? 0;
+          copies.set(fingerprint, ordinal + 1);
+          const entryID = await importGroupID(JSON.stringify([fingerprint, ordinal]), id);
+          const shares = (parts: ImportRow["splits"]) => parts.map((part) => ({ memberID: memberIDs.get(part.name)!, amount: part.amount }));
+          return {
+            id: entryID, groupID: target.id, title: row.title, kind: row.payment ? "settlement" : "expense",
+            paidBy: memberIDs.get(row.payer)!, amount: row.amount, currency: row.currency, category: row.category,
+            createdAt: row.day + "T12:00:00Z", splitMode: "exact", editable: true, splits: shares(row.splits),
+            ...(row.payers ? { payers: shares(row.payers) } : {}),
+            ...(row.exchange ? { exchange: row.exchange } : {}),
+          };
+        }));
+        const inserted = entries.filter((entry) => !existingEntries.has(entry.id));
+        const next = {
+          ...current,
+          groups: [{ ...target, members }, ...current.groups.filter((g) => g.id !== id)],
+          entries: [...inserted, ...current.entries],
+        };
+        latestImportData.current = next;
+        setData(next);
+        return { groupID: target.id, created: !existing, inserted: inserted.length, duplicates: rows.length - inserted.length, people: imported } as T;
       }
 
       // Like toggle

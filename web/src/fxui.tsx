@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Picker } from "./picker";
 import { currencies, dateText, money } from "./data";
 import {
-  convert, fx, impliedRate, rateE8, rateInput, rateText, sourceLabel, today, useFxVersion,
+  convert, fx, impliedRate, isPublishedSource, rateE8, rateInput, rateText, sourceLabel, today, useFxVersion,
   useHomeCurrency, type Exchange, type Quote,
 } from "./fx";
 
@@ -113,7 +113,7 @@ export function RateField({
   try {
     if (exchange && amount) {
       converted = exchange.statementAmount ?? convert(amount, exchange.rateE8);
-      if (converted < 1 || converted > 100_000_000_000) throw new Error();
+      if (converted < (isPublishedSource(exchange.source) ? 0 : 1) || converted > 100_000_000_000) throw new Error();
     }
   } catch {
     converted = null;

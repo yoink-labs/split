@@ -306,6 +306,83 @@
   grid-template-columns: 32px minmax(0, 1fr) minmax(0, 45%);
 }
 
+.splitwise-person-fields {
+  grid-column: 2 / -1;
+  display: grid;
+  gap: 8px;
+}
+
+.splitwise-person-fields:empty {
+  display: none;
+}
+
+.splitwise-person-details > summary {
+  color: var(--ink-2);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.splitwise-person-details[open] > div {
+  margin-top: 8px;
+}
+
+.splitwise-account {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.splitwise-data,
+.splitwise-invites,
+.splitwise-invite,
+.splitwise-currency-data {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  min-width: 0;
+}
+
+.splitwise-data {
+  gap: 20px;
+}
+
+.splitwise-currency {
+  border-bottom: 1px solid var(--border);
+}
+
+.splitwise-currency summary {
+  padding: 9px 0;
+  cursor: pointer;
+}
+
+.splitwise-currency-data {
+  padding: 4px 8px 12px;
+  font-size: 13px;
+}
+
+.splitwise-currency-data dl {
+  margin: 0;
+}
+
+.splitwise-currency-data dl div {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  padding-block: 3px;
+}
+
+.splitwise-currency-data dd {
+  margin: 0;
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+}
+
+.splitwise-currency-data small {
+  color: var(--muted);
+}
+
 .splitwise-person small,
 .splitwise-entry small {
   display: block;

@@ -43,13 +43,15 @@ Checked against real (anonymised) exports attached to
   of the remainder, allocated by largest remainder. Balances stay exact.
 - Rows where every net is zero have no effect on balances and are listed as
   left out. Currencies Split doesn't support yet are left out and named.
-- Multi-currency groups keep each entry's original currency, like Splitwise.
+- On the web and iOS, imported expenses and payments settle in your Home
+  currency. Split saves the original charge and a published rate from the
+  transaction date or the previous available date.
 - English Splitwise categories map onto Split's (Dining out → Dining, Taxi →
   Transport, Hotel → Travel, …); other names are kept.
 
-After parsing, Split recomputes every member's balance per currency and compares
-it with the **Total balance** rows. The preview says "Matches Splitwise to the
-cent" or lists each difference.
+After parsing, Split checks the source balances against the export's
+**Total balance** rows. The preview shows estimated spending, payments, and
+member balances in your Home currency.
 
 ## Saving
 

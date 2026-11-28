@@ -1,9 +1,9 @@
 import { allocate, currencies, Entry, InputError } from './ledger';
-import { convert, impliedRate, type Exchange } from './fx';
+import { convert, impliedRate, isPublishedSource, type Exchange } from './fx';
 export type { Exchange } from './fx';
 export function readExchange(e:Entry):Exchange {
   const x=e.exchange!;
-  const published=['BCRA','Frankfurter','Frankfurter blended'].includes(x.source);
+  const published=isPublishedSource(x.source);
   const chargeDay=e.createdAt.slice(0,10);
   const today=new Date().toISOString().slice(0,10);
   if(!currencies.includes(x.target) || x.target===e.currency || !Number.isSafeInteger(x.rateE8) || x.rateE8<1 || x.rateE8>1e15 ||
@@ -20,7 +20,7 @@ export function readExchange(e:Entry):Exchange {
   }
   let value: number;
   try { value=convert(e.amount,x.rateE8); } catch { throw new InputError('Converted amount is outside the supported range.'); }
-  if(value<1 || value>100_000_000_000) throw new InputError('Converted amount is outside the supported range.');
+  if(value<(published ? 0 : 1) || value>100_000_000_000) throw new InputError('Converted amount is outside the supported range.');
   return {target:x.target,rateE8:x.rateE8,date:x.date,source:x.source};
 }
 /** Older iOS clients omit the posted amount when echoing an existing exchange back. */
@@ -35,8 +35,12 @@ export function preserveStatementAmount(value:unknown,saved:Entry):unknown {
 export function settlementEntry(e:Entry):Entry {
   if(!e.exchange) return e;
   const amount=e.exchange.statementAmount ?? convert(e.amount,e.exchange.rateE8);
-  const shares=allocate(amount,e.splits.map(s=>s.amount));
-  const payers=e.payers?.length ? allocate(amount,e.payers.map(p=>p.amount)) : undefined;
+  const shares=distributeConvertedAmount(amount,e.splits.map(s=>s.amount));
+  const payers=e.payers?.length ? distributeConvertedAmount(amount,e.payers.map(p=>p.amount)) : undefined;
   return {...e,exchange:undefined,amount,currency:e.exchange.target,splits:e.splits.map((s,i)=>({...s,amount:shares[i]})),
     ...(payers?{payers:e.payers!.map((p,i)=>({memberID:p.memberID,amount:payers[i]}))}:{})};
+}
+
+export function distributeConvertedAmount(amount: number, weights: number[]) {
+  return amount === 0 ? weights.map(() => 0) : allocate(amount, weights);
 }

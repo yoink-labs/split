@@ -28,8 +28,8 @@ export async function importRows(db:D1Database,group:string,user:string,b:Record
   }
   for(const row of rows) {
     if(!row || typeof row!=='object' || !Array.isArray(row.splits) || row.splits.length>50 || !/^\d{4}-\d\d-\d\d$/.test(row.day)) throw new InputError('Invalid CSV row.');
-    if(row.exchange && row.exchange.target!==settle) throw new InputError('CSV rate must target the group settlement currency.');
     if(row.sourceGroup===group && existing.has(row.sourceID)) continue;
+    if(row.exchange && row.exchange.target!==settle) throw new InputError('CSV rate must target the group settlement currency.');
     if(row.payment) throw new InputError('Request approval for payments from Settle up. This import accepts expenses.');
     const paidBy=await resolve(row.payer), splits=[];
     for(const s of row.splits) splits.push({memberID:await resolve(s.name),amount:s.amount});

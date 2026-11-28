@@ -23,6 +23,7 @@ is noted next to each release. The CLI is versioned separately with
 
 - Enter web expenses with searchable pickers and a live split preview, and explore daily or monthly spending by category, person, and housing.
 - Redesigned Splitwise import on the web with drag-and-drop CSV selection, clearer balance checks, and a mobile layout for matching people and reviewing entries.
+- On web and iOS, claim your Splitwise history, match people to Split accounts or prepare email invites, and preview and import expenses and payments in your Home currency using historical exchange rates.
 
 ### Changed
 

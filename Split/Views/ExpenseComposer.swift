@@ -65,7 +65,12 @@ struct AddExpenseView: View {
             current.members.contains { $0.id == payer.memberID && $0.userID == session.userID && $0.removed != true }
         }
     }
-    private var showExchange: Bool { !currency.isEmpty && currency != group.currency }
+    private var settlementCurrency: String {
+        if let target = original?.exchange?.target { return target }
+        if let original, currency == original.currency { return original.currency }
+        return group.currency
+    }
+    private var showExchange: Bool { !currency.isEmpty && currency != settlementCurrency }
     private var quoteDate: String {
         original.map { String($0.createdAt.prefix(10)) } ?? Exchange.localDay(purchaseDate)
     }
@@ -135,16 +140,16 @@ struct AddExpenseView: View {
         return options
     }
     private var liveExchange: Exchange? {
-        guard currency != group.currency else { return nil }
+        guard currency != settlementCurrency else { return nil }
         if manualRate, let units = Exchange.units(rateText) {
-            return Exchange(target: group.currency, rateE8: units, date: quoteDate, source: "Manual")
+            return Exchange(target: settlementCurrency, rateE8: units, date: quoteDate, source: "Manual")
         }
-        if let quote, quote.target == group.currency, quote.rateE8 > 0 { return quote }
+        if let quote, quote.target == settlementCurrency, quote.rateE8 > 0 { return quote }
         return nil
     }
     private var convertedTotal: Int64? {
         guard let exchange = liveExchange, let total = totalAmount, total > 0,
-              let converted = exchange.statementAmount ?? FXMath.convert(total, rateE8: exchange.rateE8), converted > 0, converted <= Money.maxAmount else { return nil }
+              let converted = exchange.statementAmount ?? FXMath.convert(total, rateE8: exchange.rateE8), converted >= (exchange.isPublishedEstimate ? 0 : 1), converted <= Money.maxAmount else { return nil }
         return converted
     }
     private var splitIssue: String? {
@@ -268,17 +273,17 @@ struct AddExpenseView: View {
                         .accessibilityIdentifier("expense-amount")
                         .accessibilityLabel("Amount in \(currency)")
                 }
-                if let total = totalAmount, total > 0, currency != fx.home, group.currency != fx.home || convertedTotal == nil {
+                if let total = totalAmount, total > 0, currency != fx.home, settlementCurrency != fx.home || convertedTotal == nil {
                     Text(fx.homeText(total, currency: currency))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                if totalAmount != nil, currency != group.currency, let converted = convertedTotal {
+                if totalAmount != nil, currency != settlementCurrency, let converted = convertedTotal {
                     HStack(spacing: 6) {
                         Image(systemName: "arrow.triangle.2.circlepath")
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(Palette.evergreen)
-                        Text("Settles in \(group.currency) at \(Money.text(converted, group.currency))")
+                        Text("Settles in \(settlementCurrency) at \(Money.text(converted, settlementCurrency))")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -309,7 +314,7 @@ struct AddExpenseView: View {
                 }
             }
         } label: {
-            composerPickerLabel(currency.isEmpty ? group.currency : currency, expands: false)
+            composerPickerLabel(currency.isEmpty ? settlementCurrency : currency, expands: false)
         }
         .accessibilityIdentifier("expense-currency")
         .accessibilityLabel("Currency, \(currency)")
@@ -399,7 +404,7 @@ struct AddExpenseView: View {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(alignment: .firstTextBaseline) {
                     SectionHeader(
-                        title: "Converted to \(group.currency)",
+                        title: "Converted to \(settlementCurrency)",
                         subtitle: "Free. The \(currency) amount and this rate are saved with the expense."
                     )
                     Button { showConverter = true } label: {
@@ -410,14 +415,14 @@ struct AddExpenseView: View {
                 }
                 if let exchange = liveExchange {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("≈ " + (convertedTotal.map { Money.text($0, group.currency) } ?? "\(group.currency) —"))
+                        Text("≈ " + (convertedTotal.map { Money.text($0, settlementCurrency) } ?? "\(settlementCurrency) —"))
                             .font(.splitAmount(24, weight: .bold))
                             .foregroundStyle(Palette.ink)
                             .lineLimit(1)
                             .minimumScaleFactor(0.6)
                             .contentTransition(.numericText())
                             .accessibilityIdentifier("composer-converted")
-                        Text("at 1 \(currency) = \(FXMath.rateText(exchange.rateE8)) \(group.currency) (\(rateSource(exchange)))")
+                        Text("at 1 \(currency) = \(FXMath.rateText(exchange.rateE8)) \(settlementCurrency) (\(rateSource(exchange)))")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -435,9 +440,9 @@ struct AddExpenseView: View {
                             .keyboardType(.decimalPad)
                             .multilineTextAlignment(.trailing)
                             .font(.splitAmount(17))
-                            .accessibilityLabel("Exchange rate, one \(currency) in \(group.currency)")
+                            .accessibilityLabel("Exchange rate, one \(currency) in \(settlementCurrency)")
                             .accessibilityIdentifier("composer-rate")
-                        Text(group.currency).font(.subheadline).foregroundStyle(.secondary)
+                        Text(settlementCurrency).font(.subheadline).foregroundStyle(.secondary)
                     }
                     .padding(.horizontal, 12)
                     .frame(minHeight: 48)
@@ -473,7 +478,7 @@ struct AddExpenseView: View {
                     }
                     Spacer(minLength: 0)
                 }
-                if [currency, group.currency].contains("ARS") {
+                if [currency, settlementCurrency].contains("ARS") {
                     Text("Paid at the blue or card rate? Edit the rate.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -483,7 +488,7 @@ struct AddExpenseView: View {
             .task(id: currency + quoteDate) { await loadRate() }
         }
         .sheet(isPresented: $showConverter) {
-            ConverterView(initialAmount: totalAmount, from: currency, to: group.currency, initialDate: Exchange.date(fromDay: quoteDate))
+            ConverterView(initialAmount: totalAmount, from: currency, to: settlementCurrency, initialDate: Exchange.date(fromDay: quoteDate))
         }
     }
 
@@ -501,13 +506,13 @@ struct AddExpenseView: View {
 
     private func loadRate(publishedOnly: Bool = false) async {
         let base = currency
-        guard !base.isEmpty, base != group.currency else { return }
+        guard !base.isEmpty, base != settlementCurrency else { return }
         rateText = ""
         quote = nil
         rateError = nil
         quoteIsCached = false
         manualRate = false
-        if !publishedOnly, let original, base == original.currency, let exchange = original.exchange, exchange.target == group.currency {
+        if !publishedOnly, let original, base == original.currency, let exchange = original.exchange, exchange.target == settlementCurrency {
             if exchange.source == "Manual" {
                 manualRate = true
                 rateText = NSDecimalNumber(decimal: exchange.rate).stringValue
@@ -516,12 +521,12 @@ struct AddExpenseView: View {
                 return
             }
         }
-        if !publishedOnly, !manualRate, let tripRate = group.tripRates?[base] {
-            quote = Exchange(target: group.currency, rateE8: tripRate, date: quoteDate, source: "Trip")
+        if !publishedOnly, !manualRate, settlementCurrency == group.currency, let tripRate = group.tripRates?[base] {
+            quote = Exchange(target: settlementCurrency, rateE8: tripRate, date: quoteDate, source: "Trip")
             return
         }
         do {
-            let fetched = try await fx.quote(base: base, target: group.currency, date: quoteDate)
+            let fetched = try await fx.quote(base: base, target: settlementCurrency, date: quoteDate)
             guard !Task.isCancelled, base == currency else { return }
             quote = fetched.exchange
             quoteIsCached = fx.offline
@@ -1149,7 +1154,7 @@ struct AddExpenseView: View {
         let created: String
         if let original {
             created = original.createdAt
-        } else if currency != group.currency {
+        } else if currency != settlementCurrency {
             created = quoteDate + "T12:00:00Z"
         } else {
             created = ISO8601DateFormatter().string(from: purchaseDate)
@@ -1216,14 +1221,14 @@ struct AddExpenseView: View {
     }
 
     private func resolvedExchange() throws -> Exchange? {
-        guard currency != group.currency else { return nil }
+        guard currency != settlementCurrency else { return nil }
         if manualRate {
             guard let units = Exchange.units(rateText) else {
                 throw LedgerError.invalid("Enter a positive manual rate with up to eight decimal places.")
             }
-            return Exchange(target: group.currency, rateE8: units, date: quoteDate, source: "Manual")
+            return Exchange(target: settlementCurrency, rateE8: units, date: quoteDate, source: "Manual")
         }
-        guard let quote, quote.target == group.currency, quote.rateE8 > 0 else {
+        guard let quote, quote.target == settlementCurrency, quote.rateE8 > 0 else {
             throw LedgerError.invalid("Wait for the published rate, or choose Manual to enter your own rate.")
         }
         return quote
@@ -1279,7 +1284,7 @@ struct AddExpenseView: View {
             purchaseDate = ISO8601DateFormatter().date(from: original.createdAt) ?? Date()
             payers = original.allPayers
             payerText = Dictionary(uniqueKeysWithValues: original.allPayers.map { ($0.memberID, Money.input($0.amount)) })
-            if currency != group.currency, let exchange = original.exchange, exchange.target == group.currency {
+            if currency != settlementCurrency, let exchange = original.exchange, exchange.target == settlementCurrency {
                 if exchange.source == "Manual" {
                     manualRate = true
                     rateText = NSDecimalNumber(decimal: exchange.rate).stringValue

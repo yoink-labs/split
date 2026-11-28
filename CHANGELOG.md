@@ -12,6 +12,7 @@ is noted next to each release. The CLI is versioned separately with
 
 ### Added
 
+- Manage group members, claim addresses, and invitations from the Members tab on web and iOS. Email or resend invitations and send sign-in reminders.
 - Group creators can permanently delete groups on iOS and the web.
 - Set preferred payment methods in your profile, override them per group, and use payment handles and provider links when settling up.
 

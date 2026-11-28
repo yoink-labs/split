@@ -33,10 +33,11 @@ import { ReceiptsHub } from "./receiptsHub";
 import { Avatar, AvatarStack, CategoryIcon } from "./ui";
 
 import { GroupLedger, type LedgerView } from "./groupLedger";
+import { GroupMembers } from "./groupMembers";
 import { GroupSettings } from "./groupSettings";
 import "./groupWorkspace.css";
 
-const tabs = ["overview", "ledger", "receipts", "settle", "settings"] as const;
+const tabs = ["overview", "ledger", "receipts", "settle", "members", "settings"] as const;
 type Tab = typeof tabs[number];
 
 function ExpenseDrawer({
@@ -577,6 +578,9 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
               <span className="ws-tab-badge">{suggestions.length}</span>
             )}
           </button>
+          <button className="ws-tab" role="tab" aria-selected={tab === "members"} onClick={() => setTab("members")}>
+            Members
+          </button>
           <button className="ws-tab" role="tab" aria-selected={tab === "settings"} onClick={() => setTab("settings")}>
             Settings
           </button>
@@ -789,7 +793,8 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
         </div>
       )}
 
-      {tab === "settings" && <GroupSettings g={g} entries={entries} showRates={selectedTab === "rates"} />}
+      {tab === "members" && <GroupMembers key={g.id} group={g} entries={entries} />}
+      {tab === "settings" && <GroupSettings g={g} showRates={selectedTab === "rates"} />}
 
       {/* Slide-over Expense Inspector */}
       {inspected && (

@@ -1,4 +1,5 @@
 import { HTTPError, body, json, optionalDay } from './http';
+import { requireActiveMember } from './memberEmail';
 import { currencies, InputError } from './ledger';
 
 interface EntryScope { groupID:string }
@@ -103,14 +104,14 @@ async function updateGroup(request:Request,env:Env,groupID:string) {
 async function listInvites(env:Env,groupID:string) {
   const nowMs=Date.now();
   const groupRows=(await env.DB.prepare('SELECT token_hash AS id, expires_at AS expiresAt FROM group_invites WHERE group_id=? AND expires_at>? ORDER BY expires_at DESC').bind(groupID,nowMs).all<{id:string;expiresAt:number}>()).results;
-  const memberRows=(await env.DB.prepare(`SELECT i.token_hash AS id, i.member_id AS memberID, m.name AS memberName, i.expires_at AS expiresAt
+  const memberRows=(await env.DB.prepare(`SELECT i.token_hash AS id, i.member_id AS memberID, m.name AS memberName, i.expires_at AS expiresAt, i.recipient_email AS recipientEmail
     FROM invites i JOIN members m ON m.id=i.member_id LEFT JOIN member_aliases a ON a.member_id=m.id
     WHERE i.group_id=? AND i.expires_at>? AND m.removed_at IS NULL AND m.user_id IS NULL AND a.member_id IS NULL
-    ORDER BY i.expires_at DESC`).bind(groupID,nowMs).all<{id:string;memberID:string;memberName:string;expiresAt:number}>()).results;
+    ORDER BY i.expires_at DESC`).bind(groupID,nowMs).all<{id:string;memberID:string;memberName:string;expiresAt:number;recipientEmail:string|null}>()).results;
   return json({
     invites:[
       ...groupRows.map(r=>({id:r.id,kind:'group' as const,memberID:null,memberName:null,expiresAt:r.expiresAt})),
-      ...memberRows.map(r=>({id:r.id,kind:'member' as const,memberID:r.memberID,memberName:r.memberName,expiresAt:r.expiresAt}))
+      ...memberRows.map(r=>({id:r.id,kind:'member' as const,memberID:r.memberID,memberName:r.memberName,expiresAt:r.expiresAt,...(r.recipientEmail ? {recipientEmail:r.recipientEmail} : {})}))
     ]
   });
 }
@@ -250,12 +251,12 @@ export async function socialRoute(request:Request,env:Env,userID:string):Promise
   }
   const inviteListMatch=path.match(/^\/v1\/groups\/([\w-]+)\/invites$/);
   if(inviteListMatch && request.method==='GET') {
-    await groupSeat(env,inviteListMatch[1],userID);
+    await requireActiveMember(env,inviteListMatch[1],userID);
     return listInvites(env,inviteListMatch[1]);
   }
   const inviteRevokeMatch=path.match(/^\/v1\/groups\/([\w-]+)\/invites\/([a-f0-9]{64})\/revoke$/);
   if(inviteRevokeMatch && request.method==='POST') {
-    await groupSeat(env,inviteRevokeMatch[1],userID);
+    await requireActiveMember(env,inviteRevokeMatch[1],userID);
     return revokeInvite(env,inviteRevokeMatch[1],inviteRevokeMatch[2]);
   }
   const memberRemoveMatch=path.match(/^\/v1\/groups\/([\w-]+)\/members\/([\w-]+)\/remove$/);

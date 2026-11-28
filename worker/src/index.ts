@@ -3,7 +3,8 @@ import { preserveStatementAmount } from './exchange';
 import {groupTools,generateRecurring} from './groupTools';
 import { purchaseRoute, attachments } from './receipts';
 import { optionalDescription, socialRoute } from './social';
-import { claimSeat, lookup, refreshIdentity, resolveEntry } from './people';
+import { claimSeat, fetchVerifiedProfile, lookup, refreshIdentity, resolveEntry } from './people';
+import { activeGroupMember, activePlaceholder, emailInvitation, newInviteCode, requireActiveMember, reserveMemberEmail, sendMemberEmail, tokenHash } from './memberEmail';
 import { HTTPError, json, body, optionalDay } from './http';
 import { deviceRoute, deviceIdentity, manageDevices } from './cli/devices';
 import { cliRoute } from './cli/routes';
@@ -28,9 +29,6 @@ function memberEmail(value:unknown):string {
   if (!email) throw new InputError('Enter a valid email address.');
   return email;
 }
-const activeGroupMember = 'EXISTS (SELECT 1 FROM members WHERE group_id=? AND user_id=? AND removed_at IS NULL)';
-const activePlaceholder = `SELECT id FROM members WHERE group_id=? AND id=? AND user_id IS NULL AND removed_at IS NULL
-  AND id NOT IN (SELECT member_id FROM member_aliases) AND ${activeGroupMember}`;
 function saveMemberEmail(db:D1Database,groupID:string,memberID:string,userID:string,email:string|null) {
   return db.prepare(`INSERT INTO member_contacts(member_id,email)
     SELECT id,? FROM (${activePlaceholder}) WHERE true
@@ -42,7 +40,6 @@ async function member(env:Env,groupID:string,userID:string) {
   if(!row) throw new HTTPError(403,'You are not a member of this group.');
 }
 async function members(env:Env,groupID:string):Promise<Member[]> {return (await env.DB.prepare('SELECT id, group_id AS groupID, user_id AS userID, name FROM members WHERE group_id=? ORDER BY id').bind(groupID).all<Member>()).results;}
-const hash=async(token:string)=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(token)))).map(x=>x.toString(16).padStart(2,'0')).join('');
 export async function handle(request:Request,env:Env,userID:string):Promise<Response> {
   const url=new URL(request.url), path=url.pathname;
   const extra=await groupTools(request,env,userID);
@@ -276,6 +273,47 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
     return json({ok:true});
   }
   const addMember=path.match(/^\/v1\/groups\/([\w-]+)\/members$/);
+  if (addMember && request.method==='GET') {
+    const groupID = addMember[1];
+    await requireActiveMember(env,groupID,userID);
+    const {results} = await env.DB.prepare(`SELECT m.id AS memberID,c.email FROM member_contacts c
+      JOIN members m ON m.id=c.member_id WHERE m.group_id=? AND m.user_id IS NULL AND m.removed_at IS NULL
+        AND m.id NOT IN (SELECT member_id FROM member_aliases) AND c.email IS NOT NULL AND ${activeGroupMember}`)
+      .bind(groupID,groupID,userID).all<{memberID:string;email:string}>();
+    return json({claimEmails:results});
+  }
+  const emailAction = path.match(/^\/v1\/groups\/([\w-]+)\/members\/([\w-]+)\/(invite-email|sign-in-email)$/);
+  if (emailAction && request.method==='POST') {
+    const [,groupID,memberID,action] = emailAction;
+    await requireActiveMember(env,groupID,userID);
+    const b = await body(request);
+    if (action==='invite-email') {
+      await emailInvitation(env,groupID,memberID,userID,memberEmail(b.email));
+    } else {
+      const target = await env.DB.prepare(`SELECT user_id FROM members
+        WHERE group_id=? AND id=? AND removed_at IS NULL AND user_id IS NOT NULL AND ${activeGroupMember}`)
+        .bind(groupID,memberID,groupID,userID).first<string>('user_id');
+      if (!target) throw new HTTPError(404,'Choose a joined member in this group.');
+      const sendID = await reserveMemberEmail(env,userID,'account:'+target);
+      const profile = await fetchVerifiedProfile(env,target);
+      if (!profile) throw new HTTPError(503,'Could not look up the member’s sign-in address. Try again later.');
+      if (!profile.email) throw new HTTPError(422,'This member has no verified sign-in email.');
+      await sendMemberEmail(env,sendID,profile.email,'Sign in to Split',
+        `A member of your group sent you a reminder to sign in to Split.\n\n${env.WEB_URL}/g/${groupID}`);
+    }
+    return json({ok:true});
+  }
+  const resendInvite = path.match(/^\/v1\/groups\/([\w-]+)\/invites\/([a-f0-9]{64})\/resend$/);
+  if (resendInvite && request.method==='POST') {
+    const [,groupID,id] = resendInvite;
+    await requireActiveMember(env,groupID,userID);
+    const invite = await env.DB.prepare(`SELECT member_id,recipient_email FROM invites
+      WHERE group_id=? AND token_hash=? AND recipient_email IS NOT NULL`)
+      .bind(groupID,id).first<{member_id:string;recipient_email:string}>();
+    if (!invite) throw new HTTPError(404,'Email invitation not found.');
+    await emailInvitation(env,groupID,invite.member_id,userID,invite.recipient_email,id);
+    return json({ok:true});
+  }
   if (addMember && request.method==='POST') {
     const groupID=addMember[1];
     await member(env,groupID,userID);
@@ -301,7 +339,7 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
     const b=await body(request);
     const email=b.email===null ? null : memberEmail(b.email);
     const [,saved]=await env.DB.batch([
-      env.DB.prepare(`DELETE FROM invites WHERE group_id=? AND member_id IN (${activePlaceholder})
+      env.DB.prepare(`DELETE FROM invites WHERE group_id=? AND recipient_email IS NULL AND member_id IN (${activePlaceholder})
         AND (SELECT email FROM member_contacts WHERE member_id=?) IS NOT ?`)
         .bind(groupID,groupID,memberID,groupID,userID,memberID,email),
       saveMemberEmail(env.DB,groupID,memberID,userID,email)
@@ -311,7 +349,7 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
   }
   const inviteMatch=path.match(/^\/v1\/groups\/([\w-]+)\/invites$/);
   if(inviteMatch && request.method==='POST') {
-    const groupID=inviteMatch[1];await member(env,groupID,userID);const b=await body(request);
+    const groupID=inviteMatch[1];await requireActiveMember(env,groupID,userID);const b=await body(request);
     const hasMember=b.memberID!==undefined && b.memberID!==null;
     if (hasMember && !validID(b.memberID)) throw new InputError('Choose an unclaimed member to invite.');
     const name=typeof b.name==='string' ? b.name.trim() : '';
@@ -320,14 +358,14 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
     const email=b.email===undefined ? undefined : memberEmail(b.email);
     if (email && !hasMember && !name) throw new InputError('Choose a member or enter a name for the email invitation.');
     const memberID=name ? crypto.randomUUID() : hasMember ? b.memberID as string : undefined;
-    const code=Array.from(crypto.getRandomValues(new Uint8Array(12)), n=>'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'[n%32]).join('');
-    const digest=await hash(code), expiry=Date.now()+7*86400000;
+    const code=newInviteCode();
+    const digest=await tokenHash(code), expiry=Date.now()+7*86400000;
     if (memberID) {
       const statements=[
         name
           ? env.DB.prepare(`INSERT INTO members(id,group_id,user_id,name) SELECT ?,?,NULL,? WHERE ${activeGroupMember}`)
             .bind(memberID,groupID,name,groupID,userID)
-          : env.DB.prepare(`DELETE FROM invites WHERE group_id=? AND member_id IN (${activePlaceholder})`)
+          : env.DB.prepare(`DELETE FROM invites WHERE group_id=? AND recipient_email IS NULL AND member_id IN (${activePlaceholder})`)
             .bind(groupID,groupID,memberID,groupID,userID)
       ];
       if (email) statements.push(saveMemberEmail(env.DB,groupID,memberID,userID,email));
@@ -339,17 +377,23 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
       await env.DB.batch([env.DB.prepare('DELETE FROM group_invites WHERE expires_at<=?').bind(Date.now()),
         env.DB.prepare('INSERT INTO group_invites VALUES (?,?,?)').bind(digest,groupID,expiry)]);
     }
-    return json({url:`${env.APP_URL}/join/${code}`,code,...(memberID ? {memberID} : {})});
+    return json({url:`${env.APP_URL}/join/${code}`,code,id:digest,...(memberID ? {memberID} : {})});
   }
   if(path==='/v1/join' && request.method==='POST') {
     const b=await body(request);
     if(typeof b.token!=='string'||b.token.length>100)throw new InputError('Invalid invite.');
     const raw=b.token.trim(), token=raw.length===72?raw:raw.replace(/[\s-]/g,'').toUpperCase();
-    const digest=await hash(token);
-    const invite=await env.DB.prepare(`SELECT group_id,member_id FROM invites WHERE token_hash=? AND expires_at>?
-      UNION ALL SELECT group_id,NULL FROM group_invites WHERE token_hash=? AND expires_at>?`)
-      .bind(digest,Date.now(),digest,Date.now()).first<{group_id:string;member_id:string|null}>();
+    const digest=await tokenHash(token);
+    const invite=await env.DB.prepare(`SELECT group_id,member_id,recipient_email FROM invites WHERE token_hash=? AND expires_at>?
+      UNION ALL SELECT group_id,NULL,NULL FROM group_invites WHERE token_hash=? AND expires_at>?`)
+      .bind(digest,Date.now(),digest,Date.now()).first<{group_id:string;member_id:string|null;recipient_email:string|null}>();
     if(!invite)throw new HTTPError(404,'This invitation is invalid or expired. Ask for a new link or code.');
+    if (invite.recipient_email) {
+      const profile = await fetchVerifiedProfile(env,userID);
+      if (!profile) throw new HTTPError(503,'Could not verify your sign-in email. Try again later.');
+      if (profile.email !== invite.recipient_email)
+        throw new HTTPError(403,'Sign in with the verified primary email address that received this invitation.');
+    }
     if (invite.member_id) {
       if (!await claimSeat(env.DB,invite.group_id,invite.member_id,userID,digest)) throw new HTTPError(409,'This invitation has expired or has already been claimed.');
     } else {

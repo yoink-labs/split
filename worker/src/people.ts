@@ -87,12 +87,7 @@ export async function saveProfile(db: D1Database, profile: Profile) {
   ]);
 }
 
-export async function refreshIdentity(env: Env, userID:string) {
-  const recent=await env.DB.prepare(`SELECT p.user_id FROM split_profiles p WHERE p.user_id=? AND p.refreshed_at>?
-    AND NOT EXISTS (SELECT 1 FROM member_contacts c JOIN members m ON m.id=c.member_id
-      LEFT JOIN member_aliases a ON a.member_id=m.id WHERE c.email=p.email AND m.user_id IS NULL AND m.removed_at IS NULL AND a.member_id IS NULL)`)
-    .bind(userID,Date.now()-300000).first();
-  if (recent) return;
+export async function fetchVerifiedProfile(env: Env, userID: string): Promise<Profile | null> {
   // Always verify current ownership before claiming an email-addressed seat.
   const request = new Request('https://api.clerk.com/v1/users/' + encodeURIComponent(userID), {
     headers:{Authorization:'Bearer '+env.CLERK_SECRET_KEY,Accept:'application/json','User-Agent':'Split-API/0.2'},
@@ -102,16 +97,26 @@ export async function refreshIdentity(env: Env, userID:string) {
   try { response = await fetch(request); }
   catch {
     console.warn(JSON.stringify({event:'identity_lookup_unavailable',type:'network'}));
-    return;
+    return null;
   }
   if (!response.ok) {
     // Identity enrichment can be retried. Never claim evidence from a stale profile.
     console.warn(JSON.stringify({event:'identity_lookup_unavailable',status:response.status}));
-    return;
+    return null;
   }
   const user: ClerkUser = await response.json();
   if (user.id !== userID) throw new Error('Identity mismatch');
-  await saveProfile(env.DB, verifiedProfile(user));
+  return verifiedProfile(user);
+}
+
+export async function refreshIdentity(env: Env, userID:string) {
+  const recent=await env.DB.prepare(`SELECT p.user_id FROM split_profiles p WHERE p.user_id=? AND p.refreshed_at>?
+    AND NOT EXISTS (SELECT 1 FROM member_contacts c JOIN members m ON m.id=c.member_id
+      LEFT JOIN member_aliases a ON a.member_id=m.id WHERE c.email=p.email AND m.user_id IS NULL AND m.removed_at IS NULL AND a.member_id IS NULL)`)
+    .bind(userID,Date.now()-300000).first();
+  if (recent) return;
+  const profile = await fetchVerifiedProfile(env,userID);
+  if (profile) await saveProfile(env.DB, profile);
 }
 
 export async function lookup(db: D1Database, userID: string, raw: unknown) {

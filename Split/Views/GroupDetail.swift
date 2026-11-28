@@ -35,7 +35,6 @@ struct GroupDetail: View {
     @EnvironmentObject private var store: ExpenseStore
     @EnvironmentObject private var session: SessionStore
     @State private var presentedSheet: GroupDetailSheet?
-    @State private var inviting = false
     @State private var settings = false
     @State private var insights = false
     @State private var section: Section = .overview
@@ -46,7 +45,7 @@ struct GroupDetail: View {
     @State private var participant = ""
 
     private enum Section: String, CaseIterable {
-        case overview = "Overview", ledger = "Ledger", receipts = "Receipts"
+        case overview = "Overview", ledger = "Ledger", receipts = "Receipts", members = "Members"
     }
 
     private enum LedgerFilter: String, CaseIterable {
@@ -97,12 +96,14 @@ struct GroupDetail: View {
                         .pickerStyle(.segmented)
                         .accessibilityIdentifier("group-workspace")
                         .frame(minHeight: HitTarget.minimum)
-                        if section != .receipts { expenseActions(group) }
+                        if section == .overview || section == .ledger { expenseActions(group) }
                         switch section {
                         case .overview:
                             overview(group)
                         case .ledger:
                             expensesSection(group)
+                        case .members:
+                            InviteView(group: group).id(group.id)
                         case .receipts:
                             GroupReceiptsView(group: group, entries: entries) {
                                 present(.expense(group))
@@ -119,7 +120,6 @@ struct GroupDetail: View {
                 .toolbar {
                     ToolbarItemGroup(placement: .topBarTrailing) {
                         Button { present(.balances(group)) } label: { Label("Balances", systemImage: "chart.pie") }
-                        Button { inviting = true } label: { Label("People", systemImage: "person.2") }
                         Menu {
                             Button { insights = true } label: { Label("Insights", systemImage: "chart.bar.xaxis") }
                             Button { settings = true } label: { Label("Group settings", systemImage: "slider.horizontal.3") }
@@ -128,7 +128,6 @@ struct GroupDetail: View {
                         }
                     }
                 }
-                .sheet(isPresented: $inviting) { InviteView(group: group) }
                 .sheet(isPresented: $settings) { GroupTools(group: group) }
                 .sheet(isPresented: $insights) {
                     NavigationStack {

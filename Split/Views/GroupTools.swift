@@ -79,28 +79,6 @@ struct GroupTools: View {
 
                 Section {
                     ForEach(current.members) { member in
-                        HStack(spacing: 10) {
-                            Avatar(name: member.userID == session.userID ? "You" : member.name, size: 34)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(member.userID == session.userID ? "You" : member.name).font(.subheadline.weight(.medium))
-                                if member.userID == nil { Text("Placeholder").font(.caption).foregroundStyle(.secondary) }
-                            }
-                            Spacer()
-                            Button { UIPasteboard.general.string = member.email } label: {
-                                if let email = member.email, !email.isEmpty { Image(systemName: "envelope") }
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel("Copy email for \(member.name)")
-                        }
-                    }
-                } header: {
-                    Text("People")
-                } footer: {
-                    Text("Add or invite people from the group header. Placeholders can claim their history later.")
-                }
-
-                Section {
-                    ForEach(current.members) { member in
                         LabeledContent(member.userID == session.userID ? "You" : member.name) {
                             TextField("1", text: Binding(get: { weights[member.id] ?? "" }, set: { weights[member.id] = $0 }))
                                 .multilineTextAlignment(.trailing)

@@ -7,6 +7,7 @@ import { useLedger } from "./context";
 import { entryPath, memberPath, money, shortDate, sign } from "./data";
 import { personalLedger } from "./homeDashboardData";
 import { useHomeMoney } from "./homeMoney";
+import { Picker } from "./picker";
 import { PendingPayments } from "./settlements";
 import { Avatar, CategoryIcon, EmptyState } from "./ui";
 import "./homeDashboard.css";
@@ -148,17 +149,23 @@ export function HomeOverview() {
         <section className="card personal-panel" id="personal-transactions" ref={feed} tabIndex={-1} aria-labelledby="personal-transactions-title">
           <h2 id="personal-transactions-title">Your transactions</h2>
           <div className="personal-filters">
-            <label>Group<select value={group} onChange={(event) => update(setGroup, event.target.value)}>
-              <option value="">All groups</option>
-              {ledger.summaries.map(({ group }) => <option key={group.id} value={group.id}>{group.name}</option>)}
-            </select></label>
-            <label>Category<select value={category} onChange={(event) => update(setCategory, event.target.value)}>
-              <option value="">All categories</option>
-              {categories.map((id) => <option key={id} value={id}>{categoryMeta(id).label}</option>)}
-            </select></label>
-            <label>Direction<select value={direction} onChange={(event) => update(setDirection, event.target.value)}>
-              <option value="">All transactions</option><option value="owed">Owed to you</option><option value="owe">You owe</option>
-            </select></label>
+            <Picker label="Group" value={group} onChange={(value) => update(setGroup, value)}
+              search={ledger.summaries.length > 8}
+              options={[
+                { value: "", label: "All groups" },
+                ...ledger.summaries.map(({ group }) => ({ value: group.id, label: group.name })),
+              ]} />
+            <Picker label="Category" value={category} onChange={(value) => update(setCategory, value)}
+              options={[
+                { value: "", label: "All categories" },
+                ...categories.map((id) => ({ value: id, label: categoryMeta(id).label })),
+              ]} />
+            <Picker label="Direction" value={direction} onChange={(value) => update(setDirection, value)}
+              options={[
+                { value: "", label: "All transactions" },
+                { value: "owed", label: "Owed to you" },
+                { value: "owe", label: "You owe" },
+              ]} />
             {bucket && <button className="btn btn-sm" type="button" onClick={() => update(setBucket, "")}>Clear period {bucket}</button>}
           </div>
           {filtered.slice(0, limit).map(({ entry, paid, share }) => <Link className="personal-transaction" to={entryPath(entry)} key={entry.id}>

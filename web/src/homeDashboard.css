@@ -43,8 +43,7 @@
 .personal-person[open] .personal-chevron { transform: rotate(90deg); }
 .personal-transfer { border-inline-start: 2px solid var(--border); margin: 0 0 10px 15px; padding: 4px 0 4px 10px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
 .personal-filters { display: flex; align-items: end; flex-wrap: wrap; gap: 8px 12px; margin: 12px 0; }
-.personal-filters label { display: grid; gap: 4px; min-width: 0; font-size: 12px; }
-.personal-filters select { max-width: 100%; }
+.personal-filters > .picker { flex: 1 1 140px; max-width: 240px; }
 .personal-transaction > span:nth-child(2) { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 #personal-transactions { scroll-margin-top: 18px; }
 .personal-empty, .personal-more { margin-top: 10px; }

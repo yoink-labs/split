@@ -658,7 +658,7 @@ button.picker-trigger.user-pill[aria-expanded="true"] { background: var(--surfac
 .receipts-page { display: grid; gap: 14px; min-width: 0; }
 .receipts-hub {
   display: grid;
-  grid-template-columns: 244px minmax(260px, 1fr) minmax(320px, 1.15fr);
+  grid-template-columns: 244px minmax(320px, 1.15fr) minmax(260px, 1fr);
   gap: 14px;
   align-items: stretch;
   min-width: 0;
@@ -691,6 +691,7 @@ button.picker-trigger.user-pill[aria-expanded="true"] { background: var(--surfac
   top: 0;
   z-index: 1;
 }
+.receipts-list-subhead h3 { font-size: inherit; }
 .receipt-list-item {
   width: 100%;
   text-align: left;
@@ -712,6 +713,7 @@ button.picker-trigger.user-pill[aria-expanded="true"] { background: var(--surfac
   box-shadow: inset 3px 0 0 var(--primary);
 }
 .receipt-list-top {
+  width: 100%;
   display: flex;
   justify-content: space-between;
   align-items: baseline;
@@ -729,6 +731,27 @@ button.picker-trigger.user-pill[aria-expanded="true"] { background: var(--surfac
 }
 .receipt-list-sub .warn,
 .receipt-list-sub .pos { font-weight: 600; flex-shrink: 0; }
+
+.receipt-list-people { font-size: 12px; overflow-wrap: anywhere; }
+.receipts-detail-pane > .receipts-close-bar { max-height: 235px; overflow-y: auto; flex-shrink: 0; }
+.receipt-management-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.receipt-person-edit {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 5px 0;
+}
+.receipt-person-edit > span { display: inline-flex; align-items: center; gap: 6px; }
+.receipt-person-edit select { width: auto; }
+.receipts-detail-pane > .receipt-edit-people { max-height: none; overflow: visible; }
+.receipt-people-scroll { max-height: 160px; overflow-y: auto; margin: 4px 0 8px; }
 
 /* Receipts inbox: compact horizontal cards that fill the row evenly */
 .receipts-inbox .card-head { padding: 12px 16px; flex-wrap: wrap; align-items: center; gap: 10px 14px; }
@@ -894,29 +917,29 @@ button.picker-trigger.user-pill[aria-expanded="true"] { background: var(--surfac
   .receipts-list-pane,
   .receipts-hub .photo-stage,
   .receipts-detail-pane {
-    height: min(68vh, 580px);
+    max-height: min(76vh, 720px);
   }
 }
 @media (max-width: 1060px) {
   .receipts-hub { grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); }
   .receipts-list-pane { grid-column: 1 / -1; height: auto; }
   .receipts-list-scroll { display: flex; overflow-x: auto; gap: 8px; padding: 10px 12px; }
-  .receipts-list-group { display: contents; }
-  .receipts-list-subhead { display: none; }
+  .receipts-list-group { flex: 0 0 216px; }
+  .receipts-list-subhead { position: static; }
+  .receipt-list-item:last-child { border-bottom: 1px solid var(--border); }
   .receipt-list-item {
-    width: auto;
-    flex: 0 0 auto;
-    min-width: 210px;
+    width: 100%;
+    min-width: 0;
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
   }
   .receipts-hub .photo-stage,
-  .receipts-detail-pane { height: min(62vh, 520px); }
+  .receipts-detail-pane { max-height: min(76vh, 720px); }
 }
 @media (max-width: 720px) {
   .receipts-hub { grid-template-columns: minmax(0, 1fr); }
   .receipts-hub .photo-stage,
-  .receipts-detail-pane { height: auto; }
+  .receipts-detail-pane { max-height: none; }
   .photo-viewport { height: 340px; min-height: 0; }
   .inbox-upload { width: 100%; }
   .inbox-upload input[type="text"] { flex: 1; width: auto; min-width: 0; font-size: 16px; }

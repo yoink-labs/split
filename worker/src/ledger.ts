@@ -121,7 +121,11 @@ export function validateEntry(value: unknown, memberIDs: string[], previous?:Bil
   // Encode nights as weighted shares with optional counts so older clients can still decode the ledger.
   // Whitelist the wire representation so callers cannot persist extra fields.
   const entry:Entry={id:e.id,groupID:e.groupID,title:e.title.trim(),amount:e.amount,currency:e.currency,paidBy:e.paidBy,splits:e.splits.map(s=>({memberID:s.memberID,amount:s.amount,...(s.nights === undefined ? {} : {nights:s.nights})})),kind:e.kind,splitMode:usesNights ? 'shares' : e.splitMode,createdAt:e.createdAt,...extras};
-  if (options?.reconcileBill) reconcileBill(entry);
+  if (options?.reconcileBill) {
+    if (entry.bill && previous?.closed===false && entry.bill.tax===previous.tax && entry.bill.tip===previous.tip &&
+        JSON.stringify(entry.bill.items)===JSON.stringify(previous.items)) entry.bill.closed=false;
+    else reconcileBill(entry);
+  }
   return entry;
 }
 export function validID(id: unknown): id is string { return typeof id === 'string' && /^[a-zA-Z0-9_-]{8,80}$/.test(id); }

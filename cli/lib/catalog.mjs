@@ -23,7 +23,7 @@ const receiptItem = {
 };
 const receiptBill = {
   type: 'object',
-  description: 'Itemized receipt with line items, optional tax and tip. Unclaimed items stay with the payer until claimed.',
+  description: 'Itemized receipt, e.g. {"items":[{"title":"Coffee","amount":"4.50"}]}. Each item needs a title and an amount. Tax and tip are optional. Unclaimed items stay with the payer until claimed.',
   properties: {
     items: { type: 'array', items: receiptItem, minItems: 1, maxItems: 50 },
     tax: money,
@@ -34,7 +34,7 @@ const receiptBill = {
 };
 const receiptPhotos = {
   type: 'array',
-  description: 'Up to four base64-encoded JPEG receipt photos (<= 240 KiB each). On the command line pass --photo PATH; through the local split mcp server you may pass absolute file paths. Both convert HEIC/PNG and shrink images for you.',
+  description: 'Up to four JPEG receipt photos (240 KiB each), encoded as base64. Pass --photo PATH on the command line or absolute paths to local split mcp. On macOS these paths also support HEIC/PNG and image resizing. Convert PDFs to an image first.',
   items: { type: 'string', minLength: 16, maxLength: 327680 },
   minItems: 1,
   maxItems: 4
@@ -46,7 +46,7 @@ const payerSplit = {
   minItems: 1, maxItems: 50
 };
 const allocation = {
-  rate: { ...text('Manual rate, group currency units per one expense currency.'), pattern:'^[0-9]{1,8}([.][0-9]{1,8})?$' },
+  rate: { ...text('Group currency per 1 unit of expense currency. For a BRL expense in a USD group, --rate 0.18 means 1 BRL = 0.18 USD. On add, a saved trip rate is used when available.'), pattern:'^[0-9]{1,8}([.][0-9]{1,8})?$' },
   category: text('Spending category.',50), title: text('Expense description.'), amount: money, payer: member, currency,
   notes: text('Optional notes on this expense.', 2000),
   payers: payerSplit,
@@ -77,8 +77,8 @@ export const tools = [
     currency:enumeration('Foreign currency to convert from.',['USD','ARS','EUR','GBP','BRL','CAD','AUD','MXN']),
     rate:{...text('Trip currency units per one foreign unit, e.g. "1050.5", or "none".',17),pattern:'^(none|(0|[1-9][0-9]{0,6})([.][0-9]{1,8})?)$'}},['group','currency','rate']),
   op('expenses_handled','Mark an expense you paid as already handled outside Split, or unhandled again.',{group,expense,state:enumeration('Defaults to handled.',['handled','unhandled'])},['group','expense']),
-  op('expenses_repeat','Set or cancel the schedule for your fixed-currency expense.',{group,expense,cadence:enumeration('UTC schedule.',['off','daily','weekly','monthly','yearly'])},['group','expense','cadence']),
-  op('groups_breakdown','Spending, categories, months, paid, shares, balances and suggested transfers by currency. Provide a member ID for their expense detail.',{group,member},['group'],true),
+  op('expenses_repeat','Set or cancel the schedule for your fixed-currency expense.',{group,expense,cadence:enumeration('Repeat cadence: off, daily, weekly, monthly, or yearly.',['off','daily','weekly','monthly','yearly'])},['group','expense','cadence']),
+  op('groups_breakdown','Spending, categories, months, paid, shares, ledger net and suggested transfers by currency. Ledger net includes handled expenses. Suggested transfers use outstanding balances. Provide a member ID for their expense detail.',{group,member},['group'],true),
   op('items_open','List open purchases with tax and tip included in each gross amount.',{group},['group'],true),
   op('items_list','List every line item on an itemized expense with its ID, gross amount including tax and tip, claimants and share multipliers.',{group,expense},['group','expense'],true),
   op('items_claim','Add or remove a claimant on a purchase. Defaults to yourself. Use share for a partial claim, e.g. 0.5 or 2.',{group,expense,item:id('Receipt item ID.'),member,share,action:enumeration('Defaults to add.',['add','remove'])},['group','expense','item']),
@@ -135,14 +135,14 @@ export const tools = [
     email: text('Optional email for verified matching. Use with --member or --name.',254)
   }, ['group']),
   op('join','Claim an invited member slot with a Split invite link or code.', { invite: text('Invite link or code.',512) }, ['invite']),
-  op('expenses_list','List expenses in a group. Amounts in results are integer minor units.', { group }, ['group'], true),
+  op('expenses_list','List expenses with dates, payers and IDs. Amounts in results are integer minor units.', { group }, ['group'], true),
   op('expenses_add','Record a standard or itemized expense. Supply an amount for standard expenses. Itemized expenses use the sum of the bill, and any supplied amount must match it.', {
     group, ...allocation,
     date: { ...text('Optional expense date YYYY-MM-DD.', 10), pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
     bill: receiptBill,
     photos: receiptPhotos
   }, ['group','title','payer']),
-  op('expenses_show','Show one expense in full: payers, splits, exchange rate, receipt items, photos, comments and likes.', { group, expense }, ['group','expense'], true),
+  op('expenses_show','Show one expense in full, including payers, splits, exchange, receipts, comments and likes.', { group, expense: id('Full expense ID or a unique prefix of at least eight characters from expenses list.') }, ['group','expense'], true),
   op('expenses_like','Like or unlike an expense.', { group, expense }, ['group','expense']),
   op('comments_list','List comments on an expense.', { group, expense }, ['group','expense'], true),
   op('comments_add','Comment on an expense.', { group, expense, text: text('Comment.', 2000) }, ['group','expense','text']),
@@ -155,6 +155,6 @@ export const tools = [
   op('settlements_respond','Approve or decline a payment someone recorded to you, or cancel one you recorded. The ID comes from settlements pending.', {
     group, settlement: id('Pending payment ID.'), action: enumeration('approve or decline as the recipient; cancel as the payer.', ['approve','decline','cancel'])
   }, ['group','settlement','action']),
-  op('settle_up','Request approval for a payment you made. The recipient confirms it in Split.', { group, from: member, to: member, amount: money, currency }, ['group','from','to','amount']),
-  op('activity','List expenses and settlements newest first, optionally filtered by group.', { group }, [], true)
+  op('settle_up','Request approval for a payment you made, or record a payment you received. The recipient confirms the payment.', { group, from: member, to: member, amount: money, currency }, ['group','from','to','amount']),
+  op('activity','List expenses, settlements and payment requests awaiting your confirmation or sent by you, newest first. Optionally filter by group.', { group }, [], true)
 ];

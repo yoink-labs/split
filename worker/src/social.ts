@@ -29,8 +29,9 @@ function comment(row:CommentRow,userID:string) {
 
 async function comments(env:Env,entryID:string,userID:string) {
   const rows=(await env.DB.prepare(`SELECT c.id,c.entry_id AS entryID,c.author AS authorUserID,
-    COALESCE(NULLIF(trim(p.name),''),c.author_name) AS authorName,c.body,c.created_at AS createdAt
-    FROM entry_comments c LEFT JOIN split_profiles p ON p.user_id=c.author
+    COALESCE(NULLIF(trim(m.name),''),c.author_name) AS authorName,c.body,c.created_at AS createdAt
+    FROM entry_comments c
+    LEFT JOIN members m ON m.group_id=c.group_id AND m.user_id=c.author
     WHERE c.entry_id=? ORDER BY c.created_at,c.rowid`).bind(entryID).all<CommentRow>()).results;
   return {comments:rows.map(row=>comment(row,userID))};
 }
@@ -38,13 +39,15 @@ async function comments(env:Env,entryID:string,userID:string) {
 async function addComment(env:Env,scope:EntryScope,entryID:string,userID:string,value:unknown) {
   const text=(value as Record<string,unknown>).body;
   if(typeof text!=='string' || !text.trim() || text.trim().length>2000) throw new InputError('Write a comment of up to 2,000 characters.');
-  const profile=await env.DB.prepare('SELECT name FROM split_profiles WHERE user_id=?').bind(userID).first<{name:string}>();
-  const row:CommentRow={id:crypto.randomUUID(),entryID,authorUserID:userID,authorName:profile?.name?.trim()||'Split member',body:text.trim(),createdAt:now()};
+  const seat=await env.DB.prepare('SELECT name FROM members WHERE group_id=? AND user_id=?').bind(scope.groupID,userID).first<{name:string}>();
+  if(!seat) throw new HTTPError(403,'You are not a member of this group.');
+  const row:CommentRow={id:crypto.randomUUID(),entryID,authorUserID:userID,authorName:seat.name.trim()||'Split member',body:text.trim(),createdAt:now()};
   // The guarded insert keeps a comment from surviving a concurrent entry deletion.
   const saved=await env.DB.prepare(`INSERT INTO entry_comments(id,entry_id,group_id,author,author_name,body,created_at)
     SELECT ?,?,?,?,?,?,? WHERE EXISTS
-      (SELECT 1 FROM entries WHERE id=? AND id NOT IN (SELECT entry_id FROM deleted_entries))`)
-    .bind(row.id,entryID,scope.groupID,userID,row.authorName,row.body,row.createdAt,entryID).run();
+      (SELECT 1 FROM entries WHERE id=? AND id NOT IN (SELECT entry_id FROM deleted_entries))
+      AND EXISTS (SELECT 1 FROM members WHERE group_id=? AND user_id=?)`)
+    .bind(row.id,entryID,scope.groupID,userID,row.authorName,row.body,row.createdAt,entryID,scope.groupID,userID).run();
   if(!saved.meta.changes) throw new HTTPError(404,'Expense not found.');
   return json(comment(row,userID),201);
 }

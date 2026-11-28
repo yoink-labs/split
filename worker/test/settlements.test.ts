@@ -75,6 +75,22 @@ it('authorizes decline and cancellation independently and prevents retries from 
   expect(await snapshot('recipient-user')).toEqual(expect.objectContaining({entries:[],settlementRequests:[]}));
 });
 
+it.each([false, true])('lets the recipient record a received payment with a claimed payer: %s', async claimedPayer => {
+  await setup(true);
+  if (!claimedPayer) await env.DB.prepare('UPDATE members SET user_id=NULL WHERE id=?').bind(payer).run();
+  await expect(call('observer-user','/v1/settlements',payment)).rejects.toMatchObject({status:403});
+  await expect(call('outsider','/v1/settlements',payment)).rejects.toMatchObject({status:403});
+  const record = () => call('recipient-user','/v1/settlements',payment);
+  for (const response of await Promise.all([record(), record()])) {
+    expect(await response.json()).toMatchObject({status:'approved'});
+  }
+  const after = await snapshot('recipient-user');
+  expect(after.settlementRequests).toEqual([]);
+  expect(after.entries).toHaveLength(1);
+  expect(balances(after.entries,'USD')).toEqual({[payer]:1201,[recipient]:-1201});
+  await expect(call('recipient-user','/v1/settlements',{...payment,title:'Different payment'})).rejects.toMatchObject({status:409});
+});
+
 it('lets a claimed placeholder approve from the surviving group seat', async () => {
   await setup(false);
   await call('payer-user','/v1/entries',payment);

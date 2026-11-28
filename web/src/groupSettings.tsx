@@ -78,6 +78,7 @@ export function GroupSettings({ g, showRates }: { g: Group; showRates: boolean }
   const deleteDialog = useRef<HTMLDialogElement>(null);
   const me = g.members.find((m) => m.userID === user);
   const [kind, setKind] = useState(g.kind === "trip" ? "trip" : "home");
+  const [reason, setReason] = useState("");
   const [settingsSaved, setSettingsSaved] = useState(false);
 
   useEffect(() => {
@@ -105,12 +106,13 @@ export function GroupSettings({ g, showRates }: { g: Group; showRates: boolean }
                 throw new Error("End date must be on or after the start date.");
               await save(`/v1/groups/${g.id}/update`, {
                 kind: g.kind === "friend" ? undefined : kind,
-                reason: value(f, "reason"),
+                reason,
                 name: value(f, "name"),
                 description: value(f, "description"),
                 startDate: kind === "trip" ? value(f, "startDate") || null : undefined,
                 endDate: kind === "trip" ? value(f, "endDate") || null : undefined,
               });
+              setReason("");
               setSettingsSaved(true);
               setTimeout(() => setSettingsSaved(false), 2000);
             }}
@@ -136,7 +138,7 @@ export function GroupSettings({ g, showRates }: { g: Group; showRates: boolean }
             </div>}
             <label className="field">
               Reason for change (optional)
-              <input type="text" name="reason" maxLength={500} />
+              <input type="text" value={reason} maxLength={500} onChange={(event) => setReason(event.target.value)} />
             </label>
             {settingsSaved && <p className="ok-banner">Saved group details</p>}
           </Form>

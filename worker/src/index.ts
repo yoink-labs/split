@@ -4,7 +4,8 @@ import {groupTools,generateRecurring} from './groupTools';
 import { purchaseRoute, attachments } from './receipts';
 import { receiptInboxRoute } from './receiptInbox';
 import { optionalDescription, socialRoute } from './social';
-import { claimSeat, fetchVerifiedProfile, lookup, refreshIdentity, resolveEntry } from './people';
+import { claimSeat, fetchVerifiedProfile, refreshIdentity, resolveEntry } from './people';
+import { directoryRoute, invitations, isDiscoverable } from './directory';
 import { activeGroupMember, activePlaceholder, emailInvitation, newInviteCode, requireActiveMember, reserveMemberEmail, sendMemberEmail, tokenHash } from './memberEmail';
 import { HTTPError, json, body, optionalDay } from './http';
 import { deviceRoute, deviceIdentity, manageDevices } from './cli/devices';
@@ -81,6 +82,8 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
   }
   const preferences=await preferencesRoute(request,env,userID);
   if(preferences) return preferences;
+  const directory=await directoryRoute(request,env,userID);
+  if(directory) return directory;
   if(path==='/v1/profile/payment-methods' && request.method==='POST')
     return saveAccountPayments(request,env.DB,userID);
   if(path==='/v1/snapshot' && request.method==='GET') {
@@ -168,7 +171,8 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
     const settlementRequests=(await pendingSettlements(env.DB,userID))
       .map(row => resolveEntry(JSON.parse(row.payload),aliases));
     const profilePayment=await env.DB.prepare('SELECT details FROM account_payment_profiles WHERE user_id=?').bind(userID).first<string>('details');
-    return json({userID,paymentMethods:paymentMethods(profilePayment)??[],settlementRequests,...(avatarURL ? {avatarURL} : {}),groups:all,entries:entries.map(e=>({...resolveEntry(JSON.parse(e.payload),aliases), recurrence:e.recurrence,receiptIDs:JSON.parse(e.photos),editable:e.author===userID,
+    const [pendingInvitations,discoverable]=await Promise.all([invitations(env.DB,userID),isDiscoverable(env.DB,userID)]);
+    return json({userID,paymentMethods:paymentMethods(profilePayment)??[],settlementRequests,invitationCount:pendingInvitations.length,discoverable,...(avatarURL ? {avatarURL} : {}),groups:all,entries:entries.map(e=>({...resolveEntry(JSON.parse(e.payload),aliases), recurrence:e.recurrence,receiptIDs:JSON.parse(e.photos),editable:e.author===userID,
       commentCount:Number(e.commentCount),likeCount:Number(e.likeCount),likedByMe:Boolean(e.likedByMe)}))});
   }
   if(path==='/v1/import/splitwise' && request.method==='POST') return importSplitwise(env.DB,userID,await body(request,2_000_000));
@@ -248,9 +252,6 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
     if(saved?.author!==userID||saved.payload!==payload)throw new HTTPError(409,'An entry already uses this ID.');
     if(inserted.meta.changes && !e.handled) await notifyActivity(env,entryActivity(e,userID));
     return json({ok:true});
-  }
-  if (path==='/v1/people/search' && request.method==='POST') {
-    return json(await lookup(env.DB,userID,(await body(request)).query));
   }
   const handled=path.match(/^\/v1\/entries\/([\w-]+)\/handled$/);
   if(handled && request.method==='POST') {
@@ -503,7 +504,7 @@ export default {
      return await cliRoute(request, env, userID, handle);
    }
    if (device) throw new HTTPError(403, 'Use the CLI or MCP endpoint with a device token.');
-   if (url.pathname==='/v1/snapshot' || url.pathname==='/v1/join') {
+   if (url.pathname==='/v1/snapshot' || url.pathname==='/v1/join' || url.pathname==='/v1/invitations') {
      await refreshIdentity(env,userID);
    }
    return await handle(request,env,userID);

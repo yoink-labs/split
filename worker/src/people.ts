@@ -1,5 +1,5 @@
 import { itemSplit } from './items';
-import { InputError, type Entry } from './ledger';
+import { type Entry } from './ledger';
 
 export type Profile = {userID: string; name: string; username: string | null; email: string | null};
 type ClerkUser = {
@@ -52,9 +52,15 @@ export function resolveEntry(entry: Entry, aliases: Map<string,string>): Entry {
 
 // D1 serializes the batch. A simultaneous direct add, group join, or claim
 // sees either the original seat or the completed merge.
-export async function claimSeat(db: D1Database, groupID: string, seatID: string, userID: string, tokenHash: string) {
-  const invite = 'EXISTS (SELECT 1 FROM invites WHERE token_hash=? AND member_id=? AND group_id=? AND expires_at>?)';
-  const inviteArgs = [tokenHash,seatID,groupID,Date.now()];
+// Evidence is the invitation that authorizes the claim. It is rechecked inside
+// every statement so a revoke that races the claim wins.
+export type ClaimEvidence = 'link' | 'direct';
+export async function claimSeat(db: D1Database, groupID: string, seatID: string, userID: string, tokenHash: string,
+  evidence: ClaimEvidence = 'link') {
+  const invite = evidence === 'direct'
+    ? 'EXISTS (SELECT 1 FROM direct_invites WHERE id=? AND member_id=? AND group_id=? AND expires_at>? AND recipient=?)'
+    : 'EXISTS (SELECT 1 FROM invites WHERE token_hash=? AND member_id=? AND group_id=? AND expires_at>?)';
+  const inviteArgs: unknown[] = [tokenHash,seatID,groupID,Date.now(),...(evidence === 'direct' ? [userID] : [])];
   const eligible = 'id=? AND group_id=? AND user_id IS NULL AND removed_at IS NULL AND id NOT IN (SELECT member_id FROM member_aliases)';
   await db.batch([
     db.prepare(`INSERT INTO member_aliases(member_id, canonical_id)
@@ -119,18 +125,3 @@ export async function refreshIdentity(env: Env, userID:string) {
   if (profile) await saveProfile(env.DB, profile);
 }
 
-export async function lookup(db: D1Database, userID: string, raw: unknown) {
-  if (typeof raw !== 'string' || !raw.trim() || raw.length > 254) throw new InputError('Enter a name, exact email, or username.');
-  const hour = Math.floor(Date.now()/3600000);
-  const count = await db.prepare(`INSERT INTO lookup_limits VALUES (?,?,1) ON CONFLICT(user_id) DO UPDATE SET
-    attempts=CASE WHEN hour=excluded.hour THEN attempts+1 ELSE 1 END, hour=excluded.hour RETURNING attempts`)
-    .bind(userID,hour).first<{attempts:number}>();
-  if ((count?.attempts ?? 0) > 60) throw new InputError('Search limit reached. Try again in an hour.');
-  const query=raw.trim();
-  return (await db.prepare(`SELECT p.user_id AS userID,p.name,p.username FROM split_profiles p
-    WHERE p.user_id != ? AND (p.email=? OR p.username=? OR
-      (instr(lower(p.name),lower(?))>0 AND EXISTS (
-        SELECT 1 FROM members mine JOIN members theirs ON mine.group_id=theirs.group_id
-        WHERE mine.user_id=? AND theirs.user_id=p.user_id))) ORDER BY p.name LIMIT 15`)
-    .bind(userID,query,query.replace(/^@/,''),query,userID).all()).results;
-}

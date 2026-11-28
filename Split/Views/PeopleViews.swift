@@ -4,6 +4,10 @@ struct MemberEditor: View {
     @EnvironmentObject private var store: ExpenseStore
     @Environment(\.dismiss) private var dismiss
     var save: (MemberDraft) async throws -> Void
+    /// When set (an existing group), search results get an Invite button that
+    /// sends an in-app invitation instead of adding the account directly.
+    var invite: ((SplitUser) async throws -> Void)? = nil
+    @State private var notice: String?
     @State private var placeholder = false
     @State private var query = ""
     @State private var name = ""
@@ -30,11 +34,14 @@ struct MemberEditor: View {
                     } footer: { Text("Include them in expenses now. They can claim their history with a personal invite or a matching verified email.") }
                 } else {
                     Section {
-                        TextField("Name, email, or @username", text:$query)
+                        TextField("Full email or first 3 letters of a name", text:$query)
                             .textInputAutocapitalization(.never).autocorrectionDisabled()
                             .submitLabel(.search).onSubmit { search() }
-                        Button("Search",action:search).disabled(query.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty)
-                    } footer: { Text("Use an exact email or username. You can also find people from your groups by name.") }
+                        Button("Search",action:search).disabled(query.trimmingCharacters(in:.whitespacesAndNewlines).count < 3)
+                    } footer: { Text(invite == nil
+                        ? "Find someone by their full email address or the start of their name. Only names are shown."
+                        : "People you invite accept or decline in Split. Only names are shown, never email addresses.") }
+                    if let notice { Section { Label(notice, systemImage:"paperplane.fill").foregroundStyle(Palette.evergreen) } }
                     if let results {
                         Section {
                             if results.isEmpty {
@@ -42,12 +49,16 @@ struct MemberEditor: View {
                                 Button("Add a placeholder instead") { placeholder = true }
                             }
                             ForEach(results) { user in
-                                Button { add(MemberDraft(name:user.name,userID:user.userID)) } label: {
-                                    HStack { Avatar(name:user.name); VStack(alignment:.leading) {
-                                        Text(user.name).foregroundStyle(.primary)
-                                        if let handle=user.username { Text("@"+handle).font(.caption).foregroundStyle(.secondary) }
-                                    }; Spacer(); Image(systemName:"plus.circle") }
-                                }.accessibilityLabel("Add " + user.name)
+                                if let invite, !known(user) {
+                                    Button { send(user, invite) } label: {
+                                        HStack { Avatar(name:user.name); Text(user.name).foregroundStyle(.primary); Spacer()
+                                            Label("Invite", systemImage:"paperplane").labelStyle(.titleAndIcon).font(.subheadline.weight(.semibold)) }
+                                    }.accessibilityLabel("Invite " + user.name)
+                                } else {
+                                    Button { add(MemberDraft(name:user.name,userID:user.userID)) } label: {
+                                        HStack { Avatar(name:user.name); Text(user.name).foregroundStyle(.primary); Spacer(); Image(systemName:"plus.circle") }
+                                    }.accessibilityLabel("Add " + user.name)
+                                }
                             }
                         }
                     }
@@ -65,10 +76,23 @@ struct MemberEditor: View {
                             .disabled(cleanName.isEmpty || cleanName.count > 60 || busy)
                     }
                 }
-            }.onChange(of:query) { _,_ in results=nil; error=nil }
+            }.onChange(of:query) { _,_ in results=nil; error=nil; if !query.isEmpty { notice=nil } }
         }
     }
 
+    /// People you already share a group with can still be added directly.
+    private func known(_ user: SplitUser) -> Bool {
+        store.groups.contains { $0.members.contains { $0.userID == user.userID } }
+    }
+    private func send(_ user: SplitUser, _ invite: @escaping (SplitUser) async throws -> Void) {
+        guard !busy else { return }
+        busy=true; error=nil
+        Task {
+            defer { busy=false }
+            do { try await invite(user); notice="Invitation sent to \(user.name)."; results=nil; query="" }
+            catch { self.error=error.localizedDescription }
+        }
+    }
     private func search() {
         guard !busy else { return }
         let submitted=query

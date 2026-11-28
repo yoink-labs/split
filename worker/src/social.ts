@@ -111,20 +111,26 @@ async function listInvites(env:Env,groupID:string) {
     FROM invites i JOIN members m ON m.id=i.member_id LEFT JOIN member_aliases a ON a.member_id=m.id
     WHERE i.group_id=? AND i.expires_at>? AND m.removed_at IS NULL AND m.user_id IS NULL AND a.member_id IS NULL
     ORDER BY i.expires_at DESC`).bind(groupID,nowMs).all<{id:string;memberID:string;memberName:string;expiresAt:number;recipientEmail:string|null}>()).results;
+  const directRows=(await env.DB.prepare(`SELECT d.id, d.member_id AS memberID, m.name AS memberName, p.name AS recipientName, d.expires_at AS expiresAt
+    FROM direct_invites d JOIN split_profiles p ON p.user_id=d.recipient LEFT JOIN members m ON m.id=d.member_id AND m.group_id=d.group_id
+    WHERE d.group_id=? AND d.expires_at>? AND NOT EXISTS (SELECT 1 FROM members x WHERE x.group_id=d.group_id AND x.user_id=d.recipient AND x.removed_at IS NULL)
+    ORDER BY d.expires_at DESC`).bind(groupID,nowMs).all<{id:string;memberID:string|null;memberName:string|null;recipientName:string;expiresAt:number}>()).results;
   return json({
     invites:[
       ...groupRows.map(r=>({id:r.id,kind:'group' as const,memberID:null,memberName:null,expiresAt:r.expiresAt})),
+      ...directRows.map(r=>({id:r.id,kind:'person' as const,memberID:r.memberID,memberName:r.memberName,recipientName:r.recipientName,expiresAt:r.expiresAt})),
       ...memberRows.map(r=>({id:r.id,kind:'member' as const,memberID:r.memberID,memberName:r.memberName,expiresAt:r.expiresAt,...(r.recipientEmail ? {recipientEmail:r.recipientEmail} : {})}))
     ]
   });
 }
 
 async function revokeInvite(env:Env,groupID:string,hash:string) {
-  const [a,b]=await env.DB.batch([
+  const [a,b,c]=await env.DB.batch([
     env.DB.prepare('DELETE FROM group_invites WHERE group_id=? AND token_hash=?').bind(groupID,hash),
-    env.DB.prepare('DELETE FROM invites WHERE group_id=? AND token_hash=?').bind(groupID,hash)
+    env.DB.prepare('DELETE FROM invites WHERE group_id=? AND token_hash=?').bind(groupID,hash),
+    env.DB.prepare('DELETE FROM direct_invites WHERE group_id=? AND id=?').bind(groupID,hash)
   ]);
-  if(!a.meta.changes && !b.meta.changes) throw new HTTPError(404,'Invite not found.');
+  if(!a.meta.changes && !b.meta.changes && !c.meta.changes) throw new HTTPError(404,'Invite not found.');
   return json({ok:true});
 }
 

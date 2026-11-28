@@ -33,11 +33,12 @@ it('allows multiple late joiners and retrying a reusable code',async()=>{
   await env.DB.prepare('UPDATE group_invites SET expires_at=0').run();
   await expect(call('user-late','/v1/join',{token:code})).rejects.toThrow('expired');
 });
-it('limits discovery to exact handles, verified email, or names of shared contacts',async()=>{
+it('limits discovery to a verified email or a name prefix and never reveals contact details',async()=>{
   await group(); await saveProfile(env.DB,profile);
   const search=async(query:string)=>(await call(owner,'/v1/people/search',{query})).json<unknown[]>();
-  for (const query of ['Casey','casey@','case','%']) expect(await search(query)).toEqual([]);
-  for (const query of ['CASEY@example.test','@CaseyG']) expect(await search(query)).toEqual([{userID:guest,name:profile.name,username:profile.username}]);
+  for (const query of ['Caseyg','%%%','sey']) expect(await search(query)).toEqual([]);
+  for (const query of ['CASEY@example.test','case','Green']) expect(await search(query)).toEqual([{userID:guest,name:profile.name}]);
+  await expect(call(owner,'/v1/people/search',{query:'@CaseyG'})).rejects.toThrow('full email');
   await expect(call('outsider',`/v1/groups/${groupID}/members`,{id:placeholder,name:'Casey'})).rejects.toThrow('not a member');
   await call(owner,`/v1/groups/${groupID}/members`,{id:placeholder,name:'Casey',userID:guest});
   expect(await search('Green')).toHaveLength(1);

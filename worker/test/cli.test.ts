@@ -392,4 +392,26 @@ describe('CLI and MCP', () => {
     await fetch('/v1/device/logout',{},token);
     expect((await fetch('/mcp',call,token,headers)).status).toBe(401);
   });
+  it('searches people, sends an invitation and lets only the recipient accept it from the CLI', async () => {
+    const alex = await authorize('cli-alex'), pat = await authorize('cli-pat'), sam = await authorize('cli-sam');
+    async function run(name: string, args: object, device = alex): Promise<any> {
+      const r = await fetch('/v1/cli', { name, arguments: args }, device);
+      const value = await r.json();
+      if (!r.ok) throw Object.assign(new Error(JSON.stringify(value)), { status: r.status });
+      return value;
+    }
+    await saveProfile(env.DB, { userID: 'cli-pat', name: 'Pat Rivera', username: 'pat', email: 'pat@example.test' });
+    const { id: group } = await run('groups_create', { name: 'Ski', self: 'Alex' });
+    const [found] = await run('members_lookup', { query: 'riv' });
+    expect(found).toEqual({ userID: 'cli-pat', name: 'Pat Rivera' });
+    expect(await run('people_show', { user: 'cli-pat' })).toEqual({ userID: 'cli-pat', name: 'Pat Rivera', sharedGroups: [] });
+    const { id } = await run('members_invite', { group, user: found.userID });
+    expect(await run('invitations_list', {}, pat)).toMatchObject({ invitations: [{ id, groupName: 'Ski', kind: 'direct' }] });
+    await expect(run('invitations_accept', { invitation: id }, sam)).rejects.toMatchObject({ status: 404 });
+    expect(await run('invitations_accept', { invitation: id }, pat)).toEqual({ ok: true, groupID: group });
+    expect((await run('members_list', { group })).map((m: any) => m.name)).toContain('Pat Rivera');
+    expect(await run('profile_discoverable', {}, pat)).toEqual({ discoverable: true });
+    expect(await run('profile_discoverable', { discoverable: 'off' }, pat)).toEqual({ discoverable: false });
+    expect(await run('members_lookup', { query: 'pat@example.test' })).toEqual([]);
+  });
 });

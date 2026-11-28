@@ -51,7 +51,8 @@ struct InviteView: View {
             Text("The link and code will stop working immediately.")
         }
         .sheet(isPresented: $adding, onDismiss: { Task { await loadInvites() } }) {
-            MemberEditor { draft in _ = try await store.addMember(groupID: group.id, draft: draft) }
+            MemberEditor(save: { draft in _ = try await store.addMember(groupID: group.id, draft: draft) },
+                         invite: { user in try await store.inviteUser(groupID: group.id, userID: user.userID) })
         }
         .sheet(item: $managing) { member in
             GroupMemberEditor(groupID: group.id, member: member, isMe: member.userID == session.userID,
@@ -73,7 +74,7 @@ struct InviteView: View {
                         VStack(alignment: .leading, spacing: 0) {
                             HStack {
                                 VStack(alignment: .leading, spacing: 3) {
-                                    Text(invite.memberName.map { "For " + $0 } ?? "General group invite")
+                                    Text(invite.recipientName.map { $0 + " (in Split)" } ?? invite.memberName.map { "For " + $0 } ?? "General group invite")
                                         .font(.subheadline.weight(.semibold))
                                     if let email = invite.recipientEmail {
                                         Text(email).font(.subheadline)

@@ -14,7 +14,7 @@ import { allocate, balances, Entry, entryPayers, InputError, simplify, validateE
 
 interface Args {
   cadence:string; weights:number[];rate?:string; group: string; expense: string; member: string; name: string; self: string; placeholders?: string[];
-  query: string; user?: string; email?: string; phone?: string;
+  query: string; user?: string; email?: string; phone?: string; invitation?: string; discoverable?: 'on'|'off';
   invite: string; kind?: string; title?: string; amount?: string; payer?: string; currency?: string;
   notes?: string; date?: string;
   bill?: { items: { title: string; amount: string; memberIDs?: string[]; shares?: number[] }[]; tax?: string; tip?: string };
@@ -261,6 +261,12 @@ export async function operate(name: string, input: unknown, env: Env, user: stri
     return ledger('/v1/import/splitwise', body);
   }
   if (name === 'members_lookup') return ledger('/v1/people/search', { query: a.query });
+  if (name === 'people_show') return ledger('/v1/people/' + encodeURIComponent(a.user!));
+  if (name === 'invitations_list') return ledger('/v1/invitations');
+  if (name === 'invitations_accept' || name === 'invitations_decline')
+    return ledger(`/v1/invitations/${a.invitation}/${name === 'invitations_accept' ? 'accept' : 'decline'}`, {});
+  if (name === 'profile_discoverable') return a.discoverable === undefined
+    ? ledger('/v1/profile/discoverable') : ledger('/v1/profile/discoverable', { discoverable: a.discoverable === 'on' });
   if (name === 'groups_list') {
     return (await env.DB.prepare(`SELECT g.id,g.name,g.kind,g.currency,g.created_at AS createdAt FROM groups g
       JOIN members m ON g.id=m.group_id WHERE m.user_id=? ORDER BY g.created_at DESC`).bind(user).all()).results;
@@ -387,6 +393,7 @@ export async function operate(name: string, input: unknown, env: Env, user: stri
       id: crypto.randomUUID(), name: a.name, userID: a.user, email: a.email, phone: a.phone
     });
   }
+  if (name === 'members_invite') return ledger(`/v1/groups/${group.id}/invites/direct`, { userID: a.user, memberID: a.member });
   if (name === 'invite') return ledger(`/v1/groups/${group.id}/invites`, { memberID: a.member, name: a.name, email: a.email });
   if (name === 'expenses_add' || name === 'settle_up') {
     const entry = name === 'expenses_add' ? makeExpense(a,group) : validateEntry({

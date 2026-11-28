@@ -151,7 +151,15 @@ export const tools = [
   }, ['csv']),
   op('profile_avatar','Set your avatar to a preset (preset:NAME), an https image URL, or "none" to reset.', { avatar: text('preset:NAME, https URL or none.', 500) }, ['avatar']),
   op('members_list','List claimed and placeholder member IDs.', { group }, ['group'], true),
-  op('members_lookup','Find a Split user by exact email, username, or a shared group member’s name.', { query: text('Search term.',254) }, ['query'], true),
+  op('members_lookup','Find people on Split by their full email address or the first 3+ letters of a name. Returns only user IDs, names and avatars, never contact details. People who turned off discoverability are not listed.', { query: text('Full email address, or at least 3 letters of a first or last name.',254) }, ['query'], true),
+  op('members_invite','Invite a Split user from members lookup to a group. They see it in their invitations and can accept or decline. Pass member to let them claim that placeholder’s history.', {
+    group, user: text('User ID returned by members lookup.',128), member
+  }, ['group','user']),
+  op('people_show','Show a Split user’s minimal profile: name, avatar and the groups you already share.', { user: text('User ID returned by members lookup.',128) }, ['user'], true),
+  op('invitations_list','List pending invitations to groups you have not joined yet: emailed invitations to your verified address and invitations sent to your account.', {}, [], true),
+  op('invitations_accept','Accept an invitation by the ID from invitations list. Joins the group and claims any placeholder history for you.', { invitation: { ...text('Invitation ID.', 64), pattern: '^[a-f0-9]{64}$' } }, ['invitation']),
+  op('invitations_decline','Decline an invitation by the ID from invitations list. It is removed for you and the sender.', { invitation: { ...text('Invitation ID.', 64), pattern: '^[a-f0-9]{64}$' } }, ['invitation'], false, true),
+  op('profile_discoverable','Show whether people can find you in people search, or turn it on or off.', { discoverable: enumeration('on or off. Omit to show the current setting.', ['on','off']) }, []),
   op('members_add','Add a placeholder or an existing Split user to a group.', {
     group, name: text('Member display name.',60), user: text('Existing user ID returned by members lookup.',128),
     email: text('Optional placeholder email for verified matching.',254), phone: text('Optional placeholder contact number.',32)

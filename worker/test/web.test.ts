@@ -35,6 +35,8 @@ it("binds a browser snapshot to the caller", async () => {
     groups: [],
     entries: [],
     settlementRequests: [],
+    invitationCount: 0,
+    discoverable: true,
   });
 });
 it("scopes placeholder statements by seat and links signed-in seats across shared groups", () => {

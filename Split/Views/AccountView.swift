@@ -237,6 +237,18 @@ struct AccountView: View {
                         reminderNote
                     }
                     rowDivider
+                    settingsRow(
+                        icon: "person.crop.circle.badge.questionmark",
+                        title: "Let people find me",
+                        subtitle: "By full email or name. Only your name is shown."
+                    ) {
+                        Toggle("Let people find me", isOn: Binding(
+                            get: { store.discoverable },
+                            set: { value in Task { try? await store.setDiscoverable(value) } }
+                        ))
+                        .labelsHidden()
+                    }
+                    rowDivider
                     NavigationLink {
                         PaymentSettings(initial: store.state.snapshot.paymentMethods)
                     } label: {
@@ -404,6 +416,17 @@ struct AccountView: View {
                     rowDivider
                     NavigationLink { InsightsView() } label: {
                         navigationLabel(icon: "chart.bar.xaxis", title: "Insights", subtitle: "Spending by month, category and person")
+                    }
+                    .buttonStyle(.plain)
+                    rowDivider
+                    NavigationLink { PeopleSearchView(showsClose: false) } label: {
+                        navigationLabel(icon: "person.crop.circle.badge.plus", title: "Find people", subtitle: "Invite someone who uses Split")
+                    }
+                    .buttonStyle(.plain)
+                    rowDivider
+                    NavigationLink { InvitationsView(showsClose: false) } label: {
+                        navigationLabel(icon: "tray.and.arrow.down", title: "Invitations",
+                                        subtitle: store.invitationCount > 0 ? "\(store.invitationCount) waiting for you" : "Groups you’re invited to")
                     }
                     .buttonStyle(.plain)
                     if !session.isDemo {

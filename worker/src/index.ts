@@ -44,7 +44,8 @@ function saveMemberEmail(db:D1Database,groupID:string,memberID:string,userID:str
     ON CONFLICT(member_id) DO UPDATE SET email=excluded.email`)
     .bind(email,groupID,memberID,groupID,userID);
 }
-async function requireTripPhaseGroup(env:Env, entry:Entry) {
+async function requireTripPhaseGroup(env:Env, entry:Entry, userID:string) {
+  await requireActiveMember(env,entry.groupID,userID);
   const group=await env.DB.prepare('SELECT kind,start_date AS startDate,end_date AS endDate FROM groups WHERE id=?')
     .bind(entry.groupID).first<{kind:string;startDate:string|null;endDate:string|null}>();
   if(!group || groupKind(group)!=='trip') throw new InputError('Trip phases are available only in trip groups.');
@@ -240,7 +241,7 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
     const b=await body(request,1_650_000); if(!validID(b.groupID)) throw new InputError('Invalid group.');
     await member(env,b.groupID,userID);
     const e=validateEntry(b,(await members(env,b.groupID)).map(m=>m.id),undefined,{reconcileBill:true});
-    if (e.phase) await requireTripPhaseGroup(env,e);
+    if (e.phase) await requireTripPhaseGroup(env,e,userID);
     if (e.bill) await requireActiveMember(env,b.groupID,userID);
     if(path==='/v1/settlements' && e.kind!=='settlement') throw new InputError('Choose a payment to confirm.');
     const payload=JSON.stringify(e);
@@ -325,17 +326,17 @@ export async function handle(request:Request,env:Env,userID:string):Promise<Resp
     if (!deleting) {
       if (old.kind==='settlement') throw new InputError('Payments cannot be edited.');
       const legacyOriginal=preserveStatementAmount(b.original,canonical);
-      let updated=validateEntry(legacyOriginal!==b.original ? preserveStatementAmount(b.entry,canonical) : b.entry,ids,canonical.bill,{reconcileBill:true});
+      const submittedEntry=legacyOriginal!==b.original ? preserveStatementAmount(b.entry,canonical) : b.entry;
+      const requestedPhase=submittedEntry && typeof submittedEntry==='object' && 'phase' in submittedEntry
+        ? submittedEntry.phase : undefined;
+      // Released clients omit the phase field. A current client sends null to restore the automatic phase.
+      const updated=validateEntry(requestedPhase===undefined && canonical.phase && submittedEntry && typeof submittedEntry==='object'
+        ? {...submittedEntry,phase:canonical.phase} : submittedEntry,ids,canonical.bill,{reconcileBill:true});
       if (updated.bill || old.bill) await requireActiveMember(env,saved.group_id,userID);
       replacement=updated;
       if(updated.id!==revise[1] || updated.groupID!==saved.group_id || updated.createdAt!==old.createdAt || updated.kind!==old.kind || updated.refundOf!==old.refundOf)
         throw new InputError('Invalid edit.');
-      const requestedPhase=(b.entry as {phase?:unknown}).phase;
-      if(requestedPhase!==undefined && updated.phase!==canonical.phase) await requireTripPhaseGroup(env,updated);
-      if(requestedPhase===undefined && canonical.phase) {
-        // Older clients omit the override. Retain it in the canonical payload order.
-        updated=validateEntry({...updated,phase:canonical.phase},ids,canonical.bill);
-      }
+      if(updated.phase!==canonical.phase) await requireTripPhaseGroup(env,updated,userID);
       guard=updated.kind==='refund' ? await refundGuard(env.DB,updated,aliases) : await refundedExpenseGuard(env.DB,updated,aliases);
       if(Boolean(updated.handled)!==Boolean(canonical.handled)) {
         const viewer=(await env.DB.prepare('SELECT id FROM members WHERE group_id=? AND user_id=? AND removed_at IS NULL')

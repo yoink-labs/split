@@ -70,7 +70,7 @@ export function optionalDescription(value: unknown): string | null | undefined {
   return value.trim() || null;
 }
 
-async function updateGroup(request:Request,env:Env,groupID:string) {
+async function updateGroup(request:Request,env:Env,groupID:string,userID:string) {
   const b=await body(request);
   const group=await env.DB.prepare('SELECT name,kind,currency,simplify,description,start_date AS startDate,end_date AS endDate FROM groups WHERE id=?').bind(groupID).first<{name:string;kind:string;currency:string;simplify:number;description:string|null;startDate:string|null;endDate:string|null}>();
   if(!group) throw new HTTPError(404,'Group not found.');
@@ -78,6 +78,7 @@ async function updateGroup(request:Request,env:Env,groupID:string) {
   const kind=b.kind ?? currentKind;
   if(kind!==currentKind && (currentKind==='friend' || (kind!=='trip' && kind!=='home')))
     throw new InputError('Choose Trip or Long-term / Home.');
+  if(kind!==currentKind) await requireActiveMember(env,groupID,userID);
   let name=group.name,currency=group.currency,simplify=Number(group.simplify);
   let description=group.description, startDate=group.startDate, endDate=group.endDate;
   if(b.name!==undefined) {
@@ -295,7 +296,7 @@ export async function socialRoute(request:Request,env:Env,userID:string):Promise
     const [,groupID,action]=groupMatch;
     if(action==='delete') return deleteGroup(env,groupID,userID);
     const seat=await groupSeat(env,groupID,userID);
-    if(action==='update') return updateGroup(request,env,groupID);
+    if(action==='update') return updateGroup(request,env,groupID,userID);
     if(action==='archive') return archiveGroup(request,env,groupID);
     return leaveGroup(env,groupID,seat);
   }

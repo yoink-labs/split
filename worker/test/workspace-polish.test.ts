@@ -202,6 +202,10 @@ it('validates phase writes and preserves overrides on older expense edits', asyn
   expect((await edit(expense, changed)).ok).toBe(true);
   const snapshot = async () => (await (await handle(req('/v1/snapshot'), env, 'user-a')).json<{entries: Entry[]}>()).entries[0];
   expect((await snapshot()).phase).toBe('pre');
+  await env.DB.prepare('UPDATE members SET removed_at=? WHERE id=?').bind('2026-11-21',paidBy).run();
+  await expect(edit({ ...changed, phase: 'pre' }, { ...changed, phase: 'post' })).rejects.toMatchObject({ status: 403 });
+  await expect(handle(req(`/v1/groups/${groupID}/update`, { kind: 'home' }), env, 'user-a')).rejects.toMatchObject({ status: 403 });
+  await env.DB.prepare('UPDATE members SET removed_at=NULL WHERE id=?').bind(paidBy).run();
   await expect(edit({ ...changed, phase: null }, { ...changed, phase: 'post' })).rejects.toMatchObject({ status: 409 });
   expect((await edit({ ...changed, phase: 'pre' }, { ...changed, phase: null })).ok).toBe(true);
   expect((await snapshot()).phase).toBeUndefined();

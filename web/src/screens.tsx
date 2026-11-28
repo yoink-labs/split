@@ -355,17 +355,18 @@ export function MemberScreen() {
     const entries = data.entries.filter((e) => e.groupID === s.group.id);
     for (const c of new Set(entries.map((e) => settlementEntry(e).currency)))
       net[c] = (net[c] ?? 0) + (balances(entries, c)[s.person.id] ?? 0);
-    for (const original of s.all.filter((e) => e.kind === "expense")) {
+    for (const original of s.all.filter((e) => e.kind !== "settlement")) {
       foreignSpend ||= original.currency !== homeMoney.home;
       const e = homeMoney.project(original);
       if (!e) { missingSpend = true; continue; }
+      const direction = e.kind === "refund" ? -1 : 1;
       paid[e.currency] =
-        (paid[e.currency] ?? 0) +
+        (paid[e.currency] ?? 0) + direction *
         entryPayers(e)
           .filter((x) => x.memberID === s.person.id)
           .reduce((n, x) => n + x.amount, 0);
       share[e.currency] =
-        (share[e.currency] ?? 0) +
+        (share[e.currency] ?? 0) + direction *
         (e.splits.find((x) => x.memberID === s.person.id)?.amount ?? 0);
     }
   }
@@ -466,7 +467,7 @@ export function MemberScreen() {
       </div>
 
       {statements.map((s) => {
-        const rows = s.all.filter((e) => e.kind === kind);
+        const rows = s.all.filter((e) => kind === "settlement" ? e.kind === "settlement" : e.kind !== "settlement");
         if (!rows.length) return null;
         return (
           <section key={s.group.id}>
@@ -489,17 +490,18 @@ export function MemberScreen() {
                     <div>
                       <div className="ledger-title">{e.title}</div>
                       <div className="ledger-meta">
-                        {shortDate(e.createdAt)} · Paid by {memberName(s.group, e.paidBy)}{e.handled && " · Handled"}
+                        {shortDate(e.createdAt)} · {e.kind === "refund" ? (e.refundOf ? "Refund received by " : "Credit from ") : "Paid by "}{memberName(s.group, e.paidBy)}{e.handled && " · Handled"}
+                        {e.pending && " · Pending"}
                         {e.kind === "settlement" && e.currency !== homeMoney.home && ` · Sent ${money(e.amount, e.currency)}`}
                       </div>
                     </div>
                     <div className="ledger-amount">
                       <strong className={myPaid > 0 ? "pos" : "muted"}>
-                        {myPaid > 0 ? `Paid ${homeMoney.portion(e, s.person.id, true)}` : "—"}
+                        {myPaid > 0 ? `${e.kind === "refund" ? "Received" : "Paid"} ${homeMoney.portion(e, s.person.id, true)}` : "—"}
                       </strong>
                     </div>
                     <div className="ledger-amount">
-                      <strong>{homeMoney.portion(e, s.person.id)}</strong>
+                      <strong className={e.kind === "refund" ? "pos" : undefined}>{e.kind === "refund" && "Credit "}{homeMoney.portion(e, s.person.id)}</strong>
                       <small>of {homeMoney.entry(e, e.amount)}</small>
                     </div>
                   </Link>

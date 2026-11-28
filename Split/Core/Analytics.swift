@@ -82,7 +82,7 @@ enum Analytics {
             for currency in currencies {
                 let balances = Ledger.balances(groupEntries, currency: currency)
                 if let meID, let amount = balances[meID] { mine[currency] = amount }
-                spend[currency] = groupEntries.map(\.settling).filter { $0.currency == currency && $0.kind == "expense" }.reduce(0) { $0 + $1.amount }
+                spend[currency] = groupEntries.map(\.settling).filter { $0.currency == currency && $0.isSpending }.reduce(0) { $0 + $1.signedAmount }
             }
             return GroupSummary(
                 group: group,
@@ -172,7 +172,7 @@ enum Analytics {
     }
 
     static func personSpend(_ group: ExpenseGroup, entries: [LedgerEntry], currency: String, people: [Person]) -> [PersonSpend] {
-        let expenses = entries.map(\.settling).filter { $0.kind == "expense" && $0.currency == currency }
+        let expenses = entries.map(\.settling).filter { $0.isSpending && $0.currency == currency }
         let balances = Ledger.balances(entries, currency: currency)
         return people.map { person in
             let paid = expenses.reduce(Int64(0)) { $0 + Ledger.paid($1, by: person.id) }
@@ -183,22 +183,22 @@ enum Analytics {
 
     static func monthly(_ entries: [LedgerEntry], currency: String) -> [MonthTotal] {
         var totals: [String: Int64] = [:]
-        for entry in entries.map(\.settling) where entry.currency == currency && entry.kind == "expense" {
-            totals[String(entry.createdAt.prefix(7)), default: 0] += entry.amount
+        for entry in entries.map(\.settling) where entry.currency == currency && entry.isSpending {
+            totals[String(entry.createdAt.prefix(7)), default: 0] += entry.signedAmount
         }
         return totals.keys.sorted().suffix(6).map { MonthTotal(month: $0, amount: totals[$0] ?? 0) }
     }
 
     static func categories(_ entries: [LedgerEntry], currency: String) -> [CategoryTotal] {
         var totals: [String: Int64] = [:]
-        for entry in entries.map(\.settling) where entry.currency == currency && entry.kind == "expense" {
-            totals[entry.category ?? "General", default: 0] += entry.amount
+        for entry in entries.map(\.settling) where entry.currency == currency && entry.isSpending {
+            totals[entry.category ?? "General", default: 0] += entry.signedAmount
         }
         return totals.map { CategoryTotal(category: $0.key, amount: $0.value) }.sorted { $0.amount > $1.amount }
     }
 
     static func monthlyTotal(_ entries: [LedgerEntry], currency: String) -> Int64 {
-        entries.map(\.settling).filter { $0.currency == currency && $0.kind == "expense" }.reduce(0) { $0 + $1.amount }
+        entries.map(\.settling).filter { $0.currency == currency && $0.isSpending }.reduce(0) { $0 + $1.signedAmount }
     }
 
     static func lastActivity(_ entries: [LedgerEntry]) -> String? { entries.map(\.createdAt).max() }

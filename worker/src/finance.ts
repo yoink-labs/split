@@ -53,7 +53,7 @@ export async function financeRoute(request: Request, env: Env, user: string, han
       return {
         id: entry.id, title: entry.title, date: entry.createdAt, group: group.name,
         amount: entry.amount, currency: entry.currency, paid, share, receiptIDs,
-        category: entry.category, notes: entry.notes,
+        category: entry.category, notes: entry.notes, ...(entry.pending ? { pending: true } : {}),
         conversion: converted && { currency: converted.currency, ...viewerAmounts(converted, viewer) },
         bill: entry.bill && {
           closed: entry.bill.closed, tax: entry.bill.tax, tip: entry.bill.tip,

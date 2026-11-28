@@ -51,7 +51,7 @@ enum GroupSummaryPDF {
                 writer.text("No expenses recorded.", .body)
             } else {
                 let preferred = expenses.reduce(Int64?(0)) { total, row in
-                    guard let total, let amount = row.preferred?.amount else { return nil }
+                    guard let total, let amount = row.preferred?.signedAmount else { return nil }
                     let (sum, overflow) = total.addingReportingOverflow(amount)
                     return overflow ? nil : sum
                 }
@@ -61,7 +61,7 @@ enum GroupSummaryPDF {
                            detail: preferred == nil ? "See the recorded totals below." : nil)
                 let byCurrency = Dictionary(grouping: expenses.map(\.recorded), by: \.currency)
                 for currency in byCurrency.keys.sorted() {
-                    let total = byCurrency[currency, default: []].reduce(0) { $0 + $1.amount }
+                    let total = byCurrency[currency, default: []].reduce(0) { $0 + $1.signedAmount }
                     writer.row("Recorded in \(currency)", amount: Money.text(total, currency))
                 }
             }
@@ -153,7 +153,7 @@ enum GroupSummaryPDF {
         for label in groups.keys.sorted() {
             let byCurrency = Dictionary(grouping: groups[label, default: []], by: \.currency)
             for currency in byCurrency.keys.sorted() {
-                let total = byCurrency[currency, default: []].reduce(Int64(0)) { $0 + $1.amount }
+                let total = byCurrency[currency, default: []].reduce(Int64(0)) { $0 + $1.signedAmount }
                 writer.row(label, amount: Money.text(total, currency))
             }
         }
@@ -168,10 +168,10 @@ enum GroupSummaryPDF {
         var people: [String: [String: (paid: Int64, share: Int64)]] = [:]
         for entry in entries {
             for payer in entry.allPayers {
-                people[payer.memberID, default: [:]][entry.currency, default: (0, 0)].paid += payer.amount
+                people[payer.memberID, default: [:]][entry.currency, default: (0, 0)].paid += entry.sign * payer.amount
             }
             for portion in entry.splits {
-                people[portion.memberID, default: [:]][entry.currency, default: (0, 0)].share += portion.amount
+                people[portion.memberID, default: [:]][entry.currency, default: (0, 0)].share += entry.sign * portion.amount
             }
         }
         writer.draw(writer.tableRow("Person", "Paid", "Share", style: .detail))
@@ -190,9 +190,10 @@ enum GroupSummaryPDF {
         if layout == .summary, !rows.isEmpty {
             writer.section("Expense and payment history")
             for (entry, projected) in rows {
-                let status = entry.isSettlement ? " (payment)" : entry.isHandled ? " (handled)" : ""
-                let original = Money.text(entry.amount, entry.currency)
-                let converted = projected.map { money($0.amount, home, approximate: entry.currency != home) }
+                let status = (entry.isSettlement ? " (payment)" : entry.isRefund ? " (refund)" : entry.isHandled ? " (handled)" : "")
+                    + (entry.isPending ? " (pending)" : "")
+                let original = Money.text(entry.signedAmount, entry.currency)
+                let converted = projected.map { money($0.signedAmount, home, approximate: entry.currency != home) }
                 writer.row("\(displayDay(entry.day))  /  \(entry.title)\(status)", amount: converted ?? original,
                            detail: entry.currency != home && converted != nil ? "Recorded \(original)" : nil)
             }
@@ -205,8 +206,9 @@ enum GroupSummaryPDF {
         for (offset, row) in rows.enumerated() {
             let (entry, projected) = row
             let date = displayDay(entry.day)
-            let kind = entry.isSettlement ? "Payment" : (entry.category ?? "Expense")
-            let status = entry.isHandled ? "  /  Already handled" : ""
+            let kind = entry.isSettlement ? "Payment" : entry.isRefund ? "Refund" : (entry.category ?? "Expense")
+            let status = (entry.isHandled ? "  /  Already handled" : "")
+                + (entry.isPending ? "  /  Pending" + (entry.pendingNote.map { ": " + $0 } ?? "") : "")
             let approximate = entry.currency != home
             func amount(_ original: Int64?, _ preferred: Int64?) -> String {
                 guard let original else { return "—" }
@@ -227,13 +229,15 @@ enum GroupSummaryPDF {
             if settling.currency != entry.currency && settling.currency != home {
                 header += writer.lines("Settles in \(Money.text(settling.amount, settling.currency))", .detail)
             }
-            let total = line(entry.isSettlement ? "Payment amount" : "Expense total", entry.amount, projected?.amount)
+            let total = line(entry.isSettlement ? "Payment amount" : entry.isRefund ? "Refund amount" : "Expense total", entry.amount, projected?.amount)
             let paid = Dictionary(entry.allPayers.map { ($0.memberID, $0.amount) }, uniquingKeysWith: +)
             let shares = Dictionary(entry.splits.map { ($0.memberID, $0.amount) }, uniquingKeysWith: +)
             let preferredPaid = Dictionary((projected?.allPayers ?? []).map { ($0.memberID, $0.amount) }, uniquingKeysWith: +)
             let preferredShares = Dictionary((projected?.splits ?? []).map { ($0.memberID, $0.amount) }, uniquingKeysWith: +)
             let people = Set(paid.keys).union(shares.keys).sorted { (name($0), $0) < (name($1), $1) }
-            let tableHeader = writer.tableRow("Person", "Paid", entry.isSettlement ? "Received" : "Share", style: .detail)
+            let tableHeader = entry.isRefund
+                ? writer.tableRow("Person", "Received", "Credit", style: .detail)
+                : writer.tableRow("Person", "Paid", entry.isSettlement ? "Received" : "Share", style: .detail)
             var detailRows = [tableHeader] + people.map { id in
                 writer.tableRow(name(id), amount(paid[id], preferredPaid[id]), amount(shares[id], preferredShares[id]),
                                 middleDetail: recorded(paid[id], preferredPaid[id]),

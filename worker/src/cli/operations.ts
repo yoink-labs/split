@@ -2,6 +2,7 @@ import {settlementEntry} from '../exchange';
 import {rateE8 as parseRate} from '../fx';
 import { breakdown, grossItems, itemSplit, type Bill } from '../items';
 import { exportGroup } from './export';
+import { refundRoom, refundsOf } from '../refundMath';
 import { deleteGroup } from '../social';
 import { importGroupID, parseSplitwise, type SplitwiseGroup } from '../splitwiseCsv';
 import { tools } from '../../../cli/lib/catalog.mjs';
@@ -9,6 +10,7 @@ import { CfWorkerJsonSchemaValidator } from '@modelcontextprotocol/sdk/validatio
 import type { JsonSchemaType } from '@modelcontextprotocol/sdk/validation/types';
 import { HTTPError, optionalDay } from '../http';
 import { allocate, balances, Entry, entryPayers, InputError, simplify, validateEntry } from '../ledger';
+
 
 interface Args {
   cadence:string; weights:number[];rate?:string; group: string; expense: string; member: string; name: string; self: string; placeholders?: string[];
@@ -23,7 +25,8 @@ interface Args {
   csv?: string; file?: string; me?: string; mapping?: Record<string,string>;
   photos?: string[];
   from: string; to: string; category?:string; item:string; photo:string; action?:string; mode?: 'equal'|'exact'|'percent'|'shares'|'archive'|'restore'|'delete'; participants?: string[]; values?: string[];
-  yes?: boolean; revision?: string; preview?: boolean; settlement?: string; state?: 'handled'|'unhandled'; reset?: boolean;
+  yes?: boolean; revision?: string; preview?: boolean; settlement?: string; state?: 'handled'|'unhandled'|'pending'|'confirmed'; reset?: boolean;
+  pending?: boolean; pendingNote?: string; receiver?: string; note?: string;
   methods?: { platform: string; handle: string; preferred?: boolean }[]; paypal?: string; venmo?: string; mercado?: string; alias?: string;
 }
 interface Member { id: string; userID: string|null; name: string; removed?: boolean }
@@ -119,7 +122,36 @@ function makeExpense(a: Args, group: Group, old?: Entry): Entry {
   return validateEntry({ id: old?.id ?? crypto.randomUUID(), groupID: group.id, title: a.title ?? old?.title,
     amount, currency, paidBy: a.payers && !a.payer ? a.payers[0].member : payer,
     exchange, bill, category:a.category??old?.category, splits, kind: 'expense', splitMode: mode, createdAt,
-    payers, notes: a.notes ?? old?.notes, handled: old?.handled }, ids,old?.bill);
+    payers, notes: a.notes ?? old?.notes, handled: old?.handled,
+    ...pendingFields(a, old) }, ids,old?.bill);
+}
+function pendingFields(a: Args, old?: Entry) {
+  const pending = a.pending ?? old?.pending;
+  return pending ? { pending: true, pendingNote: a.pendingNote ?? old?.pendingNote } : {};
+}
+function makeRefund(a: Args, group: Group, entries: Entry[], original?: Entry, id = crypto.randomUUID()): Entry {
+  const amount = minor(a.amount!);
+  if (!amount) throw new InputError('Enter a positive refund amount.');
+  const receiver = a.receiver ?? original?.paidBy;
+  if (!receiver) throw new InputError('Choose who received the money or is giving the credit.');
+  const room = original ? refundRoom(original, refundsOf(entries, original.id)).members : undefined;
+  const left = room ? new Map(Object.entries(room)) : undefined;
+  const participants = a.participants ?? (left ? [...left].filter(([, n]) => n > 0).map(([m]) => m)
+    : group.members.filter(m => !m.removed && m.id !== receiver).map(m => m.id));
+  if (!participants.length) throw new InputError(original ? 'This expense has been fully refunded.' : 'Choose who gets the credit.');
+  if (a.values && a.values.length !== participants.length) throw new InputError('Supply one value per participant.');
+  const weights = participants.map(m => left ? Math.max(left.get(m) ?? 0, 0) : 1);
+  const portions = a.values ? a.values.map(minor) : allocate(amount, weights.some(w => w > 0) ? weights : participants.map(() => 1));
+  const date = optionalDay(a.date, 'refund date');
+  const createdAt = date ? date + 'T12:00:00Z' : timestamp();
+  const x = original?.exchange;
+  const exchange = x ? { target: x.target, rateE8: x.rateE8, date: x.date <= createdAt.slice(0,10) ? x.date : createdAt.slice(0,10),
+    source: x.source === 'Statement' ? 'Manual' as const : x.source } : undefined;
+  return validateEntry({ id, groupID: group.id, kind: 'refund', title: a.title ?? (original ? 'Refund: ' + original.title : 'Credit').slice(0, 120),
+    amount, currency: original?.currency ?? group.currency, paidBy: receiver, splitMode: a.values ? 'exact' : 'shares',
+    splits: participants.map((memberID, i) => ({ memberID, amount: portions[i] })), createdAt,
+    ...(original ? { refundOf: original.id } : {}), ...(exchange ? { exchange } : {}), ...(original?.category ? { category: original.category } : {}),
+    ...(a.notes ? { notes: a.notes } : {}), ...pendingFields(a) }, group.members.map(m => m.id));
 }
 
 export async function operate(name: string, input: unknown, env: Env, user: string, handle: LedgerHandler) {
@@ -263,6 +295,33 @@ export async function operate(name: string, input: unknown, env: Env, user: stri
     await ledger('/v1/entries/'+e.id+'/handled',{handled});
     return { id: e.id, handled };
   }
+  if(name==='expenses_pending') {
+    const e = snapshot.entries.find(x => x.groupID === group.id && x.id === a.expense);
+    if(!e) throw new HTTPError(404,'Expense not found.');
+    const pending = a.state !== 'confirmed';
+    await ledger('/v1/entries/'+e.id+'/pending',{pending,...(a.note!==undefined?{note:a.note}:{})});
+    return { id: e.id, pending, ...(pending && (a.note ?? e.pendingNote) ? { note: a.note ?? e.pendingNote } : {}) };
+  }
+  if(name==='expenses_resolve' || name==='refunds_add') {
+    const groupEntries = snapshot.entries.filter(x => x.groupID === group.id);
+    const original = a.expense ? groupEntries.find(x => x.id === a.expense) : undefined;
+    if(a.expense && (!original || original.kind !== 'expense')) throw new HTTPError(404,'Expense not found.');
+    if(name==='refunds_add') {
+      const refund = makeRefund(a, group, groupEntries, original);
+      await ledger('/v1/entries', refund);
+      return { ...refund, receiverName: nameOf(refund.paidBy), credits: refund.splits.map(s => ({ ...s, name: nameOf(s.memberID) })) };
+    }
+    if(!original!.pending && a.action !== 'confirm') throw new InputError('This expense is not pending. Use refunds add or expenses edit.');
+    if(a.action==='confirm') { await ledger('/v1/entries/'+original!.id+'/resolve',{action:'confirm'}); return { id: original!.id, pending: false }; }
+    if(!a.amount) throw new InputError(a.action==='adjust' ? 'Enter the new total.' : 'Enter the refunded amount.');
+    if(a.action==='adjust') {
+      const result = await ledger<{amount:number}>('/v1/entries/'+original!.id+'/resolve',{action:'adjust',amount:minor(a.amount)});
+      return { id: original!.id, pending: false, amount: result.amount };
+    }
+    const refund = makeRefund(a, group, groupEntries, original);
+    await ledger('/v1/entries/'+original!.id+'/resolve',{action:'refund',refund});
+    return { id: original!.id, pending: false, refund: { ...refund, receiverName: nameOf(refund.paidBy) } };
+  }
   if(name==='expenses_repeat') return ledger('/v1/groups/'+group.id+'/repeat',{entryID:a.expense,cadence:a.cadence});
   if (name === 'groups_show') return group;
   if (name === 'groups_update') return ledger('/v1/groups/'+group.id+'/update', {
@@ -323,7 +382,10 @@ export async function operate(name: string, input: unknown, env: Env, user: stri
       ? a.photos.map(data => ({ id: crypto.randomUUID(), data }))
       : undefined;
     const result = await ledger<{status?: string}>(name === 'settle_up' ? '/v1/settlements' : '/v1/entries', photos ? { ...entry, photos } : entry);
-    if (name === 'settle_up') return { ...entry, status: result.status };
+    if (name === 'settle_up') {
+      const pending = snapshot.entries.filter(e => e.groupID === group.id && e.pending && (e.exchange?.target ?? e.currency) === entry.currency);
+      return { ...entry, status: result.status, ...(pending.length ? { warning: `${pending.length} pending ${pending.length === 1 ? 'entry' : 'entries'} in ${entry.currency} may still change. Balances include them.` } : {}) };
+    }
     const warning = !entry.exchange && entry.currency !== group.currency
       ? `Saved in ${entry.currency} with a separate balance. Use --rate to convert to ${group.currency}.`
       : undefined;
@@ -333,7 +395,7 @@ export async function operate(name: string, input: unknown, env: Env, user: stri
   if (name === 'expenses_edit' || name === 'expenses_delete') {
     const before = snapshot.entries.find(e => e.groupID === group.id && e.id === a.expense && e.editable);
     if (!before) throw new HTTPError(404,'Your expense was not found.');
-    if (before.kind !== 'expense') throw new InputError('Select an expense.');
+    if (before.kind === 'settlement' || (before.kind === 'refund' && name === 'expenses_edit')) throw new InputError(before.kind === 'refund' ? 'Delete the refund and record it again to change it.' : 'Select an expense.');
     const after = name === 'expenses_edit' ? makeExpense(a, group, before) : null;
     const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify([name,before,after])));
     const revision = Array.from(new Uint8Array(bytes), b => b.toString(16).padStart(2,'0')).join('');
@@ -421,7 +483,7 @@ export async function operate(name: string, input: unknown, env: Env, user: stri
     return ledger(path+'/claim',{itemID:item.id,original:item.memberIDs,memberIDs:ids,mergeEdits:true,...(shares?{shares}:{})});
   }
   if (name === 'expenses_list') {
-    const expenses = entries.filter(e => e.kind === 'expense');
+    const expenses = entries.filter(e => e.kind === 'expense' || e.kind === 'refund');
     const prefixes = new Map<string,number>();
     for (const e of expenses) {
       const prefix = e.id.slice(0,8);
@@ -434,7 +496,11 @@ export async function operate(name: string, input: unknown, env: Env, user: stri
   }
   if (name === 'balances') return [...new Set([group.currency, ...entries.map(e=>e.exchange?.target??e.currency)])].map(currency => {
     const net = balances(entries,currency);
-    return { currency, net, settlements: simplify(net) };
+    const pending = entries.filter(e => e.pending && !e.handled && (e.exchange?.target ?? e.currency) === currency);
+    if (!pending.length) return { currency, net, settlements: simplify(net) };
+    const confirmedNet = balances(entries,currency,{includePending:false});
+    return { currency, net, settlements: simplify(net), confirmedNet, confirmedSettlements: simplify(confirmedNet),
+      pending: pending.map(e => ({ id: e.id, title: e.title, kind: e.kind, amount: e.amount, currency: e.currency, ...(e.pendingNote ? { note: e.pendingNote } : {}) })) };
   });
   throw new HTTPError(404,'Unknown Split command.');
 }

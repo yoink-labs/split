@@ -13,6 +13,8 @@ is noted next to each release. The CLI is versioned separately with
 ### Added
 
 - Open the Analytics tab on the web for spending over time, by category, by person (paid against share) and by currency in your home currency. Filter by date range and member, and select any bar or row to see its transactions.
+- Record refunds and credits on web, iOS and the CLI/MCP. Refund part or all of an expense to some or all of the people who shared it, or give a standalone credit. Refunds lower the right shares and balances to the cent, and can never exceed the original expense or one person's share. Splitwise rows with a negative cost import as refunds.
+- Mark any expense pending with an optional note while its cost may still change. Pending expenses count toward balances, balances also show the confirmed-only amount, and settle up warns while anything is pending. Resolve one by confirming it, adjusting its amount, or turning it into a refund.
 - Manage group members, claim addresses, and invitations from the Members tab on web and iOS. Email or resend invitations and send sign-in reminders.
 - Open the Transactions tab on web and iOS to see each expense or settlement and its payment split.
 - Customize group PDFs with spending breakdowns by category, month, and person.

@@ -8,6 +8,8 @@ struct CSVExpense:Codable,Equatable {
     var sourceID:String?; var sourceGroup:String?; var exchange:Exchange?
     var payers:[CSVShare]? = nil
     var handled: Bool? = nil
+    /// A Splitwise refund row: `payer` received the money and `splits` are credits.
+    var refund: Bool? = nil
 }
 enum LedgerCSV {
     static func table(_ raw:String)throws->[[String]] {
@@ -56,6 +58,7 @@ enum LedgerCSV {
             func cell(_ i:Int?)->String { guard let i,i<row.count else{return ""};return row[i].trimmingCharacters(in:.whitespacesAndNewlines) }
             let invalid=LedgerError.invalid("Check the date, currency, payer and shares on CSV row "+String(start+offset+2)+".")
             let title=cell(description)
+            if key(cell(expenseStatus))=="refund" { throw LedgerError.invalid("Row "+String(start+offset+2)+" is a refund. Record refunds from the original expense in Split.") }
             if row.allSatisfy({$0.trimmingCharacters(in:.whitespaces).isEmpty}) || ["total balance","saldo total","gesamtsaldo"].contains(key(title)) { continue }
             let day=String(cell(date).prefix(10))
             let headerCurrency=headers[cost].split(separator:"(").last.map{String($0.prefix(3)).uppercased()} ?? ""
@@ -117,9 +120,9 @@ enum LedgerCSV {
         var rows=[(headers+members.map(\.name)).map(safe).joined(separator:",")]
         for e in entries {
             var columns=[String(e.createdAt.prefix(10)),e.title,e.kind=="settlement" ? "Payment" : (e.category ?? ""),Money.input(e.amount),e.currency,members.first{$0.id==e.paidBy}?.name ?? ""]
-            columns += [e.id,group.id,e.exchange?.target ?? "",e.exchange.map{String($0.rateE8)} ?? "",e.exchange?.date ?? "",e.exchange?.source ?? "",e.isHandled ? "Handled" : ""]
+            columns += [e.id,group.id,e.exchange?.target ?? "",e.exchange.map{String($0.rateE8)} ?? "",e.exchange?.date ?? "",e.exchange?.source ?? "",e.isRefund ? "Refund" : e.isHandled ? "Handled" : e.isPending ? "Pending" : ""]
             if includesStatement { columns.append(e.exchange?.statementAmount.map(Money.input) ?? "") }
-            let nets=members.map{m in Money.input((m.id==e.paidBy ? e.amount : 0)-(e.splits.first{$0.memberID==m.id}?.amount ?? 0))}
+            let nets=members.map{m in Money.input(e.sign*((m.id==e.paidBy ? e.amount : 0)-(e.splits.first{$0.memberID==m.id}?.amount ?? 0)))}
             rows.append((columns.map(safe)+nets).joined(separator:","))
         }
         return rows.joined(separator:"\r\n")+"\r\n"

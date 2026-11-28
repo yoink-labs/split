@@ -19,10 +19,12 @@ export interface ExtraColumn {
  * `pageSize` rows, and an optional link to the full ledger. It never grows past its frame.
  */
 export function TransactionTable({
-  g, entries, label, pageSize = 50, inspectedID, onInspect, extra, viewAll, empty = "No transactions yet.", size = "full",
+  g, entries, all = entries, label, pageSize = 50, inspectedID, onInspect, extra, viewAll, empty = "No transactions yet.", size = "full",
 }: {
   g: Group;
   entries: Expense[];
+  /** Every entry in the group, so a refund can name its original even when filters hide it. */
+  all?: Expense[];
   label: string;
   pageSize?: number;
   inspectedID?: string;
@@ -71,13 +73,15 @@ export function TransactionTable({
           <tbody>
             {visible.map((entry) => {
               const payment = entry.kind === "settlement";
+              const refund = entry.kind === "refund";
+              const original = refund && entry.refundOf ? all.find((e) => e.id === entry.refundOf) : undefined;
               const title = payment ? `Payment to ${entry.splits.map((s) => memberName(g, s.memberID)).join(", ")}` : entry.title;
               const payers = entryPayers(entry).map((p) => memberName(g, p.memberID)).join(", ");
               const open = openItems(entry);
               const projected = homeMoney.project(entry);
               const foreign = entry.currency !== homeMoney.home;
               return (
-                <tr key={entry.id} className={inspectedID === entry.id ? "selected" : undefined}>
+                <tr key={entry.id} className={[inspectedID === entry.id ? "selected" : "", refund ? "refund-row" : "", entry.pending ? "pending-row" : ""].filter(Boolean).join(" ") || undefined}>
                   <td>
                     <div className="ledger-transaction">
                       <CategoryIcon category={entry.category} settlement={payment} />
@@ -86,6 +90,14 @@ export function TransactionTable({
                         <div className="ledger-entry-meta muted">
                           <span className="txn-inline-date">{shortDate(entry.createdAt)} ·</span>
                           {payment ? "Settlement" : categoryMeta(entry.category).label}
+                          {refund && <span className="tag tag-refund">{entry.refundOf ? "Refund" : "Credit"}</span>}
+                          {original && (
+                            <button type="button" className="ledger-refund-of" onClick={() => onInspect(original.id)}>
+                              of {original.title}
+                            </button>
+                          )}
+                          {entry.pending && <span className="tag tag-pending" title={entry.pendingNote}>Pending</span>}
+                          {entry.pending && entry.pendingNote && <span className="ledger-pending-note">{entry.pendingNote}</span>}
                           {entry.handled && <span className="tag tag-pos">Handled</span>}
                           {open > 0 && <span className="tag tag-warn">{open} open</span>}
                           {!open && (entry.bill || !!entry.receiptIDs?.length) && <span className="tag">Receipt</span>}
@@ -96,11 +108,11 @@ export function TransactionTable({
                     </div>
                   </td>
                   <td className="ledger-number">
-                    <strong>{projected ? homeMoney.format(projected.amount, foreign) : moneyCompact(entry.amount, entry.currency)}</strong>
+                    <strong className={refund ? "pos" : undefined}>{projected ? homeMoney.format(refund ? -projected.amount : projected.amount, foreign) : (refund ? "−" : "") + moneyCompact(entry.amount, entry.currency)}</strong>
                     {foreign && <small className="muted">{projected ? moneyCompact(entry.amount, entry.currency) : "Rate unavailable"}</small>}
                   </td>
                   <td className="ledger-date muted txn-col-date">{shortDate(entry.createdAt)}</td>
-                  <td className="txn-col-payer">{payers}</td>
+                  <td className="txn-col-payer">{refund ? <><span className="muted">Received by </span>{payers}</> : payers}</td>
                   {extra && <td className="ledger-number">{extra.cell(entry)}</td>}
                 </tr>
               );

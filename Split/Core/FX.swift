@@ -250,15 +250,16 @@ final class FXStore: ObservableObject {
 
     func portionText(_ entry: LedgerEntry, memberID: String, paid: Bool = false) -> String {
         guard let projected = homeEntry(entry) else { return "Rate unavailable" }
-        let amount = paid ? Ledger.paid(projected, by: memberID) : Ledger.share(projected, of: memberID)
+        // Detail rows show what moved; a refund's direction comes from its labels, not a sign.
+        let amount = projected.sign * (paid ? Ledger.paid(projected, by: memberID) : Ledger.share(projected, of: memberID))
         return (entry.currency == home ? "" : "≈ ") + Money.text(amount, home)
     }
 
     func spendingText(_ entries: [LedgerEntry]) -> String {
-        let expenses = entries.filter { $0.kind == "expense" }
+        let expenses = entries.filter(\.isSpending)
         let converted = expenses.compactMap(homeEntry)
         guard converted.count == expenses.count else { return "Rate unavailable" }
-        return (expenses.contains { $0.currency != home } ? "≈ " : "") + Money.text(converted.reduce(0) { $0 + $1.amount }, home)
+        return (expenses.contains { $0.currency != home } ? "≈ " : "") + Money.text(converted.reduce(0) { $0 + $1.signedAmount }, home)
     }
 
     func displayHistory(_ entries: [LedgerEntry], into target: String) async {

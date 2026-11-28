@@ -1,4 +1,5 @@
-import { allocate, Entry, InputError, validID, balances, entryPayers, simplify } from './ledger';
+import { isSpend } from './refundMath';
+import { allocate, Entry, InputError, validID, balances, entryPayers, entrySign, simplify } from './ledger';
 
 export interface Item { id:string; title:string; amount:number; memberIDs:string[]; shares?:Record<string,number>; roundingSeats?:string[]; roundingWeights?:number[] }
 export interface Bill { items:Item[]; tax:number; tip:number; closed:boolean }
@@ -49,16 +50,19 @@ export function itemSplit(b:Bill,payer:string) {
   return Array.from(totals,([memberID,amount])=>({memberID,amount}));
 }
 export function breakdown(entries:Entry[],members:{id:string;name:string}[],currency:string) {
-  const expenses=entries.filter(e=>e.currency===currency && e.kind==='expense');
+  // Refunds count against spending: they lower the total, the receiver's paid and each credited share.
+  const expenses=entries.filter(e=>e.currency===currency && isSpend(e));
   const net=balances(entries,currency,{includeHandled:true});
   const categories:Record<string,number>=Object.create(null), months:Record<string,number>=Object.create(null);
   for (const e of expenses) {
-    const category=e.category??'Uncategorized', month=new Date(e.createdAt).toISOString().slice(0,7);
-    categories[category]=(categories[category]??0)+e.amount;
-    months[month]=(months[month]??0)+e.amount;
+    const category=e.category??'Uncategorized', month=new Date(e.createdAt).toISOString().slice(0,7), amount=entrySign(e)*e.amount;
+    categories[category]=(categories[category]??0)+amount;
+    months[month]=(months[month]??0)+amount;
   }
-  return {currency,total:expenses.reduce((sum,e)=>sum+e.amount,0),categories,months,settlements:simplify(balances(entries,currency)),
-    members:members.map(m=>({...m,paid:expenses.reduce((s,e)=>s+entryPayers(e).filter(p=>p.memberID===m.id).reduce((n,p)=>n+p.amount,0),0),
-      share:expenses.reduce((s,e)=>s+(e.splits.find(p=>p.memberID===m.id)?.amount??0),0),net:net[m.id]??0,
+  const pending=expenses.filter(e=>e.pending);
+  return {currency,total:expenses.reduce((sum,e)=>sum+entrySign(e)*e.amount,0),categories,months,settlements:simplify(balances(entries,currency)),
+    ...(pending.length?{pending:{count:pending.length,confirmedSettlements:simplify(balances(entries,currency,{includePending:false}))}}:{}),
+    members:members.map(m=>({...m,paid:expenses.reduce((s,e)=>s+entrySign(e)*entryPayers(e).filter(p=>p.memberID===m.id).reduce((n,p)=>n+p.amount,0),0),
+      share:expenses.reduce((s,e)=>s+entrySign(e)*(e.splits.find(p=>p.memberID===m.id)?.amount??0),0),net:net[m.id]??0,
       expenses:expenses.filter(e=>entryPayers(e).some(p=>p.memberID===m.id) || e.splits.some(p=>p.memberID===m.id)).map(e=>e.id)}))};
 }

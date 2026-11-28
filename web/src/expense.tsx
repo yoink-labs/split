@@ -48,6 +48,8 @@ function Composer({ g, existing }: { g: Group; existing?: Expense }) {
     g.members.some((member) => member.id === payer.memberID && member.userID === user && !member.removed),
   );
   const [handled, setHandled] = useState(existing?.handled ?? false);
+  const [pending, setPending] = useState(existing?.pending ?? false);
+  const [pendingNote, setPendingNote] = useState(existing?.pendingNote ?? "");
   const weights = g.defaultWeights ?? {},
     hasDefaults = !existing && Object.values(weights).some((w) => w > 0);
 
@@ -146,7 +148,7 @@ function Composer({ g, existing }: { g: Group; existing?: Expense }) {
   const [amountText, setAmountText] = useState(existing ? (existing.amount / 100).toFixed(2) : "");
   const [category, setCategory] = useState(existing?.category ?? "Dining");
   const [notes, setNotes] = useState(existing?.notes ?? "");
-  const [extrasOpen, setExtrasOpen] = useState(Boolean(existing?.notes || existing?.handled || query.has("receipt")));
+  const [extrasOpen, setExtrasOpen] = useState(Boolean(existing?.notes || existing?.handled || existing?.pending || query.has("receipt")));
   const settlementCurrency = existing?.exchange?.target ?? (currency === existing?.currency ? existing.currency : g.currency);
   const savedExchange = currency === existing?.currency ? existing.exchange : undefined;
   const [exchange, setExchange] = useState<Exchange | null>(savedExchange ?? null);
@@ -330,6 +332,7 @@ function Composer({ g, existing }: { g: Group; existing?: Expense }) {
               splitMode: bill ? "exact" : mode,
               kind: "expense" as const,
               ...(handled ? { handled: true } : {}),
+              ...(pending && !handled ? { pending: true, ...(pendingNote.trim() ? { pendingNote: pendingNote.trim() } : {}) } : {}),
               createdAt,
               ...(category ? { category } : {}),
               ...(notes.trim() ? { notes: notes.trim() } : {}),
@@ -593,15 +596,30 @@ function Composer({ g, existing }: { g: Group; existing?: Expense }) {
             </section>
           </div>
           <details className="card expense-extras" open={extrasOpen} onToggle={(e) => setExtrasOpen(e.currentTarget.open)}>
-            <summary>Receipt photos, notes & more</summary>
+            <summary>Receipt photos, notes, pending & more{pending && <span className="tag tag-pending" style={{ marginLeft: 8 }}>Pending</span>}</summary>
             <div className="expense-extras-body">
               <label className="expense-handled">
-                <input type="checkbox" checked={handled} disabled={!canSetHandled} onChange={(e) => setHandled(e.target.checked)} />
+                <input type="checkbox" checked={handled} disabled={!canSetHandled || pending} onChange={(e) => setHandled(e.target.checked)} />
                 <span>
                   <strong>Already handled</strong>
                   <small>{canSetHandled ? "Keep this expense in spending history without adding it to balances." : "A payer can change this status from the expense details."}</small>
                 </span>
               </label>
+
+              <label className="expense-handled">
+                <input type="checkbox" checked={pending} disabled={handled} onChange={(e) => setPending(e.target.checked)} />
+                <span>
+                  <strong>Pending</strong>
+                  <small>The cost may still change, for example while a refund is requested. It counts toward balances, and Settle up warns before anyone pays.</small>
+                </span>
+              </label>
+              {pending && (
+                <label className="field">
+                  Why is it pending? (optional)
+                  <input type="text" maxLength={500} value={pendingNote} onChange={(e) => setPendingNote(e.target.value)}
+                    placeholder="e.g., Sam couldn’t go; asking the operator to refund the ticket" />
+                </label>
+              )}
 
               <section className="receipt-upload">
                 <div className="expense-section-head">

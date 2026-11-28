@@ -68,7 +68,8 @@ struct GroupTransactionsView: View {
     }
 
     private func row(_ entry: LedgerEntry, names: [String: String]) -> some View {
-        let category = entry.isSettlement ? "Payment" : CategoryMeta.named(entry.category).name
+        let category = (entry.isSettlement ? "Payment" : entry.isRefund ? "Refund" : CategoryMeta.named(entry.category).name)
+            + (entry.isPending ? " · Pending" : "")
         let date = Exchange.date(fromDay: entry.day)?.formatted(date: .abbreviated, time: .omitted) ?? entry.day
         let payers = entry.allPayers
         let payer = names[payers.first?.memberID ?? entry.paidBy] ?? "Former member"
@@ -79,15 +80,15 @@ struct GroupTransactionsView: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(entry.title).font(.subheadline.weight(.semibold)).foregroundStyle(Palette.ink)
                 Text("\(date) · \(category)")
-                Text(payers.count > 1 ? "\(payers.count) payers" : "\(payer) paid")
+                Text(entry.isRefund ? "Refund to \(payer)" : payers.count > 1 ? "\(payers.count) payers" : "\(payer) paid")
             }
             .font(.caption)
             .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity, alignment: .leading)
             HStack(spacing: 7) {
-                Text(Money.text(entry.amount, entry.currency))
+                Text(Money.text(entry.signedAmount, entry.currency))
                     .font(.subheadline.weight(.semibold).monospacedDigit())
-                    .foregroundStyle(Palette.ink)
+                    .foregroundStyle(entry.isRefund ? Palette.positive : Palette.ink)
                     .multilineTextAlignment(.trailing)
                     .frame(width: dynamicTypeSize.isAccessibilitySize ? nil : amountWidth,
                            alignment: .trailing)

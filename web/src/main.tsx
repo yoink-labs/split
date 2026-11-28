@@ -26,6 +26,7 @@ import { ExpenseForm } from "./expense";
 import { ConverterScreen } from "./fxui";
 import { GroupSummary } from "./groupSummary";
 import { GroupWorkspace } from "./groupWorkspace";
+import { adjustedEntry, confirmed } from "../../worker/src/refundMath";
 import { isAbort, mergeSnapshot, singleFlight } from "./refresh";
 import {
   Account,
@@ -470,6 +471,27 @@ function DemoLedger({ onExit }: { onExit: () => void }) {
         setData((prev) => ({
           ...prev,
           entries: prev.entries.map((entry) => entry.id === handled[1] ? { ...entry, handled: setting || undefined } : entry),
+        }));
+        return { ok: true } as T;
+      }
+
+      // Pending entries: mark, confirm, adjust, or confirm with a refund
+      const pendingMatch = path.match(/^\/v1\/entries\/([\w-]+)\/(pending|resolve)$/);
+      if (pendingMatch && body) {
+        const [, eid, action] = pendingMatch;
+        const b = body as { pending?: boolean; note?: string; action?: string; amount?: number; refund?: Expense };
+        const current = data.entries.find((entry) => entry.id === eid);
+        if (!current) throw new Error("Expense unavailable.");
+        const next = action === "pending"
+          ? (b.pending ? { ...current, pending: true, ...(b.note ? { pendingNote: b.note } : {}) } : confirmed(current))
+          : b.action === "adjust" ? adjustedEntry(current, b.amount!) : confirmed(current);
+        if (!b.pending) delete next.pendingNote;
+        setData((prev) => ({
+          ...prev,
+          entries: [
+            ...(action === "resolve" && b.action === "refund" && b.refund ? [{ ...b.refund, editable: true }] : []),
+            ...prev.entries.map((entry) => entry.id === eid ? next : entry),
+          ],
         }));
         return { ok: true } as T;
       }

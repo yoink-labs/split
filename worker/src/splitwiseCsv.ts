@@ -8,6 +8,8 @@ export interface ImportShare { name: string; amount: number }
 export interface ImportRow {
   title: string; day: string; payer: string; amount: number; currency: string; category?: string;
   payment: boolean; splits: ImportShare[]; payers?: ImportShare[];
+  /** A negative-cost Splitwise row: payer received the money back and splits are the credits. */
+  refund?: boolean;
   exchange?: Exchange;
 }
 export interface SplitwiseGroup {
@@ -121,6 +123,17 @@ export async function parseSplitwise(raw: string, fileName: string): Promise<Spl
       out.push({ title: clean, day, payer: positive[0][0], amount: credit, currency, payment: true, splits: [{ name: negative[0][0], amount: credit }] });
       continue;
     }
+    const general = ['general', 'allgemein', 'general ', 'général', 'generale', 'geral', 'algemeen'];
+    const categoryField = category && !general.includes(key(category)) ? { category: splitCategory(category) } : {};
+    // Splitwise records a refund as a negative cost: the receiver nets negative, the people credited net positive.
+    if (cost < 0 && negative.length === 1 && -cost >= debit) {
+      const receiver = negative[0][0], amount = -cost, own = amount - debit;
+      const credits: ImportShare[] = positive.map(([name, net]) => ({ name, amount: net }));
+      if (own > 0) credits.push({ name: receiver, amount: own });
+      credits.sort((a, b) => order.indexOf(a.name) - order.indexOf(b.name));
+      out.push({ title: clean, day, payer: receiver, amount, currency, payment: false, refund: true, splits: credits, ...categoryField });
+      continue;
+    }
     const total = Math.max(Math.abs(cost), credit), extra = total - credit;
     const own = positive.length === 1 ? [extra] : extra === 0 ? positive.map(() => 0) : allocate(extra, positive.map(p => p[1]));
     const payers: ImportShare[] = [], splits: ImportShare[] = [];
@@ -128,7 +141,7 @@ export async function parseSplitwise(raw: string, fileName: string): Promise<Spl
     for (const [name, net] of negative) splits.push({ name, amount: -net });
     splits.sort((a, b) => order.indexOf(a.name) - order.indexOf(b.name));
     out.push({ title: clean, day, payer: payers[0].name, amount: total, currency, payment: false, splits,
-      ...(category && !['general', 'allgemein', 'general ', 'général', 'generale', 'geral', 'algemeen'].includes(key(category)) ? { category: splitCategory(category) } : {}),
+      ...categoryField,
       ...(payers.length > 1 ? { payers } : {}) });
   }
   if (!out.length) throw new Error(`${fileName} has no expenses to import.`);
@@ -140,8 +153,9 @@ export function importedBalances(g: Pick<SplitwiseGroup, 'rows'>) {
   const result: Record<string, Record<string, number>> = {};
   for (const r of g.rows) {
     const c = (result[r.currency] ??= Object.create(null));
-    for (const p of r.payers ?? [{ name: r.payer, amount: r.amount }]) c[p.name] = (c[p.name] ?? 0) + p.amount;
-    for (const s of r.splits) c[s.name] = (c[s.name] ?? 0) - s.amount;
+    const sign = r.refund ? -1 : 1;
+    for (const p of r.payers ?? [{ name: r.payer, amount: r.amount }]) c[p.name] = (c[p.name] ?? 0) + sign * p.amount;
+    for (const s of r.splits) c[s.name] = (c[s.name] ?? 0) - sign * s.amount;
   }
   return result;
 }

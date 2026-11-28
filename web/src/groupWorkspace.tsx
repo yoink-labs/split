@@ -34,6 +34,9 @@ import { ReceiptsHub } from "./receiptsHub";
 import { Avatar, AvatarStack, CategoryIcon } from "./ui";
 
 import { GroupLedger } from "./groupLedger";
+import { PendingPanel, PendingSummary } from "./pending";
+import { RefundForm } from "./refundForm";
+import { pendingView, refundRoom, refundsOf } from "../../worker/src/refundMath";
 import { GroupMembers } from "./groupMembers";
 import { GroupSettings } from "./groupSettings";
 import "./groupWorkspace.css";
@@ -44,13 +47,17 @@ type Tab = typeof tabs[number];
 function ExpenseDrawer({
   g,
   entry,
+  entries,
   onClose,
   onOpenReceipt,
+  onInspect,
 }: {
   g: Group;
   entry: Expense;
+  entries: Expense[];
   onClose: () => void;
   onOpenReceipt: (id: string) => void;
+  onInspect: (id: string) => void;
 }) {
   const { request, save, user } = useLedger();
   const homeMoney = useHomeMoney();
@@ -60,6 +67,11 @@ function ExpenseDrawer({
   const [busy, setBusy] = useState(false);
   const [handledBusy, setHandledBusy] = useState(false);
   const [handledError, setHandledError] = useState("");
+  const [refunding, setRefunding] = useState(false);
+  const refund = entry.kind === "refund";
+  const original = refund && entry.refundOf ? entries.find((e) => e.id === entry.refundOf) : undefined;
+  const linked = entry.kind === "expense" ? refundsOf(entries, entry.id) : [];
+  const room = entry.kind === "expense" ? refundRoom(entry, linked) : undefined;
   const drawer = useRef<HTMLElement>(null);
 
   useEffect(() => {
@@ -81,7 +93,7 @@ function ExpenseDrawer({
   }, [request, entry.id]);
 
   const payers = entryPayers(entry);
-  const canSetHandled = entry.kind === "expense" && payers.some((payer) =>
+  const canSetHandled = entry.kind === "expense" && !entry.pending && payers.some((payer) =>
     g.members.some((person) => person.id === payer.memberID && person.userID === user && !person.removed),
   );
 
@@ -119,6 +131,10 @@ function ExpenseDrawer({
   }
 
   async function deleteEntry() {
+    if (linked.length) {
+      alert("Delete this expense’s refunds first. Its refunds would no longer have an original.");
+      return;
+    }
     if (!confirm(`Delete "${entry.title}"? This updates everyone’s balances.`)) return;
     const { editable: _ed, recurrence: _rec, commentCount: _cc, likeCount: _lc, likedByMe: _lm, receiptIDs: _ri, ...orig } = entry;
     await save(`/v1/entries/${entry.id}/delete`, { original: orig });
@@ -144,6 +160,16 @@ function ExpenseDrawer({
                 {dateText(entry.createdAt)} {entry.category ? `· ${entry.category}` : ""}
                 {entry.handled && " · Already handled"}
               </p>
+              <div className="drawer-tags">
+                {refund && <span className="tag tag-refund">{entry.refundOf ? "Refund" : "Credit"}</span>}
+                {entry.pending && <span className="tag tag-pending">Pending</span>}
+                {original && (
+                  <button type="button" className="ledger-refund-of" onClick={() => onInspect(original.id)}>
+                    Refund of {original.title}
+                  </button>
+                )}
+                {refund && entry.refundOf && !original && <span className="muted" style={{ fontSize: 12 }}>Original expense deleted</span>}
+              </div>
             </div>
           </div>
           <button className="btn btn-sm btn-ghost" onClick={onClose} aria-label="Close">
@@ -155,8 +181,8 @@ function ExpenseDrawer({
           {/* Amount & FX summary */}
           <div className="card card-pad" style={{ background: "var(--bg)" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10 }}>
-              <div style={{ fontSize: 26, fontWeight: 800, letterSpacing: "-0.03em" }} className="num">
-                {homeMoney.entry(entry)}
+              <div style={{ fontSize: 26, fontWeight: 800, letterSpacing: "-0.03em" }} className={"num" + (refund ? " pos" : "")}>
+                {refund ? homeMoney.entry(entry).replace(/^(≈ )?/, "$1−") : homeMoney.entry(entry)}
               </div>
               <div style={{ display: "flex", gap: 6 }}>
                 <button className="btn btn-xs" onClick={toggleLike}>
@@ -184,6 +210,11 @@ function ExpenseDrawer({
               </button>
             )}
             {handledError && <p className="error-banner" role="alert">{handledError}</p>}
+            {entry.kind === "expense" && !refunding && room && room.total > 0 && (
+              <button className="btn btn-sm" style={{ marginTop: 10, marginLeft: canSetHandled ? 8 : 0 }} onClick={() => setRefunding(true)}>
+                Refund…
+              </button>
+            )}
             {entry.exchange && (
               <p style={{ marginTop: 8, fontSize: 12.5, color: "var(--ink-2)" }}>
                 {entry.exchange.source === "Statement" ? "Statement charge" : "Settles as"} <b className="num">{money(settlementEntry(entry).amount, entry.exchange.target)}</b>{" "}
@@ -202,6 +233,37 @@ function ExpenseDrawer({
               </p>
             )}
           </div>
+
+          {!refunding && <PendingPanel g={g} entry={entry} entries={entries} />}
+
+          {refunding && (
+            <div className="card card-pad">
+              <h4 style={{ fontSize: 13.5, marginBottom: 8 }}>Refund part or all of {entry.title}</h4>
+              <RefundForm g={g} original={entry} entries={entries} onDone={() => setRefunding(false)} onCancel={() => setRefunding(false)} />
+            </div>
+          )}
+
+          {linked.length > 0 && room && (
+            <div className="card refund-links">
+              <div className="card-head">
+                <h3>Refunds</h3>
+                <span className="muted" style={{ fontSize: 12 }}>
+                  {money(entry.amount - room.total, entry.currency)} of {money(entry.amount, entry.currency)} refunded
+                  {room.total > 0 ? ` · ${money(room.total, entry.currency)} left` : " · fully refunded"}
+                </span>
+              </div>
+              {linked.map((r) => (
+                <button type="button" className="row" key={r.id} onClick={() => onInspect(r.id)}>
+                  <span>
+                    <strong>{r.title}</strong>
+                    <span className="muted" style={{ fontSize: 12 }}> · {shortDate(r.createdAt)} · to {r.splits.map((s) => memberName(g, s.memberID)).join(", ")}</span>
+                    {r.pending && <span className="tag tag-pending">Pending</span>}
+                  </span>
+                  <b className="num pos">−{money(r.amount, r.currency)}</b>
+                </button>
+              ))}
+            </div>
+          )}
 
           {/* Receipt callout */}
           {(entry.bill || (entry.receiptIDs && entry.receiptIDs.length > 0)) && (
@@ -235,7 +297,7 @@ function ExpenseDrawer({
           {/* Paid by */}
           <div>
             <h4 style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 8 }}>
-              {entry.kind === "settlement" ? "Paid by" : payers.length > 1 ? "Paid by (Multiple payers)" : "Paid by"}
+              {refund ? "Received by" : entry.kind === "settlement" ? "Paid by" : payers.length > 1 ? "Paid by (Multiple payers)" : "Paid by"}
             </h4>
             <div className="panel">
               {payers.map((p) => {
@@ -256,7 +318,7 @@ function ExpenseDrawer({
           {/* Split with */}
           <div>
             <h4 style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 8 }}>
-              {entry.kind === "settlement" ? "Paid to" : `Split with (${entry.splitMode})`}
+              {refund ? "Credited to" : entry.kind === "settlement" ? "Paid to" : `Split with (${entry.splitMode})`}
             </h4>
             <div className="panel">
               {entry.splits.map((s) => {
@@ -335,6 +397,12 @@ function ExpenseDrawer({
   );
 }
 
+/** An upper bound on what `from` owes `to` from confirmed entries only. */
+function groupConfirmed(confirmedOnly: Record<string, number>, from: string, to: string) {
+  const owe = Math.max(0, -(confirmedOnly[from] ?? 0)), owed = Math.max(0, confirmedOnly[to] ?? 0);
+  return Math.min(owe, owed);
+}
+
 function SettlePaymentForm({
   g,
   from,
@@ -342,6 +410,7 @@ function SettlePaymentForm({
   amount: owed,
   currency: owedIn,
   open,
+  pending,
   onDone,
 }: {
   g: Group;
@@ -350,6 +419,7 @@ function SettlePaymentForm({
   amount: number;
   currency: string;
   open: string[];
+  pending: number;
   onDone: () => void;
 }) {
   const { save } = useLedger();
@@ -380,6 +450,7 @@ function SettlePaymentForm({
             throw new Error("Enter an amount up to the outstanding balance.");
           if (converts && !exchange)
             throw new Error("Wait for the rate, or enter your own rate.");
+          if (pending && !confirm(`${pending} pending ${pending === 1 ? "entry" : "entries"} in ${owedIn} may still change. This balance includes ${pending === 1 ? "it" : "them"}. Settle anyway?`)) return;
           await save("/v1/settlements", {
             id: paymentID,
             groupID: g.id,
@@ -397,6 +468,11 @@ function SettlePaymentForm({
         }}
       >
         <p className="muted">Enter the payment you already made. The recipient confirms it before balances update.</p>
+        {pending > 0 && (
+          <p className="pending-warning" role="alert">
+            <span className="tag tag-pending">Pending</span> {pending} {pending === 1 ? "entry" : "entries"} in {owedIn} may still change. Settling now uses the balance that includes {pending === 1 ? "it" : "them"}.
+          </p>
+        )}
         <div className="form-row">
           <label className="field">
             Amount paid
@@ -459,6 +535,7 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
   const homeMoney = useHomeMoney();
 
   const [inspectID, setInspectID] = useState<string | null>(null);
+  const [crediting, setCrediting] = useState(false);
   const receiptFocusID = query.get("receipt");
 
   // Settle up open form
@@ -491,6 +568,8 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
   const myStats = me ? spending.members.find((member) => member.id === me.id) : undefined;
   const myBalances = me ? memberBalances(entries, me.id) : {};
   const myNet = homeMoney.total(myBalances);
+  const pendingCount = entries.filter((e) => e.pending && !e.handled).length;
+  const myConfirmed = me ? memberBalances(entries, me.id, false) : {};
   const suggestions = codes.flatMap((currency) =>
     breakdown(converted, g.members, currency).settlements.map((transfer) => ({ ...transfer, currency })),
   );
@@ -549,6 +628,9 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
           <Link className="btn btn-sm" to={`/g/${g.id}/summary`}>
             Export PDF
           </Link>
+          <button type="button" className="btn btn-sm" onClick={() => setCrediting(true)}>
+            + Credit
+          </button>
           <button type="button" className="btn btn-sm" onClick={() => setTab("settle")}>
             Settle up
           </button>
@@ -618,6 +700,7 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
               </div>
               <div className="kpi-sub">
                 {!myNet.missing.length && (myNet.amount > 0 ? "You are owed" : myNet.amount < 0 ? "You owe" : "")}
+                {pendingCount > 0 && <> · Includes {pendingCount} pending · Confirmed only {homeMoney.totalText(myConfirmed, true)}</>}
               </div>
             </div>
             <button type="button" className="kpi kpi-action" onClick={() => setTab("receipts")}>
@@ -730,8 +813,13 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
           <PendingPayments group={g} />
           {codes.map((currency) => {
             const transfers = suggestions.filter((transfer) => transfer.currency === currency);
+            const pendingHere = pendingView(converted, currency);
+            const pendingRaw = entries.filter((e) => pendingHere.pending.some((p) => p.id === e.id));
             return (
-              <div key={g.id + ":" + currency} className="grid-sidebar-r">
+              <div key={g.id + ":" + currency} className="form-stack" style={{ gap: 14 }}>
+              <PendingSummary g={g} pending={pendingRaw} withPending={pendingHere.withPending}
+                confirmedOnly={pendingHere.confirmedOnly} currency={currency} me={me?.id} />
+              <div className="grid-sidebar-r">
                 <MoneyFlowGraph
                   g={g} entries={entries} currency={currency} suggested={transfers}
                   focus={flowFocus?.groupID === g.id && flowFocus.currency === currency ? flowFocus : undefined}
@@ -760,6 +848,10 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
                               <strong>{memberName(g, t.from)}</strong> → <strong>{memberName(g, t.to)}</strong>
                             </div>
                             <div className="suggested-amount num">{money(t.amount, currency)}</div>
+                            {pendingHere.pending.length > 0 && (() => {
+                              const firm = groupConfirmed(pendingHere.confirmedOnly, t.from, t.to);
+                              return <div className="muted suggested-estimate">Includes pending · confirmed only {firm ? `up to ${money(firm, currency)}` : "nothing owed"}</div>;
+                            })()}
                             {currency !== homeMoney.home && (
                               <div className="muted suggested-estimate">{homeMoney.totalText({ [currency]: t.amount })} in {homeMoney.home}</div>
                             )}
@@ -794,6 +886,7 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
                                 amount={t.amount}
                                 currency={currency}
                                 open={codes}
+                                pending={pendingHere.pending.length}
                                 onDone={() => setSettlingKey(null)}
                               />
                             )}
@@ -803,6 +896,7 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
                     </div>
                   )}
                 </div>
+              </div>
               </div>
             );
           })}
@@ -840,11 +934,33 @@ function Workspace({ g, expenseID }: { g: Group; expenseID?: string }) {
       {tab === "members" && <GroupMembers key={g.id} group={g} entries={entries} />}
       {tab === "settings" && <GroupSettings g={g} showRates={selectedTab === "rates"} />}
 
+      {crediting && (
+        <div className="drawer-backdrop" onClick={() => setCrediting(false)}>
+          <aside className="drawer" onClick={(e) => e.stopPropagation()} aria-label="Record a credit"
+            onKeyDown={(event) => { if (event.key === "Escape") setCrediting(false); }}>
+            <div className="drawer-head">
+              <h3 style={{ fontSize: 15, fontWeight: 700 }}>Record a credit</h3>
+              <button className="btn btn-sm btn-ghost" onClick={() => setCrediting(false)} aria-label="Close">✕</button>
+            </div>
+            <div className="drawer-body">
+              <RefundForm g={g} entries={entries} onDone={() => setCrediting(false)} onCancel={() => setCrediting(false)} />
+              <p className="muted" style={{ fontSize: 12.5 }}>To refund a specific expense, open it and choose Refund….</p>
+            </div>
+          </aside>
+        </div>
+      )}
+
       {/* Slide-over Expense Inspector */}
       {inspected && (
         <ExpenseDrawer
+          key={inspected.id}
           g={g}
           entry={inspected}
+          entries={entries}
+          onInspect={(id) => {
+            if (expenseID) nav(`/g/${g.id}/e/${id}`, { replace: true });
+            else setInspectID(id);
+          }}
           onClose={() => {
             setInspectID(null);
             if (expenseID) setTab("transactions");

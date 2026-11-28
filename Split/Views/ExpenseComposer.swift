@@ -22,6 +22,8 @@ struct AddExpenseView: View {
     @State private var category = ""
     @State private var notes = ""
     @State private var handled = false
+    @State private var pending = false
+    @State private var pendingNote = ""
     @State private var payers: [Payer] = []
     @State private var payerText: [String: String] = [:]
     @State private var mode: SplitMode = .equal
@@ -390,9 +392,31 @@ struct AddExpenseView: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .disabled(!canSetHandled)
+                .disabled(!canSetHandled || pending)
                 .accessibilityValue(handled ? "On" : "Off")
                 .accessibilityAddTraits(handled ? .isSelected : [])
+                Divider()
+                Toggle(isOn: $pending.animation(.snappy)) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Pending").font(.subheadline.weight(.semibold))
+                        Text("The cost may still change, like a ticket you’re trying to get refunded. It still counts toward balances.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .tint(Palette.amber)
+                .disabled(handled)
+                .accessibilityIdentifier("composer-pending")
+                if pending {
+                    TextField("Why is it pending? (optional)", text: $pendingNote, axis: .vertical)
+                        .lineLimit(1...3)
+                        .font(.subheadline)
+                        .accessibilityIdentifier("composer-pending-note")
+                    if pendingNote.count > 450 {
+                        Text("\(pendingNote.count)/500").font(.caption2.monospacedDigit())
+                            .foregroundStyle(pendingNote.count > 500 ? Palette.negative : .secondary)
+                    }
+                }
             }
         }
     }
@@ -1181,6 +1205,11 @@ struct AddExpenseView: View {
         let cleanNotes = notes.trimmingCharacters(in: .whitespacesAndNewlines)
         entry.notes = cleanNotes.isEmpty ? nil : cleanNotes
         entry.handled = handled ? true : nil
+        let cleanPending = pendingNote.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard cleanPending.count <= 500 else { throw LedgerError.invalid("Write a pending note of up to 500 characters.") }
+        entry.pending = pending && !handled ? true : nil
+        entry.pendingNote = entry.pending == true && !cleanPending.isEmpty ? cleanPending : nil
+        entry.refundOf = original?.refundOf
         entry.commentCount = original?.commentCount
         entry.likeCount = original?.likeCount
         entry.likedByMe = original?.likedByMe
@@ -1275,6 +1304,8 @@ struct AddExpenseView: View {
         category = original?.category ?? ""
         notes = original?.notes ?? ""
         handled = original?.isHandled ?? false
+        pending = original?.isPending ?? false
+        pendingNote = original?.pendingNote ?? ""
         bill = original?.bill ?? ReceiptBill()
         itemized = original?.bill != nil || draft != nil
         recurrence = original?.recurrence ?? "off"
@@ -1338,6 +1369,8 @@ struct AddExpenseView: View {
         title = ""
         notes = ""
         handled = false
+        pending = false
+        pendingNote = ""
         bill = ReceiptBill()
         photos = []
         itemized = false

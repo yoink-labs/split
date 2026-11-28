@@ -128,6 +128,21 @@ split expenses handled --group GROUP_ID --expense EXPENSE_ID --state handled
 split expenses add --group GROUP_ID --title Lunch --amount 12.00 --payer MEMBER_ID --currency USD --rate 1039.5
 ```
 
+### Refunds, credits and pending expenses
+
+```sh
+split refunds add --group GROUP_ID --expense EXPENSE_ID --amount 30.00                 # in proportion to shares
+split refunds add --group GROUP_ID --expense EXPENSE_ID --amount 33.33 --participants '["CAM_ID"]'
+split refunds add --group GROUP_ID --amount 10.00 --receiver ALEX_ID --participants '["BEA_ID"]' --title Overcharge
+split expenses add --group GROUP_ID --title Excursion --amount 100.00 --payer MEMBER_ID --pending --pendingNote "Cam may get a refund"
+split expenses pending --group GROUP_ID --expense EXPENSE_ID --note "Waiting on the ticket refund"
+split expenses resolve --group GROUP_ID --expense EXPENSE_ID --action confirm
+split expenses resolve --group GROUP_ID --expense EXPENSE_ID --action adjust --amount 66.67
+split expenses resolve --group GROUP_ID --expense EXPENSE_ID --action refund --amount 33.33 --participants '["CAM_ID"]'
+```
+
+A refund lowers the balance of whoever received the money and raises the balance of each person credited. A refund of an expense cannot exceed its amount or any one person's share. Pending expenses count toward balances; `balances` also returns `confirmedNet` and the pending entries so you can see the balance without them, and `settle up` warns while entries are pending. See [docs/REFUNDS_AND_PENDING.md](../docs/REFUNDS_AND_PENDING.md).
+
 Exchange rates use group currency units per one unit of foreign currency. Pass `--rate none` to clear the trip rate. Account payment methods apply to groups without an override. `members payment --reset` restores the account methods for that group. `expenses handled` keeps an expense in spending and export totals and removes it from outstanding balances and suggested transfers. The matching MCP tools use underscores in place of spaces.
 
 ## Receipts, claims and spending

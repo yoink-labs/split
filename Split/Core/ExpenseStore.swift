@@ -433,7 +433,7 @@ private struct ActiveInviteResponse: Decodable {
             guard !next.snapshot.entries.contains(where: { $0.id == entryID }) else { continue }
             var entry = LedgerEntry(id: entryID, groupID: groupID, title: row.title, amount: row.amount, currency: row.currency, paidBy: try id(row.payer),
                                     splits: try row.splits.map { Portion(memberID: try id($0.name), amount: $0.amount) }, category: row.category,
-                                    kind: row.payment ? "settlement" : "expense", editable: true, splitMode: .exact, createdAt: row.day + "T12:00:00Z")
+                                    kind: row.payment ? "settlement" : row.refund == true ? "refund" : "expense", editable: true, splitMode: .exact, createdAt: row.day + "T12:00:00Z")
             if let payers = row.payers, payers.count > 1 { entry.payers = try payers.map { Payer(memberID: try id($0.name), amount: $0.amount) } }
             entry.exchange = row.exchange
             next.snapshot.entries.append(entry)
@@ -484,6 +484,61 @@ private struct ActiveInviteResponse: Decodable {
         _ = try await post("/v1/entries/\(entry.id)/handled", JSONEncoder().encode(["handled": handled]))
         try await waitForSync()
         await sync()
+    }
+
+    /// Marks an expense or refund pending (with an optional note), or confirms it.
+    func setPending(_ entry: LedgerEntry, pending: Bool, note: String? = nil) async throws {
+        let clean = note?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let text = pending && clean?.isEmpty == false ? clean : nil
+        guard (text?.count ?? 0) <= 500 else { throw LedgerError.invalid("Write a pending note of up to 500 characters.") }
+        if demo {
+            try updateDemo(entry.id) { $0.pending = pending ? true : nil; $0.pendingNote = text }
+            return
+        }
+        var body: [String: Any] = ["pending": pending]
+        if let text { body["note"] = text }
+        _ = try await post("/v1/entries/\(entry.id)/pending", JSONSerialization.data(withJSONObject: body))
+        try await waitForSync()
+        await sync()
+    }
+
+    enum Resolution { case confirm, adjust(Int64), refund(LedgerEntry) }
+
+    /// Resolves a pending entry: confirm it, adjust the amount (splits rescale by largest remainder), or record a linked refund.
+    func resolve(_ entry: LedgerEntry, _ resolution: Resolution) async throws {
+        if case .refund(let refund) = resolution {
+            try Refunds.validate(refund, original: entry, others: Refunds.linked(to: entry, in: entries, excluding: refund.id))
+        }
+        if demo {
+            var next = state
+            guard let index = next.snapshot.entries.firstIndex(where: { $0.id == entry.id }) else { throw LedgerError.invalid("Expense unavailable.") }
+            switch resolution {
+            case .confirm: next.snapshot.entries[index].pending = nil; next.snapshot.entries[index].pendingNote = nil
+            case .adjust(let amount): next.snapshot.entries[index] = try Refunds.adjusted(next.snapshot.entries[index], to: amount)
+            case .refund(var refund):
+                next.snapshot.entries[index].pending = nil; next.snapshot.entries[index].pendingNote = nil
+                refund.editable = true
+                next.snapshot.entries.append(refund)
+            }
+            try persist(next)
+            return
+        }
+        let body: Data
+        switch resolution {
+        case .confirm: body = try JSONEncoder().encode(["action": "confirm"])
+        case .adjust(let amount): body = try JSONSerialization.data(withJSONObject: ["action": "adjust", "amount": amount])
+        case .refund(let refund): body = try JSONEncoder().encode(ResolveRefund(refund: refund))
+        }
+        _ = try await post("/v1/entries/\(entry.id)/resolve", body)
+        try await waitForSync()
+        await sync()
+    }
+
+    private func updateDemo(_ id: String, _ change: (inout LedgerEntry) -> Void) throws {
+        var next = state
+        guard let index = next.snapshot.entries.firstIndex(where: { $0.id == id }) else { throw LedgerError.invalid("Expense unavailable.") }
+        change(&next.snapshot.entries[index])
+        try persist(next)
     }
 
     func change(_ original: LedgerEntry, to replacement: LedgerEntry?) async throws {
@@ -680,6 +735,7 @@ private struct ActiveInviteResponse: Decodable {
     }
 }
 private struct APIError: Decodable { var error: String }
+private struct ResolveRefund: Encodable { var action = "refund"; var refund: LedgerEntry }
 private struct InviteResponse: Decodable { var url: URL }
 private struct CommentList: Decodable { var comments: [EntryComment] }
 
@@ -719,6 +775,18 @@ enum Fixtures {
         e.append(entry("demo-sam-tickets",sam,"Concert tickets",12000,"USD","demo-sam-alex",[("demo-sam-alex",6000),("demo-sam-sam",6000)],category:"Entertainment",day:"2026-11-10T15:00:00Z"))
         e.append(entry("demo-sam-grocery",sam,"Trader Joe’s run",6420,"USD","demo-sam-sam",[("demo-sam-alex",3210),("demo-sam-sam",3210)],category:"Groceries",day:"2026-11-04T18:20:00Z"))
         e.append(entry("demo-maya-dinner",maya,"Maya’s birthday dinner",15000,"USD","demo-maya-maya",[("demo-maya-alex",5000),("demo-maya-maya",10000)],category:"Dining",day:"2026-11-02T20:00:00Z"))
+
+        // Sam couldn't join the delta excursion; the agency may still refund the ticket.
+        var excursion = entry("demo-tigre",trip,"Tigre delta excursion",9600000,"ARS",people[0].id,[("demo-alex",2400000),("demo-maya",2400000),("demo-sam",2400000),("demo-harris",2400000)],category:"Travel",day:"2026-11-18T10:00:00Z")
+        excursion.pending = true
+        excursion.pendingNote = "Sam couldn’t go. We asked the agency to refund his ticket."
+        e.append(excursion)
+        // Rock missed the boat tour and WeBoat refunded his ticket to Sanjit's card.
+        var boatRefund = entry("demo-boat-refund",spain,"Refund: Rock’s WeBoat ticket",11761,"EUR",spainMembers[2].id,[("demo-spain-rock",11761)],category:"Travel",day:"2026-11-11T09:00:00Z")
+        boatRefund.kind = "refund"
+        boatRefund.refundOf = "demo-boat"
+        boatRefund.splitMode = .exact
+        e.append(boatRefund)
 
         e[0].bill = ReceiptBill(items: [
             Purchase(title:"Empanadas",amount:3800000,memberIDs:[people[0].id,people[1].id,people[3].id]),

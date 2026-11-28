@@ -18,6 +18,8 @@ is noted next to each release. The CLI is versioned separately with
 - Refund specific receipt items. Everyone who had an item gets back exactly what it cost them, tax and tip included, and each item can be refunded once.
 - Every group report, including the PDF, can show consumption by person: who had each item, item totals, and how tax and tip were allocated, exact to the cent. Refunds are netted out. `split items report` gives the same breakdown.
 - Mark any expense pending with an optional note while its cost may still change. Pending expenses count toward balances, balances also show the confirmed-only amount, and settle up warns while anything is pending. Resolve one by confirming it, adjusting its amount, or turning it into a refund.
+- Find people on Split by full email or a 3+ letter name prefix and invite them to a group. Results show names and avatars only. A “Let people find me” setting, on by default, hides you from search.
+- An invitation inbox on web and iOS, with a badge, lets you accept or decline pending invitations. Accepting claims matching placeholder history.
 - Manage group members, claim addresses, and invitations from the Members tab on web and iOS. Email or resend invitations and send sign-in reminders.
 - Open the Transactions tab on web and iOS to see each expense or settlement and its payment split.
 - Customize group PDFs with spending breakdowns by category, month, and person.

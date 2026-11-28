@@ -25,7 +25,11 @@ split groups create --name Weekend --self Alex --kind trip --currency USD --plac
 split groups show --group "$GROUP"
 split members list --group "$GROUP"
 split members add --group "$GROUP" --name Casey --email casey@example.com
-split members lookup --query casey@example.com
+split members lookup --query casey@example.com    # or the first 3+ letters of a name
+split members invite --group "$GROUP" --user "$USER_ID"
+split invitations list
+split invitations accept --invitation "$INVITATION_ID"
+split profile discoverable --discoverable off
 split members add --group "$GROUP" --name Casey --user "$USER_ID"
 split invite --group "$GROUP"                    # general invitation
 split invite --group "$GROUP" --member "$MAYA"   # claim Maya’s placeholder

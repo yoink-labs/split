@@ -156,3 +156,20 @@ final class SpendAnalyticsTests: XCTestCase {
         XCTAssertEqual(mine.total, 500 + 1501)
     }
 }
+
+final class LedgerPositionTests: XCTestCase {
+    func testMatchesTheWebLedgerPosition() {
+        var entry = LedgerEntry(groupID: "g", title: "Dinner", amount: 9000, currency: "USD", paidBy: "a",
+                                splits: [Portion(memberID: "a", amount: 3000), Portion(memberID: "b", amount: 6000)])
+        XCTAssertEqual(LedgerPosition(entry, memberID: "a").net, 6000)
+        XCTAssertEqual(LedgerPosition(entry, memberID: "b").net, -6000)
+        XCTAssertFalse(LedgerPosition(entry, memberID: "c").involved)
+        XCTAssertFalse(LedgerPosition(entry, memberID: nil).involved)
+        entry.handled = true
+        XCTAssertTrue(LedgerPosition(entry, memberID: "b").involved)
+        XCTAssertEqual(LedgerPosition(entry, memberID: "b").net, 0)
+        entry.handled = nil
+        entry.kind = "settlement"
+        XCTAssertEqual(LedgerPosition(entry, memberID: "b").net, 0)
+    }
+}

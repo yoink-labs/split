@@ -4,6 +4,13 @@ private struct ConnectedComputer: Decodable, Identifiable {
     let id: String
     let name: String
     let last_used: Double?
+    let scope: String?
+    let is_remote: Int?
+
+    /// The web's access label, so you know what a token can reach before revoking it.
+    var access: String {
+        scope == "finance" ? "Finance (read-only)" : is_remote == 1 ? "Remote MCP token" : "CLI & local MCP"
+    }
 }
 
 private struct ComputerReview: Decodable {
@@ -76,6 +83,7 @@ struct DeviceAccessView: View {
                 ForEach(computers) { computer in
                     VStack(alignment: .leading) {
                         Text(computer.name)
+                        Text(computer.access).font(.caption).foregroundStyle(.secondary)
                         if let used = computer.last_used {
                             Text("Last used \(Date(timeIntervalSince1970: used/1000).formatted())").font(.caption)
                         }

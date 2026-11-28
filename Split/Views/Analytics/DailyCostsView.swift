@@ -3,8 +3,8 @@ import SwiftUI
 struct DailyCostsView: View {
     var scope: AnalyticsScope
     var initialPerson: String? = nil
-    var from: String? = nil
-    var to: String? = nil
+    var from = ""
+    var to = ""
     @State private var selection: String?
     @Environment(\.dismiss) private var dismiss
 
@@ -14,7 +14,7 @@ struct DailyCostsView: View {
             ?? scope.members.first
         let days = person.map {
             DailyCost.report(scope.entries, person: $0.key, key: scope.personKey).filter { day in
-                (from.map { day.day >= $0 } ?? true) && (to.map { day.day <= $0 } ?? true)
+                (from.isEmpty || day.day >= from) && (to.isEmpty || day.day <= to)
             }
         } ?? []
         NavigationStack {

@@ -536,6 +536,7 @@ export function GroupSummary() {
           <div className="sum-kicker">Split · {reportTitle}</div>
           <h1 className="sum-title">{g.name}</h1>
           {personal && <p className="sum-for">Personal report for {person(personal.id)}</p>}
+          {personal && included("history") && <p className="sum-small">Outlined transactions involve you. Shaded rows show your share or payment.</p>}
           {g.description && <p className="sum-desc">{g.description}</p>}
           <dl className="sum-meta">
             <Meta label="Kind">{kindLabel(g)}</Meta>
@@ -854,7 +855,7 @@ function LedgerEntry(props: EntryProps) {
               const paid = sumBy(payers, id);
               const share = sumBy(e.splits, id);
               return (
-                <tr key={id}>
+                <tr key={id} className={id === self ? "sum-personal-row" : undefined}>
                   <td>{person(id)}{id === self && " (you)"}</td>
                   <td className="r">
                     {paid || id === self ? (
@@ -947,7 +948,7 @@ function ReceiptItems({ person, e, home, projected, format, self }: EntryProps) 
                   sumConverted(item.portions.map((p) => converted.get(item.id + ":" + p.memberID))))}
               </tr>
               {item.portions.map((p) => (
-                <tr key={p.memberID} className="sum-portion">
+                <tr key={p.memberID} className={involved && p.memberID === self ? "sum-portion sum-personal-row" : "sum-portion"}>
                   <td><span className="sum-indent">{person(p.memberID)}</span></td>
                   {cells(p, converted.get(item.id + ":" + p.memberID) ?? null)}
                 </tr>
@@ -966,7 +967,7 @@ function ReceiptItems({ person, e, home, projected, format, self }: EntryProps) 
         {head("Person")}
         <tbody>
           {people.map((p) => (
-            <tr key={p.memberID}>
+            <tr key={p.memberID} className={involved && p.memberID === self ? "sum-personal-row" : undefined}>
               <td>{person(p.memberID)}</td>
               {cells(p, sumConverted(items.flatMap((i) => i.portions.filter((x) => x.memberID === p.memberID).map((x) => converted.get(i.id + ":" + x.memberID)))))}
             </tr>

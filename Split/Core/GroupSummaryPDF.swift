@@ -39,7 +39,12 @@ enum GroupSummaryPDF {
         writer.text(group.name, .title)
         writer.text(sections.totals || sections.balances || sections.history
                     ? "\(report)  /  Preferred currency: \(home)" : report, .heading)
-        if let memberID { writer.text("Personal report for \(name(memberID))", .body) }
+        if let memberID {
+            writer.text("Personal report for \(name(memberID))", .body)
+            if sections.history {
+                writer.text("Outlined transactions involve you. Shaded rows show your share or payment.", .detail)
+            }
+        }
         let kind = switch group.kind { case "trip": "Trip"; case "home": "Household"; case "friend": "Friends"; default: "Group" }
         let dates = [group.startDate, group.endDate].compactMap { $0 }.map(displayDay)
         writer.text(([kind] + dates + ["Exported \(Date.now.formatted(date: .abbreviated, time: .omitted))"]).joined(separator: "  /  "), .detail)
@@ -272,8 +277,8 @@ enum GroupSummaryPDF {
                 guard entry.currency != home || override != nil, let original, preferred != nil else { return nil }
                 return "Recorded \(Money.text(original, entry.currency))"
             }
-            func line(_ label: String, _ original: Int64, _ preferred: Int64?) -> PDFWriter.Row {
-                writer.makeRow(label, amount: amount(original, preferred), detail: recorded(original, preferred))
+            func line(_ label: String, _ original: Int64, _ preferred: Int64?, personal: Bool = false) -> PDFWriter.Row {
+                writer.makeRow(label, amount: amount(original, preferred), detail: recorded(original, preferred), personal: personal)
             }
             var header = writer.lines(entry.title, .heading) + writer.lines("\(date)  /  \(kind)\(status)", .detail)
             if approximate && projected == nil {
@@ -303,7 +308,7 @@ enum GroupSummaryPDF {
                                 amount(paid[id] ?? (id == memberID ? 0 : nil), preferredPaid[id]),
                                 amount(shares[id] ?? (id == memberID ? 0 : nil), preferredShares[id]),
                                 middleDetail: recorded(paid[id], preferredPaid[id]),
-                                rightDetail: recorded(shares[id], preferredShares[id]))
+                                rightDetail: recorded(shares[id], preferredShares[id]), personal: id == memberID)
             }
             if let bill = entry.bill, let gross = try? bill.gross() {
                 let itemShares = zip(bill.items, gross).map { item, original in
@@ -330,7 +335,7 @@ enum GroupSummaryPDF {
                     }
                     for id in itemShares[index].keys.sorted(by: { (name($0), $0) < (name($1), $1) }) {
                         let label = item.memberIDs.isEmpty ? "    Unclaimed · \(name(id))" : "    \(name(id))"
-                        detailRows.append(line(label, itemShares[index][id, default: 0], itemPreferred?[id]))
+                        detailRows.append(line(label, itemShares[index][id, default: 0], itemPreferred?[id], personal: involved && id == memberID))
                     }
                 }
                 if bill.tax > 0 || bill.tip > 0 {
@@ -343,7 +348,7 @@ enum GroupSummaryPDF {
                     detailRows.append(writer.columns(["Receipt by person (\(currency))", "Items", "Tax", "Tip", "Total"], style: .detail))
                     for part in consumption.people.sorted(by: { (name($0.memberID), $0.memberID) < (name($1.memberID), $1.memberID) }) {
                         detailRows.append(writer.columns([name(part.memberID), Money.text(part.items, currency), Money.text(part.tax, currency),
-                                                          Money.text(part.tip, currency), Money.text(part.amount, currency)]))
+                                                          Money.text(part.tip, currency), Money.text(part.amount, currency)], personal: involved && part.memberID == memberID))
                     }
                 }
             } else if let item = try? Consumption.items(entry).first {
@@ -360,10 +365,16 @@ enum GroupSummaryPDF {
                 writer.reserve(fullHeight <= writer.contentHeight ? fullHeight : minimum)
             }
             writer.space(7)
-            writer.draw(header, highlighted: involved)
-            for part in lines { writer.draw(part, highlighted: involved) }
-            writer.draw(notes, highlighted: involved)
-            writer.rule()
+            if involved { writer.beginOutline() }
+            writer.draw(header)
+            for part in lines { writer.draw(part) }
+            writer.draw(notes)
+            if involved {
+                writer.endOutline()
+                writer.space(8)
+            } else {
+                writer.rule()
+            }
         }
     }
 
@@ -431,6 +442,7 @@ private final class PDFWriter {
 
     struct Row {
         let cells: [Cell]
+        var personal = false
         var height: CGFloat {
             (cells.map { $0.lines.reduce(0) { $0 + $1.height } }.max() ?? 0) + 3
         }
@@ -444,6 +456,7 @@ private final class PDFWriter {
     var contentHeight: CGFloat { pageSize.height - 2 * margin }
     private var y: CGFloat = 0
     private var page = 0
+    private var outlineTop: CGFloat?
 
     init(title: String) throws {
         var pageBox = CGRect(origin: .zero, size: pageSize)
@@ -486,6 +499,17 @@ private final class PDFWriter {
         space(8)
     }
 
+    func beginOutline() { outlineTop = y + 3 }
+
+    func endOutline() {
+        guard let top = outlineTop else { return }
+        let bottom = y - 3
+        context.setStrokeColor(CGColor(gray: 0.47, alpha: 1))
+        context.setLineWidth(0.6)
+        context.stroke(CGRect(x: margin - 6, y: bottom, width: width + 12, height: top - bottom))
+        outlineTop = nil
+    }
+
     func reserve(_ height: CGFloat) {
         if y - height < margin { newPage() }
     }
@@ -496,16 +520,16 @@ private final class PDFWriter {
         draw(makeRow(label, amount: amount, detail: detail))
     }
 
-    func makeRow(_ label: String, amount: String, detail: String?) -> Row {
+    func makeRow(_ label: String, amount: String, detail: String?, personal: Bool = false) -> Row {
         let split = width * 0.57
         return Row(cells: [
             cell(label, x: 0, width: split - 12),
             cell(amount, detail: detail, x: split, width: width - split, rightAligned: true)
-        ])
+        ], personal: personal)
     }
 
     func tableRow(_ first: String, _ middle: String, _ last: String, middleDetail: String? = nil,
-                  rightDetail: String? = nil, style: Style = .body, middleAlignedRight: Bool = true) -> Row {
+                  rightDetail: String? = nil, style: Style = .body, middleAlignedRight: Bool = true, personal: Bool = false) -> Row {
         let firstWidth = width * 0.40
         let middleWidth = width * 0.30
         let lastX = firstWidth + middleWidth
@@ -513,18 +537,18 @@ private final class PDFWriter {
             cell(first, style: style, x: 0, width: firstWidth - 12),
             cell(middle, detail: middleDetail, style: style, x: firstWidth, width: middleWidth - 12, rightAligned: middleAlignedRight),
             cell(last, detail: rightDetail, style: style, x: lastX, width: width - lastX, rightAligned: true)
-        ])
+        ], personal: personal)
     }
 
     /// A left label and right-aligned amount columns (Person, Items, Tax, Tip, Total).
-    func columns(_ values: [String], style: Style = .body) -> Row {
+    func columns(_ values: [String], style: Style = .body, personal: Bool = false) -> Row {
         guard let first = values.first else { return Row(cells: []) }
         let firstWidth = width * 0.36
         let rest = values.dropFirst()
         let each = rest.isEmpty ? 0 : (width - firstWidth) / CGFloat(rest.count)
         return Row(cells: [cell(first, style: style, x: 0, width: firstWidth - 8)] + rest.enumerated().map { index, value in
             cell(value, style: style, x: firstWidth + CGFloat(index) * each, width: each - 4, rightAligned: true)
-        })
+        }, personal: personal)
     }
 
     private func cell(_ value: String, detail: String? = nil, style: Style = .body,
@@ -534,10 +558,10 @@ private final class PDFWriter {
         return Cell(lines: primary + secondary, x: x, width: width, rightAligned: rightAligned)
     }
 
-    func draw(_ row: Row, highlighted: Bool = false) {
+    func draw(_ row: Row) {
         let height = row.height
         reserve(height)
-        if highlighted { highlight(height) }
+        if row.personal { highlight(height) }
         for cell in row.cells {
             var baseline = y
             for line in cell.lines {
@@ -569,14 +593,13 @@ private final class PDFWriter {
     }
 
     private func highlight(_ height: CGFloat) {
-        context.setFillColor(CGColor(red: 0.91, green: 0.95, blue: 0.87, alpha: 1))
+        context.setFillColor(CGColor(red: 0.93, green: 0.95, blue: 0.91, alpha: 1))
         context.fill(CGRect(x: margin - 3, y: y - height, width: width + 6, height: height))
     }
 
-    func draw(_ lines: [Line], highlighted: Bool = false) {
+    func draw(_ lines: [Line]) {
         for line in lines {
             reserve(line.height)
-            if highlighted { highlight(line.height) }
             paint(line, y: y)
             y -= line.height
         }
@@ -589,11 +612,16 @@ private final class PDFWriter {
     }
 
     private func newPage() {
-        if page > 0 { context.endPDFPage() }
+        let continuesOutline = outlineTop != nil
+        if page > 0 {
+            endOutline()
+            context.endPDFPage()
+        }
         context.beginPDFPage(nil)
         context.textMatrix = .identity
         page += 1
         y = pageSize.height - margin
+        if continuesOutline { beginOutline() }
         if let footer = lines("Split  /  \(page)", .detail).first {
             paint(footer, y: 32, availableWidth: width)
         }

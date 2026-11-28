@@ -189,12 +189,12 @@ export const tools = [
     bill: receiptBill,
     photos: receiptPhotos
   }, ['group','title','payer']),
-  op('expenses_combine','Combine two or more same-currency expenses, preserving who paid and every receipt. Defaults to an equal split.', {
-    group, expenses:{...list('Expense IDs to combine.',expense),minItems:2}, title:allocation.title,
+  op('expenses_combine','Preview combining same-currency expenses, preserving who paid and every receipt. Defaults to an equal split. Confirm with yes and the revision from the preview.', {
+    ...confirmation, group, expenses:{...list('Expense IDs to combine.',expense),minItems:2}, title:allocation.title,
     mode:enumeration('How to allocate the combined total.', ['equal','exact','percent','shares','adjustment']),
     participants:allocation.participants, values:{...allocation.values, description:'Decimal strings in participant order. For adjustments, signed amounts must sum to zero.',
       items:{...money,pattern:'^[+-]?(0|[1-9][0-9]{0,9})([.][0-9]{1,2})?$'}},
-  }, ['group','expenses']),
+  }, ['group','expenses'], false, true),
   op('expenses_uncombine','Restore the original expenses and their receipts and splits.', {group,expense}, ['group','expense']),
   op('expenses_suggestions','Find nearby ride expenses with matching destination descriptions.', {group}, ['group'], true),
   op('expenses_combination_activity','List combines and reversals in a group.', {group}, ['group'], true),

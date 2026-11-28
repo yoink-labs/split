@@ -8,7 +8,7 @@ import { importGroupID, parseSplitwise, type SplitwiseGroup } from '../splitwise
 import { tools } from '../../../cli/lib/catalog.mjs';
 import { CfWorkerJsonSchemaValidator } from '@modelcontextprotocol/sdk/validation/cfworker';
 import type { JsonSchemaType } from '@modelcontextprotocol/sdk/validation/types';
-import { HTTPError, optionalDay } from '../http';
+import { fingerprint, HTTPError, optionalDay } from '../http';
 import { allocate, balances, Entry, entryPayers, InputError, simplify, validateEntry } from '../ledger';
 
 
@@ -49,10 +49,6 @@ function shareMap(ids: string[], shares?: number[]) {
 }
 const multipliers = (shares?: Record<string,number>) => shares ? Object.fromEntries(Object.entries(shares).map(([id, w]) => [id, w / 100])) : undefined;
 const clearable = (v?: string) => v === undefined ? undefined : v === 'none' ? null : v;
-async function fingerprint(value: unknown) {
-  const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(value)));
-  return Array.from(new Uint8Array(bytes), b => b.toString(16).padStart(2,'0')).join('');
-}
 const nameKey = (s: string) => s.trim().toLowerCase();
 const timestamp = () => new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
 function minor(value: string) {
@@ -376,10 +372,14 @@ export async function operate(name: string, input: unknown, env: Env, user: stri
       if (mode !== 'adjustment' && /^[+-]/.test(value)) throw new InputError('Use unsigned values for this split mode.');
       return value.startsWith('-') ? -minor(value.slice(1)) : minor(value.replace(/^\+/, ''));
     });
-    return ledger('/v1/groups/'+group.id+'/combine', {
+    if (a.yes && !a.revision) throw new InputError('Review a combine preview and supply its revision before confirming.');
+    const result = await ledger<{expense: Entry}>('/v1/groups/'+group.id+'/combine', {
+      preview: !a.yes, revision: a.yes ? a.revision : undefined,
       entryIDs:a.expenses, title:a.title, splitMode:mode,
       parts:participants.map((memberID, index) => ({memberID, amount:values?.[index] ?? 1})),
     });
+    return { ...result, payerNames: entryPayers(result.expense).map(p => ({...p, name:nameOf(p.memberID)})),
+      splitNames: result.expense.splits.map(p => ({...p, name:nameOf(p.memberID)})) };
   }
   if (name === 'expenses_uncombine') {
     if (!snapshot.entries.some(e => e.id === a.expense && e.groupID === group.id && e.combinedCount))

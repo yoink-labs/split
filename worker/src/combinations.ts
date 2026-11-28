@@ -1,9 +1,12 @@
-import { body, HTTPError, json } from './http';
+import { body, fingerprint, HTTPError, json } from './http';
 import { InputError, validID } from './ledger';
 import { combinationSuggestions, combinedEntry } from './combinationMath';
 import { resolveEntry } from './people';
 import { groupAliases } from './refunds';
 
+// Use the same receipt namespace as the expense_receipts view.
+const photos = `(SELECT json_group_array(json_object('id',r.id,'combinedID',hex(e.id)||'-'||hex(r.id)) ORDER BY r.id)
+  FROM receipts r WHERE r.entry_id=e.id)`;
 const live = 'e.id NOT IN (SELECT entry_id FROM deleted_entries)';
 const active = 'EXISTS (SELECT 1 FROM members WHERE group_id=e.group_id AND user_id=? AND removed_at IS NULL)';
 const eligible = `${live} AND json_extract(e.payload,'$.kind')='expense'
@@ -60,15 +63,26 @@ export async function combinationRoute(request: Request, env: Env, user: string)
   const ids = b.entryIDs;
   if (!Array.isArray(ids) || ids.length < 2 || ids.length > 50 || ids.some(id => !validID(id)) || new Set(ids).size !== ids.length)
     throw new InputError('Choose two to fifty different expenses.');
-  const rows = (await db.prepare(`SELECT e.id,e.payload FROM entries e WHERE e.group_id=? AND ${active} AND ${eligible}
+  const rows = (await db.prepare(`SELECT e.id,e.payload,
+    ${photos} AS photos FROM entries e WHERE e.group_id=? AND ${active} AND ${eligible}
     AND e.id IN (SELECT value FROM json_each(?)) ORDER BY julianday(json_extract(e.payload,'$.createdAt')),e.id`)
-    .bind(groupID, user, JSON.stringify(ids)).all<{id:string; payload:string}>()).results;
+    .bind(groupID, user, JSON.stringify(ids)).all<{id:string; payload:string; photos:string}>()).results;
   if (rows.length !== ids.length) throw new HTTPError(409, 'Choose available expenses without refunds, recurrence, conversion, pending status or handled status.');
   const entries = rows.map(row => resolveEntry(JSON.parse(row.payload), aliases));
   const members = (await db.prepare(`SELECT id,removed_at FROM members WHERE group_id=?
     AND id NOT IN (SELECT member_id FROM member_aliases) ORDER BY rowid`).bind(groupID).all<{id:string;removed_at:string|null}>()).results;
   const id = crypto.randomUUID();
-  const entry = combinedEntry(id, entries, members, b);
+  const {id: _id, ...draft} = combinedEntry(id, entries, members, b);
+  const receipts = rows.map(row => JSON.parse(row.photos) as {id:string; combinedID:string}[]);
+  const sources = rows.map((row, i) => ({id:row.id, title:entries[i].title, receiptIDs:receipts[i].map(r => r.id)}));
+  const receiptIDs = receipts.flat().map(r => r.combinedID);
+  const expense = {...draft, combinedCount:ids.length, receiptIDs};
+  if (b.preview === true || b.revision !== undefined) {
+    const revision = await fingerprint([expense, rows]);
+    if (b.preview === true) return json({preview:true, expense, sources, revision});
+    if (b.revision !== revision) throw new HTTPError(409, 'The expenses changed. Review a fresh combine preview.');
+  }
+  const entry = {id, ...draft, combinedCount:ids.length};
   const now = new Date().toISOString();
   // Verify the originals again inside the write transaction. The trigger
   // hides them only after the new expense and its undo record both exist.
@@ -76,11 +90,12 @@ export async function combinationRoute(request: Request, env: Env, user: string)
     db.prepare(`INSERT INTO entries(id,group_id,author,payload,created_at)
       SELECT ?,e.group_id,?,?,? FROM entries e JOIN json_each(?) source ON e.id=json_extract(source.value,'$.id')
       WHERE e.group_id=? AND ${active} AND ${eligible} AND e.payload=json_extract(source.value,'$.payload')
+      AND ${photos}=json_extract(source.value,'$.photos')
       GROUP BY e.group_id HAVING count(*)=?`)
-      .bind(id,user,JSON.stringify({...entry, combinedCount:ids.length}),entry.createdAt,JSON.stringify(rows),groupID,user,ids.length),
+      .bind(id,user,JSON.stringify(entry),entry.createdAt,JSON.stringify(rows),groupID,user,ids.length),
     db.prepare(`INSERT INTO expense_combinations(entry_id,sources,combined_by,combined_at)
       SELECT id,?,?,? FROM entries WHERE id=? AND group_id=?`).bind(JSON.stringify(rows.map(row => row.id)),user,now,id,groupID),
   ]);
   if (!saved.meta.changes) throw new HTTPError(409, 'An expense changed. Refresh and try again.');
-  return json({ entryID:id }, 201);
+  return json({entryID:id, expense:{...entry, receiptIDs}, sources}, 201);
 }

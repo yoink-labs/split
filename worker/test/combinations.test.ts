@@ -36,9 +36,17 @@ it('preserves payers, exact cents, all receipts, and original item claims throug
   await call('amine', groupPath+'/receipts', {id:'photo-waiting',data:jpeg(6)});
   const originals = await snapshot();
   const before = balances(originals, 'BRL');
-  const response = await call('harris', groupPath+'/combine', {entryIDs:[first,second]});
+  const preview = await (await call('harris', groupPath+'/combine', {entryIDs:[first,second],preview:true}))
+    .json<{preview:boolean; expense:Omit<Entry,'id'>; revision:string}>();
+  expect(preview.preview).toBe(true);
+  expect(preview.expense.receiptIDs).toHaveLength(5);
+  expect(await snapshot()).toEqual(originals);
+  await expect(call('harris', groupPath+'/combine', {entryIDs:[first,second],revision:preview.revision,title:'Changed'}))
+    .rejects.toMatchObject({status:409});
+  const response = await call('harris', groupPath+'/combine', {entryIDs:[first,second],revision:preview.revision});
   expect(response.status).toBe(201);
-  const {entryID} = await response.json<{entryID:string}>();
+  const {entryID, expense} = await response.json<{entryID:string; expense:Entry}>();
+  expect(expense).toEqual({...preview.expense,id:entryID});
   const combined = (await snapshot()).find(e => e.id === entryID)!;
   expect((await snapshot()).map(e => e.id)).toEqual([entryID]);
   expect(combined).toMatchObject({amount:9001, combinedCount:2, payers:expect.arrayContaining([
@@ -78,11 +86,11 @@ it('scopes every combination route to active membership and rejects mixed curren
   for (const route of ['combine-activity','combine-suggestions']) {
     await expect(call('outsider', groupPath+'/'+route)).rejects.toMatchObject({status:403});
   }
-  await expect(call('outsider', groupPath+'/combine', {entryIDs:[first,second]})).rejects.toMatchObject({status:403});
+  await expect(call('outsider', groupPath+'/combine', {entryIDs:[first,second],preview:true})).rejects.toMatchObject({status:403});
   await expect(call('arul', groupPath+'/combine', {entryIDs:[first,'other-expense']})).rejects.toMatchObject({status:409});
   await expect(call('arul', groupPath+'/combine', {entryIDs:[first,second]})).rejects.toThrow('same currency');
   await env.DB.prepare('UPDATE members SET removed_at=? WHERE id=?').bind('2026-11-21', amine).run();
-  await expect(call('amine', groupPath+'/combine', {entryIDs:[first,second]})).rejects.toMatchObject({status:403});
+  await expect(call('amine', groupPath+'/combine', {entryIDs:[first,second],preview:true})).rejects.toMatchObject({status:403});
   await expect(call('amine', groupPath+'/combine-suggestions')).rejects.toMatchObject({status:403});
   await expect(call('amine', groupPath+'/combine-activity')).rejects.toMatchObject({status:403});
   expect(await snapshot()).toHaveLength(2);
@@ -108,9 +116,12 @@ it('suggests nearby rides with matching descriptions and only combines overlappi
   expect(combined).toHaveLength(1);
   expect(combined[0].splits).toEqual([{memberID:arul,amount:1502},{memberID:amine,amount:500}]);
   await operate('expenses_uncombine', {group,expense:combined[0].id}, env, 'amine', handle);
-  const result = await operate('expenses_combine', {
-    group, expenses:[first,second], mode:'exact', participants:[arul,amine], values:['10.00','10.02'],
-  }, env, 'amine', handle);
+  const args = {group, expenses:[first,second], mode:'exact', participants:[arul,amine], values:['10.00','10.02']};
+  const preview = await operate('expenses_combine', args, env, 'amine', handle) as {preview:boolean;revision:string};
+  expect(preview.preview).toBe(true);
+  expect((await snapshot()).some(e => e.id === first)).toBe(true);
+  await expect(operate('expenses_combine', {...args,yes:true}, env, 'amine', handle)).rejects.toThrow(/revision/);
+  const result = await operate('expenses_combine', {...args,yes:true,revision:preview.revision}, env, 'amine', handle);
   expect((await snapshot()).find(e => e.id === (result as {entryID:string}).entryID)?.splits)
     .toEqual([{memberID:arul,amount:1000},{memberID:amine,amount:1002}]);
 });

@@ -18,11 +18,12 @@ function usage(tool) {
   const { properties, required } = tool.inputSchema;
   const args = Object.entries(properties).filter(([key]) => key !== 'file' || !properties.csv).map(([key, spec]) => {
     if (key === 'csv') return '(--file PATH [--file PATH ...] | --csv VALUE [--file NAME])';
-    const flag = '--' + flagName(key) + (spec.type === 'boolean' ? '' : (spec.type === 'array' || spec.type === 'object') ? ' JSON' : ' VALUE');
+    const flag = (tool.name === 'expenses_combine' && key === 'yes' ? '--yes|-y' : '--' + flagName(key)) + (spec.type === 'boolean' ? '' : (spec.type === 'array' || spec.type === 'object') ? ' JSON' : ' VALUE');
     return required.includes(key) ? flag : '[' + flag + ']';
   });
   if (properties.photos) args.push('[--photo PATH ...]');
   if (tool.name === 'import_splitwise') args.push('[--yes]');
+  if (tool.name === 'expenses_combine') args.push('[--dry-run]');
   if (outputs.has(tool.name)) args.push('[--out PATH]');
   return 'split ' + [spelling(tool), ...args].join(' ');
 }
@@ -74,19 +75,19 @@ export function describeGroupDelete(raw) {
     'Export a copy first with: split groups export --group ' + p.group + ' --format json --out backup.json',
     'To delete without a prompt: split groups delete --group ' + p.group + ' --yes --revision ' + p.revision].join('\n');
 }
-function describeExpense(entry) {
+function describeExpense(entry, names = {}, receipts = entry.receiptIDs?.join(', ') || 'none') {
   const money = (cents, currency = entry.currency) => {
     const digits = String(cents).padStart(3, '0');
     return `${currency} ${digits.slice(0, -2)}.${digits.slice(-2)}`;
   };
-  const portions = people => people.map(p => `${p.memberID} (${money(p.amount)})`).join(', ');
+  const portions = people => people.map(p => `${names[p.memberID] ?? p.memberID} (${money(p.amount)})`).join(', ');
   const lines = [
     `  ${entry.title} — ${money(entry.amount)}`,
     `  Date: ${entry.createdAt.slice(0, 10)}`,
     `  Category: ${entry.category ?? 'General'}`,
     `  Paid by: ${portions(entry.payers ?? [{ memberID: entry.paidBy, amount: entry.amount }])}`,
     `  Split (${entry.splitMode}): ${portions(entry.splits)}`,
-    `  Receipt photos: ${entry.receiptIDs?.join(', ') || 'none'}`,
+    `  Receipt photos: ${receipts}`,
     `  Recurrence: ${entry.recurrence ?? 'off'}`
   ];
   if (entry.notes) lines.push(`  Notes: ${entry.notes}`);
@@ -104,6 +105,15 @@ function describeExpense(entry) {
     }
   }
   return lines;
+}
+function describeCombine(raw) {
+  const { expense, sources, payerNames, splitNames } = clean(raw);
+  const names = Object.fromEntries([...payerNames, ...splitNames].map(p => [p.memberID, p.name]));
+  return [raw.preview ? 'Combine preview' : 'Combined expense ' + expense.id,
+    ...describeExpense(expense, names, expense.receiptIDs.length ? expense.receiptIDs.length + ' (listed below)' : 'none'),
+    'Source expenses ' + (raw.preview ? 'to replace:' : 'replaced:'),
+    ...sources.map(source => `  ${source.title} (${source.id})${source.receiptIDs.length ? ' — receipts: ' + source.receiptIDs.join(', ') : ''}`),
+  ].join('\n');
 }
 function describeExpenseEdit(raw) {
   const { before, after, revision } = clean(raw);
@@ -141,9 +151,11 @@ const upgradeImport = 'This Split server cannot show an import plan yet. Nothing
 async function askLine(question) {
   const { createInterface } = await import('node:readline/promises');
   const rl = createInterface({ input: process.stdin, output: process.stderr });
-  try { return await rl.question(question); } finally { rl.close(); }
+  try {
+    return await Promise.race([rl.question(question), new Promise(resolve => rl.once('close', () => resolve('')))]);
+  } finally { rl.close(); }
 }
-const terminal = () => ({ interactive: Boolean(process.stdin.isTTY && process.stdout.isTTY && process.stderr.isTTY), ask: askLine });
+const terminal = () => ({ stdinTTY: Boolean(process.stdin.isTTY), interactive: Boolean(process.stdin.isTTY && process.stdout.isTTY && process.stderr.isTTY), ask: askLine });
 
 export async function main(argv = process.argv.slice(2), io = terminal()) {
   const compact = argv.includes('--json');
@@ -158,7 +170,10 @@ export async function main(argv = process.argv.slice(2), io = terminal()) {
           ? 'Path to a CSV export. Repeat for multiple files. With --csv, supply a file name.'
           : spec.description;
         return '  --' + flagName(key) + '  ' + description;
-      })].join('\n') : help;
+      }), ...(tool.name === 'expenses_combine' ? [
+        '  -y  Alias for --yes.',
+        '  --dry-run  Print the preview without saving.'
+      ] : [])].join('\n') : help;
       return compact ? print({ help: message }, true) : console.log(message);
     }
     const c = await client();
@@ -186,10 +201,14 @@ export async function main(argv = process.argv.slice(2), io = terminal()) {
     if (tool.inputSchema.properties.csv) options.file = { type:'string', multiple:true };
     if (outputs.has(tool.name)) options.out = { type:'string' };
     if (tool.name === 'import_splitwise') options.yes = { type:'boolean' };
+    if (tool.name === 'expenses_combine') {
+      options.yes.short = 'y';
+      options['dry-run'] = {type:'boolean'};
+    }
     const parsed = parseArgs({ args: words.slice(spelling(tool).split(' ').length), options });
     const paths = tool.inputSchema.properties.photos ? parsed.values.photo : undefined;
     if (paths) delete parsed.values.photo;
-    const { file: files, out, "charged-amount": chargedAmount, ...values } = parsed.values;
+    const { file: files, out, "dry-run": dryRun, "charged-amount": chargedAmount, ...values } = parsed.values;
     if (chargedAmount !== undefined) values.chargedAmount = chargedAmount;
     const confirmed = tool.name === 'import_splitwise' && values.yes;
     if (tool.name === 'import_splitwise') delete values.yes;
@@ -214,6 +233,34 @@ export async function main(argv = process.argv.slice(2), io = terminal()) {
       values.photos = await resolvePhotos(values.photos);
     }
     const run = args => c.request('/v1/cli', { name:tool.name, arguments:args });
+    if (tool.name === 'expenses_combine') {
+      const { yes, revision, ...args } = values;
+      if (!dryRun && !yes && !io.stdinTTY && !io.interactive)
+        throw new Error('Combining expenses requires a terminal to confirm. Use --yes to save or --dry-run to preview.');
+      const unsupported = 'This Split server does not support combine previews. Update the server and try again.';
+      let preview;
+      try {
+        // Older servers reject the unknown flag before they can save anything.
+        preview = await run({...args, yes:false});
+      } catch (error) {
+        if (error.status === 422 && /additional propert/i.test(error.message)) throw new Error(unsupported);
+        throw error;
+      }
+      if (!preview?.preview || !preview.revision || !preview.expense)
+        throw new Error(unsupported);
+      if (dryRun) return compact ? print(preview, true) : console.log(describeCombine(preview));
+      console.error(describeCombine(preview));
+      if (!yes) {
+        const answer = await io.ask('Save the combined expense? [y/N] ');
+        if (!/^y(es)?$/i.test(answer.trim())) {
+          console.error('Nothing was combined.');
+          if (compact) print({cancelled:true}, true);
+          return;
+        }
+      }
+      const saved = await run({...args, yes:true, revision:revision ?? preview.revision});
+      return compact ? print(saved, true) : console.log(describeCombine(saved));
+    }
     if (files?.length > 1) {
       if (values.csv !== undefined) throw new Error('Use repeated --file flags or --csv for a single export.');
       const results = [];

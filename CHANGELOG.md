@@ -59,6 +59,7 @@ is noted next to each release. The CLI is versioned separately with
 ### Fixed
 
 - Confirmed CLI expense edits report the saved category.
+- Preview and confirm expense combinations in the CLI and MCP. The CLI supports `--dry-run` and `--yes`, and the saved result includes the full expense.
 
 ## [0.9.0] - 2026-11-27
 

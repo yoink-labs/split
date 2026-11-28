@@ -71,7 +71,7 @@ export function HomeOverview() {
             return <div className="personal-balance-row" key={currency}>
               <span className="personal-currency">{currency}</span>
               <dl>
-                <div><dt>Net balance</dt><dd className="personal-net num">{money(owed - owe, currency)}</dd></div>
+                <div><dt>Net balance</dt><dd className={`personal-net num${owed < owe ? " personal-net-negative" : ""}`}>{money(owed - owe, currency)}</dd></div>
                 <div><dt>You owe</dt><dd className="num">{money(owe, currency)}</dd></div>
                 <div><dt>You’re owed</dt><dd className="num">{money(owed, currency)}</dd></div>
               </dl>

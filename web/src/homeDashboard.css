@@ -19,6 +19,7 @@
 .personal-balance dt { color: #bcd2c8; }
 .personal-balance dd, .personal-spend-totals dd { margin: 3px 0 0; font-size: clamp(16px, 2vw, 24px); font-weight: 700; overflow-wrap: anywhere; }
 .personal-balance .personal-net { color: #d8f78c; font-size: clamp(23px, 3.25vw, 42px); letter-spacing: -.035em; }
+.personal-balance .personal-net-negative { color: #ffbaa2; }
 .personal-columns { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(275px, 1fr); gap: 18px; align-items: start; }
 .personal-stack { display: grid; gap: 16px; min-width: 0; }
 .personal-panel { min-width: 0; padding: 16px; }

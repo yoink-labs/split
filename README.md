@@ -165,9 +165,34 @@ On macOS file-provider volumes, Xcode may reject Finder metadata when signing a 
 | `SPLIT_TOKEN`, `SPLIT_API_URL` | Optional CLI environment settings |
 | Clerk publishable key | Public client configuration in [SplitApp.swift](Split/SplitApp.swift) |
 
-The same Worker serves the API at `split-api.yoinklabs.dev` and the app at `split.yoinklabs.dev`. Build the web bundle before running Wrangler, including Worker tests and deployment. To use a separate Clerk instance for development, configure its issuer, JWKS, web origin, and matching public key in the client. Verify the `split-api` Worker name and `split` database in [wrangler.jsonc](worker/wrangler.jsonc) before deployment. Apply outstanding migrations, then deploy from a revision containing both the iOS ledger and CLI/MCP routes. The Clerk secret must already be provisioned on this Worker. Keep credentials in the vault.
+The same Worker serves the API at `split-api.yoinklabs.dev` and the app at `split.yoinklabs.dev`. To use a separate Clerk instance for development, configure its issuer, JWKS, web origin, and matching public key in the client. The Clerk secret must already be provisioned on this Worker. Keep credentials in the vault.
+
+### Automatic releases
+
+Every push to `main` ships both halves. Merge to deploy; don't deploy from a laptop.
+
+- **Web and API.** Cloudflare Workers Builds (trigger *Deploy main* on the `split-api` Worker) runs [`scripts/deploy-worker.sh deploy`](scripts/deploy-worker.sh). The script runs `npm ci` in `worker/` and `web/`, builds the web bundle, runs the database guard, applies D1 migrations with `wrangler d1 migrations apply split --remote`, and then runs `wrangler deploy`. Other branches use the *Check branches* trigger, which runs `scripts/deploy-worker.sh check`. That builds, guards every migration, lists pending remote migrations read-only, and does `wrangler deploy --dry-run`. Nothing is migrated or deployed. GitHub Actions run checks only and hold no Cloudflare credentials.
+- **iOS.** The Xcode Cloud workflow *TestFlight (main)* archives the `Split` scheme with Xcode 27.2 and distributes it to the Yoink Internal TestFlight group. It never submits for App Store review. See [docs/TESTFLIGHT.md](docs/TESTFLIGHT.md).
+
+### Database guard
+
+[`scripts/check-migrations.mjs`](scripts/check-migrations.mjs) blocks destructive migrations. The deploy runs it on the migrations still pending on the remote `split` database (`--remote`), and `checks.yml` runs it on every migration in each PR (`--all`). It fails on `DROP TABLE`, `DROP COLUMN`, `ALTER TABLE … RENAME`, `DELETE` or `UPDATE` without a top-level `WHERE` (or with `WHERE 1`), `TRUNCATE`, and table rebuilds (create a table, copy rows into it, drop the old one). Comments and string literals are ignored. Scoped deletes, including trigger bodies like 0017's `DELETE FROM … WHERE group_id=OLD.id`, are allowed.
+
+Write migrations additively: add a table or column and stop reading the old one. If destroying or rewriting data really is intended, a person adds this to the migration and gets it reviewed:
+
+```sql
+-- allow-destructive: <why this is safe>
+```
+
+A failing guard stops the build before any migration is applied, so production keeps serving the previous version.
+
+### Manual deploy (emergency only)
+
+Verify the `split-api` Worker name and `split` database in [wrangler.jsonc](worker/wrangler.jsonc). Build the web bundle first, run the guard, apply outstanding migrations, then deploy.
 
 ```sh
+npm ci --prefix web && npm run build --prefix web
+ade secrets exec --env CLOUDFLARE_API_TOKEN --env CLOUDFLARE_ACCOUNT_ID -- node scripts/check-migrations.mjs --remote
 ade secrets exec --env CLOUDFLARE_API_TOKEN --env CLOUDFLARE_ACCOUNT_ID -- /opt/homebrew/bin/node worker/node_modules/wrangler/bin/wrangler.js d1 migrations apply split --remote --config worker/wrangler.jsonc
 ade secrets exec --env CLOUDFLARE_API_TOKEN --env CLOUDFLARE_ACCOUNT_ID -- /opt/homebrew/bin/node worker/node_modules/wrangler/bin/wrangler.js deploy --config worker/wrangler.jsonc
 ```

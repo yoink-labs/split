@@ -41,7 +41,12 @@ needs no backend at all. For Worker or CLI work, run a local Worker with
 npm run typecheck --prefix worker
 npm test --prefix worker
 node --test cli/test/*.test.mjs
+node --test scripts/test/*.test.mjs
+node scripts/check-migrations.mjs --all
 ```
+
+The last command is the database guard. It fails on destructive SQL in
+`worker/migrations` (see the README's deployment section).
 
 App changes: build and test the `Split` scheme in Xcode, or
 

@@ -69,7 +69,7 @@ extension ExpenseGroup {
     }
 }
 
-struct Portion: Codable, Equatable { var memberID: String; var amount: Int64; var nights: Int? = nil }
+struct Portion: Codable, Equatable { var memberID: String; var amount: Int64; var nights: Int? = nil; var stay: ExpenseSpread? = nil }
 struct Payer: Codable, Equatable, Identifiable {
     var memberID: String
     var amount: Int64

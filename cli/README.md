@@ -115,7 +115,7 @@ Pass `--charged-amount none` on edit to return to rate conversion. MCP uses
 
 ### Split a stay by nights
 
-Supply whole-night counts in participant order. Add spread dates to put lodging costs on the nights people stayed. The start is inclusive and the end is exclusive. Each person's nights begin on the first day.
+Supply whole-night counts in participant order. Add spread dates to put lodging costs on the nights people stayed. The start is inclusive and the end is exclusive. Plain night counts begin on the first day. Set dates for individual travelers with `--stays` and pass counts in participant order for anyone without dates.
 
 ```sh
 split expenses add --group GROUP --title "Palermo Airbnb" --amount 1094.60 --payer ALEX \
@@ -125,6 +125,10 @@ split groups daily --group GROUP --member SAM
 ```
 
 The daily report shows expense shares and refund credits in their original currencies. The corresponding MCP tools are `expenses_add` and `groups_daily`.
+
+To edit a dated stay, pass e.g. `--stays '[{"member":"SAM","start":"2026-11-13","end":"2026-11-16"}]'` to `split expenses edit`. Omitted people retain their dates. An object with only a member ID switches that person back to a night count.
+
+Run `split groups daily --group GROUP --member SAM --currency USD` for home currency totals. Currency codes are explicit on the CLI and MCP. Omit the option to keep original currencies.
 
 ### Importing Splitwise exports
 

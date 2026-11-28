@@ -240,7 +240,7 @@ export function createDemoState() {
         { memberID: "m-maya", amount: 39460 },
       ],
       splits: [
-        { memberID: "m-harris", amount: 25260, nights: 3 },
+        { memberID: "m-harris", amount: 25260, nights: 3, stay: { start: "2026-11-13", end: "2026-11-16" } },
         { memberID: "m-maya", amount: 25260, nights: 3 },
         { memberID: "m-alex", amount: 25260, nights: 3 },
         { memberID: "m-sam", amount: 33680, nights: 4 },
@@ -249,7 +249,7 @@ export function createDemoState() {
       splitMode: "shares",
       spread: { start: "2026-11-12", end: "2026-11-16" },
       category: "Lodging",
-      notes: "Sam’s flight moved, so he stayed one extra night.",
+      notes: "Harris arrived a day late. Sam stayed all four nights.",
       createdAt: "2026-11-12T15:00:00Z",
       editable: true,
       commentCount: 1,

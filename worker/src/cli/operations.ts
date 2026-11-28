@@ -1,6 +1,6 @@
 import { expenseTripPhase, groupKind, tripPhases, type GroupSchedule, type TripPhase } from '../tripPhases';
 import {settlementEntry} from '../exchange';
-import {impliedRate, rateE8 as parseRate, type Exchange} from '../fx';
+import {convert, FxCache, impliedRate, rateE8 as parseRate, type Exchange} from '../fx';
 import { breakdown, consumptionReport, entryItems, grossItems, itemRefund, itemSplit, type Bill } from '../items';
 import { exportGroup } from './export';
 import { refundRoom, refundsOf } from '../refundMath';
@@ -10,14 +10,14 @@ import { tools } from '../../../cli/lib/catalog.mjs';
 import { CfWorkerJsonSchemaValidator } from '@modelcontextprotocol/sdk/validation/cfworker';
 import type { JsonSchemaType } from '@modelcontextprotocol/sdk/validation/types';
 import { fingerprint, HTTPError, optionalDay } from '../http';
-import { allocate, balanceLine, balances, dailyCosts, Entry, entryPayers, InputError, nightRate, simplify, validateEntry } from '../ledger';
+import { allocate, balanceLine, balances, dailyCosts, Entry, entryPayers, InputError, nightRate, readStay, spreadLength, simplify, type StayDates, validateEntry } from '../ledger';
 
 
 interface Args {
   cadence:string; weights:number[];rate?:string; chargedAmount?:string; group: string; expense: string; member: string; name: string; self: string; placeholders?: string[];
   query: string; user?: string; email?: string; phone?: string; invitation?: string; discoverable?: 'on'|'off';
   invite: string; kind?: string; title?: string; amount?: string; payer?: string; currency?: string;
-  notes?: string; date?: string; spreadStart?: string; spreadEnd?: string; phase?: TripPhase | 'auto';
+  notes?: string; date?: string; spreadStart?: string; spreadEnd?: string; stays?: {member: string; start?: string; end?: string}[]; phase?: TripPhase | 'auto';
   bill?: { items: { title: string; amount: string; memberIDs?: string[]; shares?: number[] }[]; tax?: string; tip?: string };
   share?: string; shares?: number[];
   payers?: { member: string; amount: string }[];
@@ -78,40 +78,6 @@ function makeExpense(a: Args, group: Group, old?: Entry): Entry {
     ? bill.items.reduce((s, i) => s + i.amount, bill.tax + bill.tip)
     : (a.amount === undefined ? old?.amount : minor(a.amount));
   if (!amount) throw new InputError('Enter a positive expense amount.');
-  let splits = old?.splits;
-  const defaults=!old && !bill && !a.mode && !a.values && !a.participants ? group.defaultWeights : undefined;
-  const weighted=defaults && Object.keys(defaults).length>0;
-  const mode = bill ? 'exact' : ((a.mode as 'equal'|'exact'|'percent'|'shares'|'nights'|undefined) ?? (old?.splits.some(s => s.nights !== undefined) ? 'nights' : old?.splitMode) ?? (weighted ? 'shares' : 'equal'));
-  if (bill && a.bill) {
-    if (!payer) throw new InputError('Choose a payer.');
-    if ((a.amount !== undefined && minor(a.amount) !== amount) || (old && a.amount === undefined && old.amount !== amount)) throw new InputError('The amount must match the items, tax and tip.');
-    if (a.mode || a.participants || a.values) throw new InputError('Use the bill’s item claimants to split an itemized expense.');
-    splits = itemSplit(bill, payer);
-  } else if (!old || a.mode || a.participants || a.values || amount !== old.amount) {
-    const participants = a.participants ?? old?.splits.map(s => s.memberID) ?? (weighted ? activeIDs.filter(id=>defaults[id]>0) : activeIDs);
-    if (a.values && a.values.length !== participants.length) throw new InputError('Supply one value per participant.');
-    let portions: number[];
-    let nights: number[] | undefined;
-    if (mode === 'equal') {
-      if (a.values) throw new InputError('Equal splits use participants only.');
-      portions = allocate(amount, participants.map(() => 1));
-    } else {
-      const inputs = a.values ?? (mode === 'nights' && old?.splits.some(s => s.nights !== undefined)
-        ? participants.map(id => String(old.splits.find(s => s.memberID === id)?.nights ?? ''))
-        : weighted ? participants.map(id=>String(defaults[id])) : undefined);
-      if (!inputs) throw new InputError('Supply one allocation value per participant.');
-      if (mode === 'nights') {
-        if (inputs.some(input => !/^\d+$/.test(input) || Number(input) < 1 || Number(input) > 366))
-          throw new InputError('Use whole numbers from 1 through 366 for nights.');
-        nights = inputs.map(Number);
-      }
-      const values = nights ?? inputs.map(minor);
-      if (mode === 'percent' && values.reduce((n,v) => n+v,0) !== 10000) throw new InputError('Percentages must sum to 100.');
-      portions = mode === 'exact' ? values : allocate(amount, values);
-    }
-    splits = participants.map((memberID,i) => ({ memberID, amount: portions[i], ...(nights ? { nights: nights[i] } : {}) }));
-  }
-  const date = optionalDay(a.date, 'expense date');
   const start = a.spreadStart === 'none' ? null : optionalDay(a.spreadStart, 'spread start');
   const end = a.spreadEnd === 'none' ? null : optionalDay(a.spreadEnd, 'spread end');
   const spreadStart = start ?? old?.spread?.start;
@@ -119,6 +85,56 @@ function makeExpense(a: Args, group: Group, old?: Entry): Entry {
   const spread = start === null || end === null ? undefined : spreadStart && spreadEnd
     ? {start: spreadStart, end: spreadEnd} : undefined;
   if ((start || end) && !spread) throw new InputError('Supply both spread dates.');
+  let splits = old?.splits;
+  const defaults=!old && !bill && !a.mode && !a.values && !a.participants && !a.stays ? group.defaultWeights : undefined;
+  const weighted=defaults && Object.keys(defaults).length>0;
+  const mode = bill ? 'exact' : ((a.mode as 'equal'|'exact'|'percent'|'shares'|'nights'|undefined) ?? (old?.splits.some(s => s.nights !== undefined) ? 'nights' : old?.splitMode) ?? (a.stays ? 'nights' : weighted ? 'shares' : 'equal'));
+  if (a.stays && mode !== 'nights') throw new InputError('Use stay dates with a nights split.');
+  if (bill && a.bill) {
+    if (!payer) throw new InputError('Choose a payer.');
+    if ((a.amount !== undefined && minor(a.amount) !== amount) || (old && a.amount === undefined && old.amount !== amount)) throw new InputError('The amount must match the items, tax and tip.');
+    if (a.mode || a.participants || a.values) throw new InputError('Use the bill’s item claimants to split an itemized expense.');
+    splits = itemSplit(bill, payer);
+  } else if (!old || a.mode || a.participants || a.values || a.stays || amount !== old.amount) {
+    const participants = a.participants ?? old?.splits.map(s => s.memberID) ?? (weighted ? activeIDs.filter(id=>defaults[id]>0) : activeIDs);
+    if (a.values && a.values.length !== participants.length) throw new InputError('Supply one value per participant.');
+    let portions: number[];
+    let nights: number[] | undefined;
+    let stays: (StayDates | undefined)[] = [];
+    if (mode === 'equal') {
+      if (a.values) throw new InputError('Equal splits use participants only.');
+      portions = allocate(amount, participants.map(() => 1));
+    } else {
+      let values: number[];
+      if (mode === 'nights') {
+        const changes = new Map<string, StayDates | undefined>();
+        for (const stay of a.stays ?? []) {
+          if (!participants.includes(stay.member) || changes.has(stay.member))
+            throw new InputError('Choose each participating group member at most once.');
+          changes.set(stay.member, stay.start === undefined && stay.end === undefined
+            ? undefined : readStay({start: stay.start ?? '', end: stay.end ?? ''}, spread));
+        }
+        stays = participants.map(id => changes.has(id) ? changes.get(id) : old?.splits.find(s => s.memberID === id)?.stay);
+        nights = participants.map((id, index) => {
+          const stay = stays[index];
+          if (stay) return spreadLength(readStay(stay, spread));
+          const input = a.values?.[index] ?? String(old?.splits.find(s => s.memberID === id)?.nights ?? '');
+          if (!/^\d+$/.test(input) || Number(input) < 1 || Number(input) > 366)
+            throw new InputError('Supply dates or a whole night count from 1 through 366 for each participant.');
+          return Number(input);
+        });
+        values = nights;
+      } else {
+        const inputs = a.values ?? (weighted ? participants.map(id=>String(defaults[id])) : undefined);
+        if (!inputs) throw new InputError('Supply one allocation value per participant.');
+        values = inputs.map(minor);
+      }
+      if (mode === 'percent' && values.reduce((n,v) => n+v,0) !== 10000) throw new InputError('Percentages must sum to 100.');
+      portions = mode === 'exact' ? values : allocate(amount, values);
+    }
+    splits = participants.map((memberID,i) => ({ memberID, amount: portions[i], ...(nights ? { nights: nights[i] } : {}), ...(stays[i] ? {stay: stays[i]} : {}) }));
+  }
+  const date = optionalDay(a.date, 'expense date');
   const createdAt = old?.createdAt ?? (date ? date + 'T12:00:00Z' : timestamp());
   const currency = a.currency ?? old?.currency ?? group.currency;
   const previous = currency === old?.currency ? old.exchange : undefined;
@@ -158,6 +174,38 @@ function makeExpense(a: Args, group: Group, old?: Entry): Entry {
     exchange, bill, spread, category:a.category??old?.category, splits, kind: 'expense', splitMode: mode, createdAt,
     payers, notes: a.notes ?? old?.notes, handled: old?.handled, phase: a.phase === 'auto' ? null : a.phase ?? old?.phase,
     ...pendingFields(a, old) }, ids,old?.bill,{reconcileBill:true});
+}
+async function dailyEntriesInCurrency(entries: Entry[], currency: string): Promise<Entry[]> {
+  const today = timestamp().slice(0, 10);
+  const cache = new FxCache({ get: () => null, set: () => {} }, Date.now,
+    url => fetch(url, {signal: AbortSignal.timeout(5000)}));
+  const sources = entries.map(entry => entry.exchange?.statementAmount === undefined ? entry : settlementEntry(entry));
+  const pairs = new Map<string, {base: string; date: string}>();
+  const key = (entry: Entry) => entry.currency + ':' + entry.createdAt.slice(0, 10);
+  for (const entry of sources) {
+    if (entry.currency !== currency && entry.exchange?.target !== currency)
+      pairs.set(key(entry), {base: entry.currency, date: entry.createdAt.slice(0, 10)});
+  }
+  if (pairs.size > 50) throw new InputError('Too many exchange rates for this report. Choose a member or use original currencies.');
+  const rates = new Map<string, number>();
+  const quotes = [...pairs];
+  for (let i = 0; i < quotes.length; i += 8) {
+    await Promise.all(quotes.slice(i, i + 8).map(async ([id, {base, date}]) => {
+      try {
+        rates.set(id, (await cache.forDate(base, currency, date, today)).rateE8);
+      } catch {
+        throw new InputError('An exchange rate is unavailable. Try again or use original currencies.');
+      }
+    }));
+  }
+  return sources.map(entry => {
+    if (entry.currency === currency) return entry;
+    if (entry.exchange?.target === currency) return settlementEntry(entry);
+    const amount = convert(entry.amount, rates.get(key(entry))!);
+    const shares = amount === 0 ? entry.splits.map(() => 0)
+      : allocate(amount, entry.splits.map(s => s.amount), Number.MAX_SAFE_INTEGER);
+    return {...entry, amount, currency, splits: entry.splits.map((s, i) => ({...s, amount: shares[i]}))};
+  });
 }
 function pendingFields(a: Args, old?: Entry) {
   const pending = a.pending ?? old?.pending;
@@ -533,8 +581,11 @@ export async function operate(name: string, input: unknown, env: Env, user: stri
   }
   if (name === 'groups_daily') {
     if (a.member && !members.some(m => m.id === a.member)) throw new InputError('Choose a group member.');
-    return members.filter(m => !a.member || m.id === a.member)
-      .map(m => ({memberID: m.id, name: m.name, days: dailyCosts(entries, m.id)}));
+    const people = members.filter(m => !a.member || m.id === a.member);
+    const selected = entries.filter(e => e.kind !== 'settlement' && (!a.member || e.splits.some(s => s.memberID === a.member)));
+    const report = a.currency ? await dailyEntriesInCurrency(selected, a.currency) : selected;
+    return people.map(m => ({memberID: m.id, name: m.name, ...(a.currency ? {convertedTo: a.currency} : {}),
+      days: dailyCosts(report, m.id)}));
   }
   if(name==='groups_breakdown') {
     if(a.member && !members.some(m=>m.id===a.member)) throw new InputError('Choose a group member.');

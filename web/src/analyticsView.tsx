@@ -54,15 +54,26 @@ export function DailyCostView({ g, entries, memberID, from = "", to = "" }: {
   g: Group; entries: Expense[]; memberID?: string; from?: string; to?: string;
 }) {
   const [selected, setSelected] = useState("");
+  const [useHome, setUseHome] = useState(false);
+  const home = useHomeMoney();
   const people = g.members.filter(m => !m.removed || entries.some(e => e.splits.some(s => s.memberID === m.id)));
   const person = people.find(m => m.id === (memberID || selected)) ?? people[0];
-  const days = person ? dailyCosts(entries, person.id).filter(day =>
+  const relevant = person ? entries.filter(e => e.kind !== "settlement" && e.splits.some(s => s.memberID === person.id)) : [];
+  const projected = useHome ? relevant.map(home.project) : relevant;
+  const missing = projected.filter(entry => !entry).length;
+  const days = person ? dailyCosts(projected.filter((entry): entry is Expense => entry !== null), person.id).filter(day =>
     (!from || day.day >= from) && (!to || day.day <= to)) : [];
   return (
     <section className="card card-pad" aria-label="Daily costs">
       <h3>Daily costs</h3>
       {!memberID && people.length > 0 && <Picker label="Daily costs for" value={person?.id ?? ""} onChange={setSelected}
         options={people.map(m => ({ value: m.id, label: m.name }))} />}
+      <label className="check">
+        <input type="checkbox" checked={useHome} onChange={event => setUseHome(event.target.checked)} />
+        Show home currency ({home.home})
+      </label>
+      {useHome && <p className="muted">Totals in {home.home}. Foreign costs use exchange rates or the recorded card charge.</p>}
+      {missing > 0 && <p role="status">{missing} expenses omitted because a rate is unavailable.</p>}
       <div className="panel" style={{ maxHeight: "28rem", overflowY: "auto" }}>
         {days.map(day => (
           <div className="row" key={day.day + day.currency}>

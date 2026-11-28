@@ -23,8 +23,10 @@ export function resolveEntry(entry: Entry, aliases: Map<string,string>): Entry {
   if (!aliases.size) return entry;
   const amounts = new Map<string, number>();
   const nights = new Map<string, number>();
+  const stays = new Map<string, Entry["spread"]>();
   for (const split of entry.splits) {
     const id = aliases.get(split.memberID) ?? split.memberID;
+    stays.set(id, amounts.has(id) ? undefined : split.stay);
     amounts.set(id, (amounts.get(id) ?? 0) + split.amount);
     if (split.nights !== undefined) nights.set(id, (nights.get(id) ?? 0) + split.nights);
   }
@@ -51,7 +53,7 @@ export function resolveEntry(entry: Entry, aliases: Map<string,string>): Entry {
     return {...entry,bill,paidBy,splits:itemSplit(bill,paidBy),...(payers?{payers}:{})};
   }
   return {...entry, paidBy: aliases.get(entry.paidBy) ?? entry.paidBy, ...(payers?{payers}:{}),
-    splits: Array.from(amounts, ([memberID, amount]) => ({memberID, amount, ...(nights.has(memberID) ? {nights: nights.get(memberID)} : {})}))};
+    splits: Array.from(amounts, ([memberID, amount]) => ({memberID, amount, ...(nights.has(memberID) ? {nights: nights.get(memberID)} : {}), ...(stays.get(memberID) ? {stay: stays.get(memberID)} : {})}))};
 }
 
 // D1 serializes the batch. A simultaneous direct add, group join, or claim

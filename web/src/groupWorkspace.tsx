@@ -382,6 +382,7 @@ function ExpenseDrawer({
                       <strong style={{ fontSize: 13.5, color: "var(--ink)" }}>{m?.name ?? "Member"}</strong>
                     </span>
                     <span style={{ textAlign: "right" }}>
+                      {s.stay && <small className="muted">{s.stay.start} to {s.stay.end}<br /></small>}
                       {s.nights !== undefined && <small className="muted">{s.nights} × {moneyCompact(nightRate(entry), entry.currency)}/night<br /></small>}
                       <b className="num" style={{ color: "var(--ink)" }}>{homeMoney.portion(entry, s.memberID)}</b>
                     </span>

@@ -54,7 +54,7 @@ struct Exchange:Codable,Equatable {
         var output=e
         output.amount=amount
         let shares = try Self.distribute(amount, weights: e.splits.map(\.amount), maximumTotal: maximumTotal)
-        output.splits=zip(e.splits,shares).map{Portion(memberID:$0.memberID,amount:$1)}
+        output.splits=zip(e.splits,shares).map{Portion(memberID:$0.memberID,amount:$1,nights:$0.nights,stay:$0.stay)}
         if let payers=e.payers {
             let converted = try Self.distribute(amount, weights: payers.map(\.amount), maximumTotal: maximumTotal)
             output.payers=zip(payers,converted).map{Payer(memberID:$0.memberID,amount:$1)}

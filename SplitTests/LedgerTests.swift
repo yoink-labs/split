@@ -122,6 +122,20 @@ final class LedgerTests: XCTestCase {
         XCTAssertEqual(sam.reduce(0) { $0 + $1.amount }, 33_681)
     }
 
+    func testDatedStayUsesOnlyOccupiedNightsAfterStatementConversion() throws {
+        let nights = ExpenseSpread(start: "2026-11-13", end: "2026-11-16")
+        let entry = LedgerEntry(groupID: "trip", title: "Airbnb", amount: 10_000, currency: "EUR",
+                                paidBy: "alex", splits: [Portion(memberID: "alex", amount: 10_000, nights: 3, stay: nights)],
+                                exchange: Exchange(target: "USD", rateE8: 110_000_000, date: "2026-11-12",
+                                                   source: "Statement", statementAmount: 11_002),
+                                splitMode: .shares, spread: ExpenseSpread(start: "2026-11-12", end: "2026-11-16"))
+        let converted = try XCTUnwrap(entry.exchange).converting(entry)
+        let days = DailyCost.report([converted], person: "alex") { _, member in member }
+        XCTAssertEqual(days.map(\.day), ["2026-11-15", "2026-11-14", "2026-11-13"])
+        XCTAssertEqual(days.map(\.amount), [3_667, 3_667, 3_668])
+        XCTAssertTrue(days.allSatisfy { $0.currency == "USD" })
+    }
+
     func testDecimalInput() {
         XCTAssertEqual(Money.parse("1234,56"),123456)
         XCTAssertEqual(Money.parse("0.01"),1)

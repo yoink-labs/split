@@ -29,6 +29,7 @@ struct AddExpenseView: View {
     @State private var pendingNote = ""
     @State private var payers: [Payer] = []
     @State private var payerText: [String: String] = [:]
+    @State private var stays: [String: ExpenseSpread] = [:]
     @State private var spreading = false
     @State private var spreadStart = Date()
     @State private var spreadEnd = Calendar.current.date(byAdding: .day, value: 1, to: Date()) ?? Date()
@@ -94,7 +95,7 @@ struct AddExpenseView: View {
         return value
     }
     private var ledgerValues: [String: String] {
-        let inputs = mode == .nights ? Dictionary(uniqueKeysWithValues: people.map { ($0, values[$0] ?? "1") }) : values
+        let inputs = mode == .nights ? Dictionary(uniqueKeysWithValues: people.map { ($0, spreading && stays[$0] != nil ? String(stays[$0]!.dayCount) : values[$0] ?? "1") }) : values
         return inputs.mapValues { value in
             var clean = value
                 .replacingOccurrences(of: "−", with: "-")
@@ -766,7 +767,7 @@ struct AddExpenseView: View {
                     DatePicker("First day", selection: $spreadStart, displayedComponents: .date)
                     DatePicker("End date (excluded)", selection: $spreadEnd, displayedComponents: .date)
                     if mode == .nights && !itemized {
-                        Text("Each person’s nights start on the first day.")
+                        Text("Plain night counts start on the first day.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -844,6 +845,13 @@ struct AddExpenseView: View {
         }
     }
 
+    private func stayDate(_ id: String, _ field: WritableKeyPath<ExpenseSpread, String>, fallback: Date) -> Binding<Date> {
+        Binding(
+            get: { stays[id].flatMap { ExpenseSpread.localDate($0[keyPath: field]) } ?? fallback },
+            set: { stays[id]?[keyPath: field] = Exchange.localDay($0) }
+        )
+    }
+
     private func participantRow(_ person: Person) -> some View {
         let included = selected.contains(person.id)
         let share = preview(person.id)
@@ -880,6 +888,8 @@ struct AddExpenseView: View {
                         } else {
                             Text("—").foregroundStyle(.tertiary)
                         }
+                    } else if mode == .nights, spreading, let stay = stays[person.id] {
+                        Text("\(stay.dayCount) nights").font(.subheadline)
                     } else {
                         HStack(spacing: 3) {
                             TextField(inputHint, text: valueBinding(person.id))
@@ -894,6 +904,18 @@ struct AddExpenseView: View {
                                 .frame(minWidth: 14, alignment: .leading)
                         }
                     }
+                }
+            }
+            if included, mode == .nights, spreading {
+                Toggle("Use stay dates for \(person.name)", isOn: Binding(
+                    get: { stays[person.id] != nil },
+                    set: { enabled in
+                        stays[person.id] = enabled ? ExpenseSpread(start: Exchange.localDay(spreadStart), end: Exchange.localDay(spreadEnd)) : nil
+                    }
+                ))
+                if stays[person.id] != nil {
+                    DatePicker("Check-in", selection: stayDate(person.id, \.start, fallback: spreadStart), displayedComponents: .date)
+                    DatePicker("Check-out", selection: stayDate(person.id, \.end, fallback: spreadEnd), displayedComponents: .date)
                 }
             }
             if included, mode != .equal, let share {
@@ -1230,13 +1252,16 @@ struct AddExpenseView: View {
         let payerList = try validatedPayers(total: total)
         guard let primary = payerList.first else { throw LedgerError.invalid("Choose who paid for this expense.") }
 
-        let splits: [Portion]
+        var splits: [Portion]
         if itemized {
             splits = try bill.split(payer: primary.memberID)
             guard !splits.isEmpty else { throw LedgerError.invalid("Add line items with prices to split this receipt.") }
         } else {
             guard !people.isEmpty else { throw LedgerError.invalid("Choose at least one person to share this expense.") }
             splits = try Ledger.split(total: total, people: people, mode: mode, values: ledgerValues)
+            if mode == .nights && spreading {
+                for index in splits.indices { splits[index].stay = stays[splits[index].memberID] }
+            }
         }
 
         let created: String
@@ -1272,6 +1297,10 @@ struct AddExpenseView: View {
             guard (1...366).contains(count), splits.allSatisfy({ ($0.nights ?? 0) <= count }) else {
                 throw LedgerError.invalid("Choose a date range up to 366 days that covers everyone’s nights.")
             }
+            guard splits.allSatisfy({ portion in
+                guard let stay = portion.stay else { return true }
+                return stay.dayCount > 0 && stay.start >= spread.start && stay.end <= spread.end
+            }) else { throw LedgerError.invalid("Choose check-in and check-out within the expense’s spread.") }
             entry.spread = spread
         }
         if payerList.count > 1 { entry.payers = payerList }
@@ -1423,6 +1452,9 @@ struct AddExpenseView: View {
             switch original.usesNights ? .nights : original.splitMode {
             case .nights:
                 mode = .nights
+                stays = Dictionary(uniqueKeysWithValues: original.splits.compactMap { portion in
+                    portion.stay.map { (portion.memberID, $0) }
+                })
                 values = Dictionary(uniqueKeysWithValues: original.splits.map { ($0.memberID, String($0.nights ?? 1)) })
             case .equal:
                 mode = .equal

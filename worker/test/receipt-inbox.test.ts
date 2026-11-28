@@ -194,3 +194,18 @@ it('reports claimed items through the ledger exactly as stored splits',async()=>
   expect(report.people.reduce((s,p)=>s+p.amount,0)).toBe(total+1000);
   expect(report.people.reduce((s,p)=>s+p.tax,0)).toBe(bill.tax);
 });
+
+it('refunds specific items back to exactly the people who had them',async()=>{
+  const {itemRefund}=await import('../src/items');
+  const total=bill.items.reduce((s,i)=>s+i.amount,bill.tax+bill.tip);
+  const e:Entry={id:'expense-refund',groupID:group,title:'Trattoria',amount:total,currency:'USD',paidBy:alex,
+    splits:itemSplit(bill,alex),kind:'expense',splitMode:'exact',createdAt:'2026-11-22T20:00:00Z',bill};
+  const {items}=billConsumption(bill,alex);
+  const refund=itemRefund(e,['item-wine','item-pasta']);
+  expect(refund.amount).toBe(items[0].gross+items[1].gross);
+  expect(refund.splits.reduce((s,p)=>s+p.amount,0)).toBe(refund.amount);
+  expect(refund.splits.find(s=>s.memberID===maya)!.amount).toBe(items[0].portions.find(p=>p.memberID===maya)!.amount+items[1].gross);
+  expect(itemRefund(e,bill.items.map(i=>i.id)).amount).toBe(total);
+  expect(()=>itemRefund(e,['item-missing'])).toThrow('original receipt');
+  expect(()=>itemRefund(expense('expense-plain'),['item-wine'])).toThrow('itemized');
+});

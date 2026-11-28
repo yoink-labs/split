@@ -118,3 +118,21 @@ export function consumptionReport(entries:Entry[],currency:string) {
   }
   return {currency,people:[...people.values()]};
 }
+/**
+ * Refunding specific receipt items gives each person back exactly what those items cost them,
+ * tax and tip included, using the same portions the expense charged.
+ */
+export function itemRefund(original:Entry,itemIDs:string[]) {
+  if(!original.bill) throw new InputError('Only an itemized expense can refund specific items.');
+  if(!itemIDs.length || new Set(itemIDs).size!==itemIDs.length) throw new InputError('Choose the items to refund.');
+  const {items}=billConsumption(original.bill,original.paidBy);
+  const chosen=itemIDs.map(id=>{
+    const item=items.find(i=>i.id===id);
+    if(!item) throw new InputError('Choose items from the original receipt.');
+    return item;
+  });
+  const totals=new Map<string,number>();
+  for(const p of chosen.flatMap(i=>i.portions)) totals.set(p.memberID,(totals.get(p.memberID)??0)+p.amount);
+  const splits=[...totals].map(([memberID,amount])=>({memberID,amount})).filter(s=>s.amount);
+  return {amount:splits.reduce((s,p)=>s+p.amount,0),splits};
+}

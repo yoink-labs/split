@@ -111,6 +111,19 @@ For a foreign expense, pass `--charged-amount 24.37` to `split expenses add` or
 Pass `--charged-amount none` on edit to return to rate conversion. MCP uses
 `chargedAmount` for the same option.
 
+### Split a stay by nights
+
+Supply whole-night counts in participant order. Add spread dates to put lodging costs on the nights people stayed. The start is inclusive and the end is exclusive. Each person's nights begin on the first day.
+
+```sh
+split expenses add --group GROUP --title "Palermo Airbnb" --amount 1094.60 --payer ALEX \
+  --mode nights --participants '["ALEX","MAYA","HARRIS","SAM"]' --values '["3","3","3","4"]' \
+  --spread-start 2026-11-12 --spread-end 2026-11-16
+split groups daily --group GROUP --member SAM
+```
+
+The daily report shows expense shares and refund credits in their original currencies. The corresponding MCP tools are `expenses_add` and `groups_daily`.
+
 ### Importing Splitwise exports
 
 The CLI uses the same CSV parser as the web importer. It accepts localized exports, friend exports, and files with multiple supported currencies.

@@ -22,9 +22,11 @@ export function verifiedProfile(user: ClerkUser): Profile {
 export function resolveEntry(entry: Entry, aliases: Map<string,string>): Entry {
   if (!aliases.size) return entry;
   const amounts = new Map<string, number>();
+  const nights = new Map<string, number>();
   for (const split of entry.splits) {
     const id = aliases.get(split.memberID) ?? split.memberID;
     amounts.set(id, (amounts.get(id) ?? 0) + split.amount);
+    if (split.nights !== undefined) nights.set(id, (nights.get(id) ?? 0) + split.nights);
   }
   const payerAmounts = new Map<string, number>();
   for (const payer of entry.payers ?? []) {
@@ -49,7 +51,7 @@ export function resolveEntry(entry: Entry, aliases: Map<string,string>): Entry {
     return {...entry,bill,paidBy,splits:itemSplit(bill,paidBy),...(payers?{payers}:{})};
   }
   return {...entry, paidBy: aliases.get(entry.paidBy) ?? entry.paidBy, ...(payers?{payers}:{}),
-    splits: Array.from(amounts, ([memberID, amount]) => ({memberID, amount}))};
+    splits: Array.from(amounts, ([memberID, amount]) => ({memberID, amount, ...(nights.has(memberID) ? {nights: nights.get(memberID)} : {})}))};
 }
 
 // D1 serializes the batch. A simultaneous direct add, group join, or claim

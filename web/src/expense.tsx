@@ -1,3 +1,4 @@
+import { spreadLength, type Portion } from "../../worker/src/ledger";
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { Form, useLedger, value } from "./context";
@@ -37,6 +38,9 @@ function Composer({ g, existing }: { g: Group; existing?: Expense }) {
     [id] = useState(() => existing?.id ?? crypto.randomUUID()),
     [date, setDate] = useState(() => existing?.createdAt.slice(0, 10) ?? today());
 
+  const [spreadEnabled, setSpreadEnabled] = useState(Boolean(existing?.spread));
+  const [spreadStart, setSpreadStart] = useState(existing?.spread?.start ?? "");
+  const [spreadEnd, setSpreadEnd] = useState(existing?.spread?.end ?? "");
   const existingPayers = existing ? entryPayers(existing) : [];
   const activeMembers = g.members.filter((m) =>
     !m.removed || existing?.splits.some((s) => s.memberID === m.id) || existingPayers.some((p) => p.memberID === m.id),
@@ -54,7 +58,7 @@ function Composer({ g, existing }: { g: Group; existing?: Expense }) {
     hasDefaults = !existing && Object.values(weights).some((w) => w > 0);
 
   const [mode, setMode] = useState<string>(() =>
-    existing?.bill || (!existing && query.has("receipt")) ? "items" : existing?.splitMode ?? (hasDefaults ? "shares" : "equal"),
+    existing?.bill || (!existing && query.has("receipt")) ? "items" : (existing?.splits.some(s => s.nights !== undefined) ? "nights" : existing?.splitMode) ?? (hasDefaults ? "shares" : "equal"),
   );
   const [selected, setSelected] = useState<string[]>(() =>
     existing
@@ -183,6 +187,7 @@ function Composer({ g, existing }: { g: Group; existing?: Expense }) {
   const defaultSplitInput = (mid: string) => {
     const index = existing?.splits.findIndex((s) => s.memberID === mid) ?? -1;
     const prior = existing && index >= 0 ? existing.splits[index].amount : undefined;
+    if (mode === "nights") return String(existing?.splits[index]?.nights ?? 1);
     if ((mode === "exact" || (mode === "shares" && existing?.splitMode === mode)) && prior !== undefined) return (prior / 100).toFixed(2);
     if (mode === "percent" && storedWeights && index >= 0) return (storedWeights[index] / 100).toFixed(2);
     if (mode === "adjustment") return prior !== undefined && storedWeights ? ((prior - storedWeights[index]) / 100).toFixed(2) : "0.00";
@@ -280,7 +285,7 @@ function Composer({ g, existing }: { g: Group; existing?: Expense }) {
 
             // Resolve splits
             if (!bill && (!selected.length || selected.length > 50)) throw new Error("Select between one and fifty people to split with.");
-            let splits: { memberID: string; amount: number }[];
+            let splits: Portion[];
             if (bill) {
               splits = itemSplit(bill, paidBy);
             } else if (mode === "equal") {
@@ -300,7 +305,10 @@ function Composer({ g, existing }: { g: Group; existing?: Expense }) {
               if (splits.some((s) => s.amount < 0))
                 throw new Error("Each person’s final share must be at least 0.");
             } else {
-              const inputs = selected.map((mid) => minor(value(f, "weight-" + mid) || "0"));
+              const raw = selected.map((mid) => value(f, "weight-" + mid));
+              if (mode === "nights" && raw.some((night) => !/^\d+$/.test(night) || Number(night) < 1 || Number(night) > 366))
+                throw new Error("Enter a whole number from 1 to 366 for each person’s nights.");
+              const inputs = raw.map((input) => mode === "nights" ? Number(input) : minor(input || "0"));
               if (mode === "exact" && inputs.reduce((a, b) => a + b, 0) !== amount)
                 throw new Error("Individual amounts must add up to the total.");
               if (mode === "percent" && inputs.reduce((a, b) => a + b, 0) !== 10000)
@@ -310,9 +318,13 @@ function Composer({ g, existing }: { g: Group; existing?: Expense }) {
                 && selected.every((id, i) => id === existing.splits[i].memberID && inputs[i] === storedWeights[i]);
               const portions = samePercent ? existing.splits.map((s) => s.amount)
                 : mode === "exact" ? inputs : allocate(amount, inputs);
-              splits = selected.map((memberID, i) => ({ memberID, amount: portions[i] }));
+              splits = selected.map((memberID, i): Portion => ({ memberID, amount: portions[i], ...(mode === "nights" ? { nights: inputs[i] } : {}) }));
             }
 
+            const spread = spreadEnabled ? { start: spreadStart, end: spreadEnd } : undefined;
+            const days = spread ? spreadLength(spread) : 0;
+            if (spread && (days < 1 || days > 366 || splits.some((s: Portion) => (s.nights ?? 0) > days)))
+              throw new Error("Choose a date range up to 366 days that covers everyone’s nights.");
             if (!/^\d{4}-\d\d-\d\d$/.test(date) || (!existing && date > today()))
               throw new Error("Choose today or an earlier charge date.");
             if (foreign && !exchange)
@@ -328,11 +340,12 @@ function Composer({ g, existing }: { g: Group; existing?: Expense }) {
               paidBy,
               ...(payers ? { payers } : {}),
               splits,
-              splitMode: bill ? "exact" : mode,
+              splitMode: bill ? "exact" : mode === "nights" ? "shares" : mode,
               kind: "expense" as const,
               ...(handled ? { handled: true } : {}),
               ...(pending && !handled ? { pending: true, ...(pendingNote.trim() ? { pendingNote: pendingNote.trim() } : {}) } : {}),
               createdAt,
+              ...(spread ? { spread } : {}),
               ...(category ? { category } : {}),
               ...(notes.trim() ? { notes: notes.trim() } : {}),
               ...(foreign && exchange ? { exchange } : {}),
@@ -454,8 +467,20 @@ function Composer({ g, existing }: { g: Group; existing?: Expense }) {
                   options={[
                     { value: "equal", label: "Equally" }, { value: "exact", label: "Exact amounts" },
                     { value: "percent", label: "Percentages" }, { value: "shares", label: "Shares (weights)" },
-                    { value: "adjustment", label: "Equal + adjustments" }, { value: "items", label: "Itemized (items, tax & tip)" },
+                    { value: "nights", label: "Nights" }, { value: "adjustment", label: "Equal + adjustments" }, { value: "items", label: "Itemized (items, tax & tip)" },
                   ]} />
+              </div>
+
+              <div className="field">
+                <label className="check">
+                  <input type="checkbox" disabled={Boolean(existing?.recurrence && existing.recurrence !== "off")} checked={spreadEnabled} onChange={(event) => setSpreadEnabled(event.target.checked)} />
+                  Spread over days
+                </label>
+                {spreadEnabled && <>
+                  <label className="field">First day<input type="date" value={spreadStart} required onChange={(event) => setSpreadStart(event.target.value)} /></label>
+                  <label className="field">End date (excluded)<input type="date" value={spreadEnd} required onChange={(event) => setSpreadEnd(event.target.value)} /></label>
+                  {mode === "nights" && <small className="muted">Each person’s nights start on the first day.</small>}
+                </>}
               </div>
 
               {mode === "items" ? (
@@ -572,8 +597,8 @@ function Composer({ g, existing }: { g: Group; existing?: Expense }) {
                               style={{ width: 130 }}
                               aria-label={p.name + " " + mode}
                               name={"weight-" + p.id}
-                              inputMode="decimal"
-                              placeholder={mode === "percent" ? "%" : mode === "shares" ? "1" : "0.00"}
+                              inputMode={mode === "nights" ? "numeric" : "decimal"}
+                              placeholder={mode === "percent" ? "%" : (mode === "shares" || mode === "nights") ? "1" : "0.00"}
                               value={splitInputs[mode]?.[p.id] ?? defaultSplitInput(p.id)}
                               onChange={(event) => {
                                 const text = event.target.value;

@@ -14,6 +14,8 @@ const eligible = `${live} AND json_extract(e.payload,'$.kind')='expense'
   AND NOT COALESCE(json_extract(e.payload,'$.pending'),0)
   AND NOT COALESCE(json_extract(e.payload,'$.handled'),0)
   AND json_extract(e.payload,'$.exchange') IS NULL
+  AND json_extract(e.payload,'$.spread') IS NULL
+  AND NOT EXISTS (SELECT 1 FROM json_each(json_extract(e.payload,'$.splits')) WHERE json_extract(value,'$.nights') IS NOT NULL)
   AND NOT EXISTS (SELECT 1 FROM recurring WHERE entry_id=e.id)
   AND NOT EXISTS (SELECT 1 FROM entries r WHERE r.group_id=e.group_id
     AND json_extract(r.payload,'$.refundOf')=e.id AND r.id NOT IN (SELECT entry_id FROM deleted_entries))`;
@@ -67,7 +69,7 @@ export async function combinationRoute(request: Request, env: Env, user: string)
     ${photos} AS photos FROM entries e WHERE e.group_id=? AND ${active} AND ${eligible}
     AND e.id IN (SELECT value FROM json_each(?)) ORDER BY julianday(json_extract(e.payload,'$.createdAt')),e.id`)
     .bind(groupID, user, JSON.stringify(ids)).all<{id:string; payload:string; photos:string}>()).results;
-  if (rows.length !== ids.length) throw new HTTPError(409, 'Choose available expenses without refunds, recurrence, conversion, pending status or handled status.');
+  if (rows.length !== ids.length) throw new HTTPError(409, 'Choose available expenses without refunds, recurrence, conversion, nights splits, date spreads, pending status or handled status.');
   const entries = rows.map(row => resolveEntry(JSON.parse(row.payload), aliases));
   const members = (await db.prepare(`SELECT id,removed_at FROM members WHERE group_id=?
     AND id NOT IN (SELECT member_id FROM member_aliases) ORDER BY rowid`).bind(groupID).all<{id:string;removed_at:string|null}>()).results;

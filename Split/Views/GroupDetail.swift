@@ -109,10 +109,7 @@ struct GroupDetail: View {
                 && matches(mine, entry, me: me?.id)
         }
         if group.kind == "trip" && groupByPhase {
-            return (TripPhase.allCases.map(Optional.some) + [nil]).compactMap { phase in
-                let items = filtered.filter { group.phase(for: $0) == phase }
-                return items.isEmpty ? nil : (phase?.title ?? "Other transactions", items)
-            }
+            return group.phaseSections(filtered)
         }
         let grouped = Dictionary(grouping: filtered) { String($0.createdAt.prefix(group.kind == "trip" ? 10 : 7)) }
         return grouped.keys.sorted(by: >).map { ($0, grouped[$0] ?? []) }
@@ -134,7 +131,7 @@ struct GroupDetail: View {
                             overview(group)
                         case .transactions:
                             let canCombine = group.members.contains(where: { $0.userID == store.currentUserID && $0.userID != nil && $0.removed != true })
-                            GroupTransactionsView(group: group, entries: entries,
+                            GroupTransactionsView(group: group, entries: entries, phase: $phase, groupByPhase: $groupByPhase,
                                                   open: { present(.transaction($0)) },
                                                   exportPDF: { exportingPDF = true },
                                                   combine: canCombine ? { combining = true } : nil)

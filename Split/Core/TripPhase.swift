@@ -24,4 +24,11 @@ extension ExpenseGroup {
         guard kind == "trip", entry.kind == "expense" else { return nil }
         return entry.phase ?? defaultPhase(on: entry.createdAt)
     }
+
+    func phaseSections(_ entries: [LedgerEntry]) -> [(String, [LedgerEntry])] {
+        let grouped = Dictionary(grouping: entries) { phase(for: $0) }
+        return (TripPhase.allCases.map(Optional.some) + [nil]).compactMap { phase in
+            grouped[phase].map { (phase?.title ?? "Other transactions", $0) }
+        }
+    }
 }

@@ -19,3 +19,7 @@ Split specifics:
   `docs/licenses/`.
 - Before a PR: `npm run typecheck --prefix worker`, `npm test --prefix worker`
   and `node --test cli/test/*.test.mjs`. See [CONTRIBUTING.md](CONTRIBUTING.md).
+- Merging to `main` deploys: Workers Builds runs `scripts/deploy-worker.sh`
+  and Xcode Cloud uploads a TestFlight build. Migrations must be additive;
+  `scripts/check-migrations.mjs` blocks destructive SQL unless a person adds
+  `-- allow-destructive: <reason>`.

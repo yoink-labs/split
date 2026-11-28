@@ -4,13 +4,31 @@ Split is listed under Undrift LLC in App Store Connect. The bundle is `com.yoink
 
 [Public Beta](https://testflight.apple.com/join/YX8W6bCx) · [Live build and beta review status](https://appstoreconnect.apple.com/apps/6836072005/testflight/ios)
 
-Yoink Internal receives builds automatically. Public Beta uses external beta review. A public-link installation depends on Apple approving an eligible build. Build 0.1.0 (2) was the preceding MVP. Both versions use the same Split Worker, bundle and shared Yoink sign-in.
+Yoink Internal receives every `main` build automatically through Xcode Cloud (below). Public Beta uses external beta review. A public-link installation depends on Apple approving an eligible build. Build 0.1.0 (2) was the preceding MVP. Both versions use the same Split Worker, bundle and shared Yoink sign-in.
 
-## Build and sign
+## Automatic builds (Xcode Cloud)
+
+Every push to `main` starts the Xcode Cloud workflow **TestFlight (main)**. It archives the `Split` scheme with Xcode 27.2 (App Store eligible) and its TestFlight Internal Testing post-action adds the build to **Yoink Internal**. The workflow never submits for App Store review or external beta review. Both stay manual in App Store Connect.
+
+- [`ci_scripts/ci_post_clone.sh`](../ci_scripts/ci_post_clone.sh) installs XcodeGen and runs `xcodegen generate`, because `project.yml` is the source of truth and the project must match it.
+- **Build numbers go up automatically.** Xcode Cloud stamps `CFBundleVersion` with its own build number, `CI_BUILD_NUMBER`, when it exports, overriding the project value. Builds 1–15 were uploaded by hand, so Split's Xcode Cloud **Next Build Number** is set to 16. That is the offset. The post-clone script writes `CI_BUILD_NUMBER` into `CURRENT_PROJECT_VERSION` so the archive agrees. It fails the build if the number is 15 or lower rather than produce an upload TestFlight would reject. Nobody edits `CURRENT_PROJECT_VERSION` by hand any more. The committed `'15'` is only the local fallback.
+- `MARKETING_VERSION` in `project.yml` is still bumped by hand in the release PR when the version changes.
+- [`scripts/create-xcode-cloud-workflow.sh`](../scripts/create-xcode-cloud-workflow.sh) creates or updates the workflow through the App Store Connect API (`asc`). The API cannot create the Xcode Cloud product or set the TestFlight post-action, so those two steps happen once in Xcode and App Store Connect.
+
+One-time setup (Admin or App Manager):
+
+1. In Xcode 27.2, open `Split.xcodeproj` (run `xcodegen generate` first), choose **Integrate → Create Workflow…**, select the **Split** app, and grant Xcode Cloud access to the `yoink-labs/split` GitHub repository when asked. Finish the onboarding with any workflow; the script replaces it.
+2. In App Store Connect → Split → **Xcode Cloud → Settings → Build Number**, click **Edit** next to *Next Build Number* and set it to **16** (one above the latest TestFlight build).
+3. Run `scripts/create-xcode-cloud-workflow.sh`, then delete any onboarding workflow you no longer want.
+4. In App Store Connect → Split → **Xcode Cloud → Manage Workflows → TestFlight (main)**, add a **Post-Action → TestFlight Internal Testing** for the *Archive - iOS* action. Select **Yoink Internal** and save. Do not add *TestFlight External Testing* or any App Store post-action.
+
+## Manual build (fallback)
+
+Use this only when Xcode Cloud is unavailable. Take the build number from App Store Connect (one above the latest, including Xcode Cloud builds) and set it for that one archive only.
 
 Install Xcode 27.2 with the iOS 27 SDK, XcodeGen and the App Store Connect CLI. The archive script defaults to `/Applications/Xcode-27.app/Contents/Developer`. Set `DEVELOPER_DIR` to the chosen Xcode 27 installation if it lives elsewhere. The script selects the device SDK explicitly. Split still deploys to iOS 18.0.
 
-Use the authorized ASC profile and the existing Undrift distribution identity in the macOS keychain. Check the next build number in App Store Connect before editing `project.yml`.
+Use the authorized ASC profile and the existing Undrift distribution identity in the macOS keychain. Don't commit the build number change.
 
 ```sh
 scripts/archive-release.sh

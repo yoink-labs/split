@@ -28,6 +28,7 @@ interface Args {
 }
 interface Member { id: string; userID: string|null; name: string; removed?: boolean }
 interface Group { defaultWeights?:Record<string,number>; tripRates?:Record<string,number>; id: string; name: string; currency: string; members: Member[]; canDelete?: boolean }
+type SnapshotEntry = Entry & { editable: boolean; recurrence: string | null; commentCount: number; likeCount: number; likedByMe: boolean };
 export type LedgerHandler = (r: Request, env: Env, user: string) => Promise<Response>;
 const provider = new CfWorkerJsonSchemaValidator();
 const validators = new Map(tools.map(tool => [tool.name, provider.getValidator<Args>(tool.inputSchema as JsonSchemaType)]));
@@ -217,7 +218,7 @@ export async function operate(name: string, input: unknown, env: Env, user: stri
     return (await env.DB.prepare(`SELECT g.id,g.name,g.kind,g.currency,g.created_at AS createdAt FROM groups g
       JOIN members m ON g.id=m.group_id WHERE m.user_id=? ORDER BY g.created_at DESC`).bind(user).all()).results;
   }
-  const snapshot = await ledger<{groups: Group[]; entries: (Entry & {editable: boolean})[]; settlementRequests?: Entry[]; paymentMethods?: unknown[]}>('/v1/snapshot');
+  const snapshot = await ledger<{groups: Group[]; entries: SnapshotEntry[]; settlementRequests?: Entry[]; paymentMethods?: unknown[]}>('/v1/snapshot');
   if (name === 'profile_payment') {
     if (a.methods === undefined) return { methods: snapshot.paymentMethods ?? [] };
     await ledger('/v1/profile/payment-methods', { methods: a.methods });
@@ -336,7 +337,12 @@ export async function operate(name: string, input: unknown, env: Env, user: stri
     const after = name === 'expenses_edit' ? makeExpense(a, group, before) : null;
     const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify([name,before,after])));
     const revision = Array.from(new Uint8Array(bytes), b => b.toString(16).padStart(2,'0')).join('');
-    if (!a.yes) return { preview: true, before, after, revision };
+    if (!a.yes) {
+      // These fields are stored outside the editable entry payload.
+      const { receiptIDs, recurrence, editable, commentCount, likeCount, likedByMe } = before;
+      return { preview: true, before,
+        after: after && { ...after, receiptIDs, recurrence, editable, commentCount, likeCount, likedByMe }, revision };
+    }
     if (a.revision !== revision) throw new HTTPError(409,'Review a fresh preview before confirming.');
     const action = after ? 'edit' : 'delete';
     await ledger(`/v1/entries/${before.id}/${action}`, { original: before, entry: after });

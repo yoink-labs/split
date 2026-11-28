@@ -7,6 +7,10 @@ const group = id('Group ID from groups list.');
 const expense = id('Expense ID from expenses list.');
 const member = id('Member ID from members list.');
 const currency = enumeration('Three-letter currency. Defaults to the group currency.', ['USD','ARS','EUR','GBP','BRL','CAD','AUD','MXN']);
+// Keep in sync with CategoryMeta.all in Split/Core/Categories.swift.
+const categories = ['General', 'Dining', 'Groceries', 'Liquor', 'Rent', 'Home', 'Utilities', 'Transport',
+  'Travel', 'Entertainment', 'Shopping', 'Health', 'Education', 'Gifts', 'Fees', 'Other'];
+const category = enumeration('Spending category (case-sensitive). Choose from: ' + categories.join(', ') + '.', categories);
 const list = (description, items) => ({ type: 'array', description, items, minItems: 1, maxItems: 50, uniqueItems: true });
 const shareNumber = { type: 'number', description: 'Share multiplier, e.g. 0.5, 1 or 2.5.', minimum: 0.01, maximum: 1000 };
 const share = { ...text('Share multiplier for this member, e.g. "0.5", "1" or "2.5". Defaults to 1.', 8), pattern: '^(0|[1-9][0-9]{0,3})([.][0-9]{1,2})?$' };
@@ -47,7 +51,7 @@ const payerSplit = {
 };
 const allocation = {
   rate: { ...text('Group currency per 1 unit of expense currency. For a BRL expense in a USD group, --rate 0.18 means 1 BRL = 0.18 USD. On add, a saved trip rate is used when available.'), pattern:'^[0-9]{1,8}([.][0-9]{1,8})?$' },
-  category: text('Spending category.',50), title: text('Expense description.'), amount: money, payer: member, currency,
+  category, title: text('Expense description.'), amount: money, payer: member, currency,
   notes: text('Optional notes on this expense.', 2000),
   payers: payerSplit,
   mode: enumeration('How to allocate the expense.', ['equal','exact','percent','shares']),

@@ -178,6 +178,28 @@ describe('CLI and MCP', () => {
     expect((await send('expenses_add', {...args, amount:'12.00'})).status).toBe(422);
     expect((await send('expenses_edit', {group, expense:local.id, bill:args.bill})).status).toBe(422);
   });
+  it('shows retained receipt photos and recurrence in an expense edit preview', async () => {
+    const token = await authorize('alex');
+    const send = (name: string, args: object) => fetch('/v1/cli', {name, arguments: args}, token);
+    const {id:group, members} = await (await send('groups_create', {name:'Home', self:'Alex'})).json();
+    const add = {group, payer:members[0].id, title:'Rent', amount:'25.00', category:'Rent',
+      photos:[btoa('\xff\xd8\xff' + '\x00'.repeat(12) + '\xff\xd9')]};
+    const invalid = await send('expenses_add', {...add, category:'food'});
+    expect(invalid.status).toBe(422);
+    expect((await invalid.json()).error).toMatch(/category.*Dining.*Other/);
+
+    const {id:expense, receiptIDs} = await (await send('expenses_add', add)).json();
+    expect(receiptIDs).toHaveLength(1);
+    expect((await send('expenses_repeat', {group, expense, cadence:'monthly'})).status).toBe(200);
+    const edit = {group, expense, title:'Apartment rent'};
+    expect((await send('expenses_edit', {...edit, category:'housing'})).status).toBe(422);
+    const review = await (await send('expenses_edit', edit)).json();
+    const retained = {receiptIDs, recurrence:'monthly', category:'Rent'};
+    expect(review.before).toMatchObject({...retained, title:'Rent'});
+    expect(review.after).toMatchObject({...retained, title:'Apartment rent'});
+    expect((await send('expenses_edit', {...edit, yes:true, revision:review.revision})).status).toBe(200);
+    expect(await (await send('expenses_show', {group, expense})).json()).toMatchObject(review.after);
+  });
   it('validates operations, resolves placeholders and preserves the reviewed expense on conflict', async () => {
     const token = await authorize('alex'), outsider = await authorize('maya');
     async function run(name:string, args:object, device=token) {
